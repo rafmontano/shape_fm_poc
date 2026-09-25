@@ -194,11 +194,34 @@ def physical_cpu_count() -> int | None:
     return None
 
 
+def cpu_model() -> str | None:
+    if platform.system() == "Linux":
+        try:
+            for line in Path("/proc/cpuinfo").read_text(encoding="utf-8").splitlines():
+                if line.startswith("model name"):
+                    return line.split(":", 1)[1].strip()
+        except (OSError, IndexError):
+            pass
+    elif platform.system() == "Darwin":
+        try:
+            return subprocess.run(
+                ["/usr/sbin/sysctl", "-n", "machdep.cpu.brand_string"],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            ).stdout.strip() or None
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return platform.processor() or None
+
+
 def system_hardware() -> dict[str, Any]:
     return {
         "operating_system": platform.system(),
         "operating_system_release": platform.release(),
         "architecture": platform.machine(),
+        "cpu_model": cpu_model(),
         "physical_cpu_count": physical_cpu_count(),
         "logical_cpu_count": os.cpu_count(),
         "system_memory": system_memory(),

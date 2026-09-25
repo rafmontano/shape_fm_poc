@@ -29,7 +29,7 @@
     "accelerator_memory_min_available_gib": 1.0,
     "database_writers": 1
   },
-  "ubuntu_5950x_16core_128gb_rtx5090": {
+  "ubuntu_3950x_16core_128gb_rtx5090": {
     "required_accelerator": "cuda",
     "expected_accelerator_name": "NVIDIA GeForce RTX 5090",
     "cleaning_workers": 8,

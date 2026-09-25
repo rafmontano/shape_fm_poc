@@ -5,9 +5,20 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from shapefm.calibration import _recommended_setting
-from shapefm.execution import PersistentChronosWorker, resolve_execution_profile
+from shapefm.calibration import (
+    CALIBRATION_CANDIDATES,
+    _chronos_context_responses,
+    _chronos_differences,
+    _chronos_reference_forecasts,
+    _recommended_setting,
+)
+from shapefm.execution import (
+    PersistentChronosWorker,
+    resolve_execution_profile,
+    system_hardware,
+)
 from shapefm.poc1 import _length_aware_batches
 
 
@@ -15,7 +26,7 @@ class ExecutionProfileTests(unittest.TestCase):
     def test_committed_profile_values_and_single_writer(self) -> None:
         sequential, _ = resolve_execution_profile("sequential_safe")
         mac, _ = resolve_execution_profile("mac_m1pro_10core_16gb")
-        ubuntu, _ = resolve_execution_profile("ubuntu_5950x_16core_128gb_rtx5090")
+        ubuntu, _ = resolve_execution_profile("ubuntu_3950x_16core_128gb_rtx5090")
         self.assertEqual(
             (
                 sequential.cleaning_workers,
@@ -57,6 +68,10 @@ class ExecutionProfileTests(unittest.TestCase):
         )
         self.assertTrue(all(p.database_writers == 1 for p in (sequential, mac, ubuntu)))
         self.assertTrue(all(p.chronos_processes == 1 for p in (mac, ubuntu)))
+
+    def test_hardware_provenance_records_cpu_model(self) -> None:
+        with patch("shapefm.execution.cpu_model", return_value="Test CPU"):
+            self.assertEqual(system_hardware()["cpu_model"], "Test CPU")
 
     def test_unknown_and_invalid_overrides_fail(self) -> None:
         with self.assertRaisesRegex(ValueError, "unknown execution profile"):
@@ -169,6 +184,50 @@ for line in sys.stdin:
 
 
 class CalibrationSafetyTests(unittest.TestCase):
+    def test_ubuntu_candidates_compare_with_independent_batch_one_reference(self) -> None:
+        contexts = [
+            {"label": label, "context": [float(index)]}
+            for index, label in enumerate(("short", "median", "long"))
+        ]
+
+        class FakeWorker:
+            def __init__(self) -> None:
+                self.batch_sizes = []
+
+            def request(self, message):
+                batch_size = message["inference_batch_size"]
+                self.batch_sizes.append(batch_size)
+                value = float(batch_size)
+                forecast = {
+                    "mean": [value],
+                    "median": [value],
+                    "quantiles": [[value] for _ in range(9)],
+                }
+                return {
+                    "type": "result",
+                    "results": [forecast for _ in message["jobs"]],
+                }
+
+        worker = FakeWorker()
+        references = _chronos_reference_forecasts(worker, contexts)
+        candidates = CALIBRATION_CANDIDATES[
+            "ubuntu_3950x_16core_128gb_rtx5090"
+        ]["chronos_batch_sizes"]
+        comparisons = {}
+        for batch_size in candidates:
+            responses = _chronos_context_responses(worker, contexts, batch_size)
+            comparisons[batch_size] = _chronos_differences(
+                contexts, responses, references
+            )
+
+        self.assertEqual(candidates, [8, 16, 32, 64])
+        self.assertEqual(worker.batch_sizes[:3], [1, 1, 1])
+        self.assertEqual(
+            worker.batch_sizes[3:], [8] * 3 + [16] * 3 + [32] * 3 + [64] * 3
+        )
+        self.assertEqual(comparisons[8][0]["max_abs"], 7.0)
+        self.assertFalse(comparisons[8][0]["equivalent"])
+
     def test_faster_unsafe_candidate_is_not_recommended(self) -> None:
         measurements = [
             {

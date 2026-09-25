@@ -34,7 +34,7 @@ CALIBRATION_CANDIDATES = {
         "cpu_workers": [1, 2, 4],
         "chronos_batch_sizes": [1, 2, 4, 8, 16],
     },
-    "ubuntu_5950x_16core_128gb_rtx5090": {
+    "ubuntu_3950x_16core_128gb_rtx5090": {
         "cpu_workers": [1, 4, 8, 12, 16],
         "chronos_batch_sizes": [8, 16, 32, 64],
     },
@@ -152,6 +152,61 @@ def _forecast_comparison(first: dict[str, Any], second: dict[str, Any]) -> dict[
             for left, right in pairs
         ),
     }
+
+
+def _chronos_context_responses(
+    worker: PersistentChronosWorker,
+    contexts: list[dict[str, Any]],
+    batch_size: int,
+) -> list[dict[str, Any]]:
+    responses = []
+    for context in contexts:
+        jobs = [
+            {
+                "id": f"chronos-{batch_size}-{context['label']}-{index}",
+                "context": context["context"],
+            }
+            for index in range(batch_size)
+        ]
+        response = worker.request(
+            {
+                "command": "predict",
+                "batch_id": f"calibration/{uuid.uuid4().hex}",
+                "jobs": jobs,
+                "horizon": 14,
+                "quantile_levels": list(QUANTILES),
+                "inference_batch_size": batch_size,
+            }
+        )
+        responses.append(response)
+        if response.get("type") == "error":
+            break
+    return responses
+
+
+def _chronos_reference_forecasts(
+    worker: PersistentChronosWorker, contexts: list[dict[str, Any]]
+) -> dict[str, dict[str, Any]]:
+    responses = _chronos_context_responses(worker, contexts, batch_size=1)
+    if len(responses) != len(contexts):
+        raise RuntimeError("Chronos batch-size-1 reference did not cover every context")
+    references = {}
+    for context, response in zip(contexts, responses, strict=True):
+        if response.get("type") != "result" or len(response.get("results", [])) != 1:
+            raise RuntimeError(f"Chronos batch-size-1 reference failed: {response}")
+        references[context["label"]] = response["results"][0]
+    return references
+
+
+def _chronos_differences(
+    contexts: list[dict[str, Any]],
+    responses: list[dict[str, Any]],
+    references: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    return [
+        _forecast_comparison(references[context["label"]], response["results"][0])
+        for context, response in zip(contexts, responses, strict=True)
+    ]
 
 
 def representative_contexts(database_path: Path) -> list[dict[str, Any]]:
@@ -318,8 +373,8 @@ def calibrate(
             "--device",
             profile.required_accelerator or "auto",
         ]
-        chronos_reference: dict[str, dict[str, Any]] = {}
         with PersistentChronosWorker(command) as worker:
+            chronos_reference = _chronos_reference_forecasts(worker, contexts)
             for batch_size in candidates["chronos_batch_sizes"]:
                 responses = []
                 failure = None
@@ -330,28 +385,11 @@ def calibrate(
                         profile, memory_sampler.summary()
                     )
                     if preflight_rejection is None:
-                        for context in contexts:
-                            jobs = [
-                                {
-                                    "id": f"chronos-{batch_size}-{context['label']}-{index}",
-                                    "context": context["context"],
-                                }
-                                for index in range(batch_size)
-                            ]
-                            response = worker.request(
-                                {
-                                    "command": "predict",
-                                    "batch_id": f"calibration/{uuid.uuid4().hex}",
-                                    "jobs": jobs,
-                                    "horizon": 14,
-                                    "quantile_levels": list(QUANTILES),
-                                    "inference_batch_size": batch_size,
-                                }
-                            )
-                            responses.append(response)
-                            if response.get("type") == "error":
-                                failure = response.get("error")
-                                break
+                        responses = _chronos_context_responses(
+                            worker, contexts, batch_size
+                        )
+                        if responses and responses[-1].get("type") == "error":
+                            failure = responses[-1].get("error")
                 wall_clock = time.monotonic() - candidate_started
                 memory = memory_sampler.summary()
                 elapsed = sum(response.get("inference_seconds", 0.0) for response in responses)
@@ -381,17 +419,11 @@ def calibrate(
                     if rejection
                 ]
                 safety_rejection = "; ".join(safety_rejections) or None
-                differences = []
-                if not failure and responses:
-                    for context, response in zip(contexts, responses, strict=True):
-                        forecast = response["results"][0]
-                        if batch_size == 1:
-                            chronos_reference[context["label"]] = forecast
-                        differences.append(
-                            _forecast_comparison(
-                                chronos_reference[context["label"]], forecast
-                            )
-                        )
+                differences = (
+                    _chronos_differences(contexts, responses, chronos_reference)
+                    if not failure and responses
+                    else []
+                )
                 max_difference = max((item["max_abs"] for item in differences), default=0.0)
                 max_relative = max((item["max_relative"] for item in differences), default=0.0)
                 measurement = {

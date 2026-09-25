@@ -10,7 +10,7 @@ only DuckDB writer.
 |---|---:|---:|---:|---:|---:|---:|---|
 | `sequential_safe` | 1 | 1 | 1 | 1 / 1 | 1 | 1 | no |
 | `mac_m1pro_10core_16gb` | 2 | 4 | 2 | 1 / 8 | 4 | 1 | no |
-| `ubuntu_5950x_16core_128gb_rtx5090` | 8 | 16 | 12 | 1 / 16 | 16 | 1 | yes |
+| `ubuntu_3950x_16core_128gb_rtx5090` | 8 | 16 | 12 | 1 / 16 | 16 | 1 | yes |
 
 The Mac profile serialises heavy AutoARIMA and Chronos work because CPU and GPU
 share 16 GB unified memory. The Ubuntu profile may overlap bounded CPU
@@ -48,7 +48,12 @@ excluded from recommendations, and stop that resource sweep from increasing.
 Child RSS is labelled as observed per-process memory rather than an aggregate
 concurrent peak. Calibration never rewrites the committed profile.
 
-## Ubuntu RTX 5090 validation (not yet executed)
+Chronos calibration always creates a separate batch-size-1 forecast for each
+representative context before testing the configured candidate grid. Candidate
+equivalence is measured against those references even when batch size 1 is not
+itself a candidate, as on Ubuntu.
+
+## Ubuntu RTX 5090 validation
 
 Restore the locked environment on the Ubuntu host, then require the exact CUDA
 profile and run a real pinned-model forecast:
@@ -60,7 +65,7 @@ environments/chronos-2/.venv/bin/python -c \
   'import torch; assert torch.cuda.is_available(); print(torch.__version__, torch.version.cuda, torch.cuda.get_device_name(0))'
 
 .tools/uv/uv run --locked shapefm-poc1 validate-hardware \
-  --profile ubuntu_5950x_16core_128gb_rtx5090 --chronos-smoke
+  --profile ubuntu_3950x_16core_128gb_rtx5090 --chronos-smoke
 ```
 
 The second command must identify `NVIDIA GeForce RTX 5090`; the profile
@@ -69,13 +74,30 @@ pass on that machine should Ubuntu calibration run:
 
 ```sh
 .tools/uv/uv run --locked shapefm-poc1 calibrate \
-  --profile ubuntu_5950x_16core_128gb_rtx5090 \
-  --output docs/calibration/ubuntu_5950x_rtx5090_calibration.json
+  --profile ubuntu_3950x_16core_128gb_rtx5090 \
+  --output docs/calibration/ubuntu_3950x_rtx5090_calibration.json
 ```
 
-Ubuntu/CUDA has not been validated by the local Mac work. For a future published
+Hardware provenance records the detected CPU model for auditability, but CPU
+wording is not a strict profile requirement. CUDA availability, the exact RTX
+5090 name, memory thresholds, and worker constraints remain strict.
+
+The Ubuntu workflow has been validated on the 16-core Ryzen 3950X, 128 GB RAM,
+and RTX 5090 host represented by this profile. Its generated calibration report
+remains outside Git with the other machine-local results. For a future published
 benchmark, Ubuntu CUDA is the provisional canonical model-execution backend;
 Mac MPS remains for development and smaller validation. Compare sequential and
 profiled results on the same backend with strict absolute and relative
 tolerances of `1e-5`. Cross-backend MPS and CUDA results are not assumed
 bit-for-bit identical.
+
+To reconstruct the locked environments, reuse a completed import, and resume
+Ubuntu validation, calibration, and the smoke POC from an existing checkout:
+
+```sh
+./scripts/bootstrap_ubuntu.sh
+```
+
+The script does not clone the repository or require GitHub CLI authentication.
+By default it reuses `~/ShapeFM-results/shapefm.duckdb` and writes reports and
+the append-only bootstrap log beside that database.
