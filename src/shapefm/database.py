@@ -9,7 +9,7 @@ from typing import Any
 import duckdb
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 DEFAULT_DATABASE = Path("data/shapefm.duckdb")
 
 
@@ -124,6 +124,203 @@ CREATE TABLE IF NOT EXISTS task_attempts (
 """
 
 
+POC1_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS benchmark_configurations (
+    benchmark_configuration_id VARCHAR PRIMARY KEY,
+    benchmark_revision VARCHAR NOT NULL,
+    configuration_name VARCHAR NOT NULL,
+    dataset_name VARCHAR NOT NULL,
+    frequency VARCHAR NOT NULL,
+    term VARCHAR NOT NULL,
+    prediction_length INTEGER NOT NULL,
+    window_count INTEGER NOT NULL,
+    domain VARCHAR NOT NULL,
+    num_variates INTEGER NOT NULL,
+    metadata JSON NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
+    UNIQUE (benchmark_revision, configuration_name)
+);
+
+CREATE TABLE IF NOT EXISTS experiments (
+    experiment_id VARCHAR PRIMARY KEY,
+    benchmark_configuration_id VARCHAR NOT NULL,
+    dataset_id VARCHAR NOT NULL,
+    name VARCHAR NOT NULL,
+    scientific_configuration JSON NOT NULL,
+    configuration_hash VARCHAR NOT NULL,
+    scope VARCHAR NOT NULL,
+    status VARCHAR NOT NULL CHECK (status IN ('planned', 'running', 'completed', 'failed')),
+    provisional_candidate JSON,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp
+);
+
+CREATE TABLE IF NOT EXISTS experiment_variants (
+    variant_id VARCHAR PRIMARY KEY,
+    experiment_id VARCHAR NOT NULL,
+    cleaning_method VARCHAR NOT NULL,
+    transformation_method VARCHAR NOT NULL,
+    adjustment_method VARCHAR NOT NULL,
+    configuration JSON NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
+    UNIQUE (experiment_id, cleaning_method, transformation_method, adjustment_method)
+);
+
+CREATE TABLE IF NOT EXISTS forecast_instances (
+    forecast_instance_id VARCHAR PRIMARY KEY,
+    benchmark_configuration_id VARCHAR NOT NULL,
+    dataset_id VARCHAR NOT NULL,
+    series_id VARCHAR NOT NULL,
+    variate_id VARCHAR NOT NULL,
+    window_id VARCHAR NOT NULL,
+    official_position INTEGER NOT NULL,
+    context_start INTEGER NOT NULL,
+    context_end INTEGER NOT NULL,
+    actual_start INTEGER NOT NULL,
+    actual_end INTEGER NOT NULL,
+    horizon INTEGER NOT NULL,
+    context_target FLOAT[] NOT NULL,
+    actual_target FLOAT[] NOT NULL,
+    identity_metadata JSON NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
+    UNIQUE (benchmark_configuration_id, series_id, variate_id, window_id)
+);
+
+CREATE TABLE IF NOT EXISTS experiment_invocations (
+    invocation_id VARCHAR PRIMARY KEY,
+    experiment_id VARCHAR NOT NULL,
+    requested_gate VARCHAR NOT NULL,
+    worker_count INTEGER NOT NULL,
+    device VARCHAR,
+    batch_size INTEGER,
+    environment JSON NOT NULL,
+    machine JSON NOT NULL,
+    started_at TIMESTAMPTZ NOT NULL,
+    ended_at TIMESTAMPTZ,
+    status VARCHAR NOT NULL CHECK (status IN ('running', 'completed', 'failed')),
+    summary JSON,
+    error VARCHAR
+);
+
+CREATE TABLE IF NOT EXISTS experiment_tasks (
+    task_id VARCHAR PRIMARY KEY,
+    experiment_id VARCHAR NOT NULL,
+    stage INTEGER NOT NULL CHECK (stage BETWEEN 2 AND 6),
+    forecast_instance_id VARCHAR,
+    variant_id VARCHAR,
+    candidate VARCHAR,
+    parent_task_id VARCHAR,
+    status VARCHAR NOT NULL CHECK (status IN ('pending', 'running', 'completed', 'failed', 'blocked')),
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
+    started_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
+    last_error VARCHAR
+);
+
+CREATE TABLE IF NOT EXISTS experiment_task_attempts (
+    attempt_id VARCHAR PRIMARY KEY,
+    task_id VARCHAR NOT NULL,
+    invocation_id VARCHAR NOT NULL,
+    attempt_number INTEGER NOT NULL,
+    started_at TIMESTAMPTZ NOT NULL,
+    ended_at TIMESTAMPTZ,
+    status VARCHAR NOT NULL CHECK (status IN ('running', 'completed', 'failed')),
+    runtime_seconds DOUBLE,
+    resource_usage JSON,
+    error VARCHAR,
+    UNIQUE (task_id, attempt_number)
+);
+
+CREATE TABLE IF NOT EXISTS preprocessed_series (
+    preprocessing_id VARCHAR PRIMARY KEY,
+    experiment_id VARCHAR NOT NULL,
+    forecast_instance_id VARCHAR NOT NULL,
+    cleaning_method VARCHAR NOT NULL,
+    input_hash VARCHAR NOT NULL,
+    output_hash VARCHAR NOT NULL,
+    context_target DOUBLE[] NOT NULL,
+    method_configuration JSON NOT NULL,
+    package_versions JSON NOT NULL,
+    parent_result_id VARCHAR,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
+    UNIQUE (experiment_id, forecast_instance_id, cleaning_method)
+);
+
+CREATE TABLE IF NOT EXISTS transformed_series (
+    transformation_id VARCHAR PRIMARY KEY,
+    experiment_id VARCHAR NOT NULL,
+    variant_id VARCHAR NOT NULL,
+    forecast_instance_id VARCHAR NOT NULL,
+    preprocessing_id VARCHAR NOT NULL,
+    transformation_method VARCHAR NOT NULL,
+    input_hash VARCHAR NOT NULL,
+    output_hash VARCHAR NOT NULL,
+    transformed_target DOUBLE[] NOT NULL,
+    parameters JSON NOT NULL,
+    parent_result_id VARCHAR NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
+    UNIQUE (experiment_id, variant_id, forecast_instance_id)
+);
+
+CREATE TABLE IF NOT EXISTS forecasts (
+    forecast_id VARCHAR PRIMARY KEY,
+    experiment_id VARCHAR NOT NULL,
+    variant_id VARCHAR NOT NULL,
+    forecast_instance_id VARCHAR NOT NULL,
+    candidate VARCHAR NOT NULL,
+    model_revision VARCHAR,
+    parent_result_id VARCHAR,
+    scale VARCHAR NOT NULL,
+    mean DOUBLE[] NOT NULL,
+    median DOUBLE[] NOT NULL,
+    quantile_levels DOUBLE[] NOT NULL,
+    quantiles DOUBLE[][] NOT NULL,
+    runtime_seconds DOUBLE,
+    execution_metadata JSON NOT NULL,
+    content_hash VARCHAR NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
+    UNIQUE (experiment_id, variant_id, forecast_instance_id, candidate)
+);
+
+CREATE TABLE IF NOT EXISTS forecast_components (
+    forecast_id VARCHAR NOT NULL,
+    component_forecast_id VARCHAR NOT NULL,
+    component_name VARCHAR NOT NULL,
+    weight DOUBLE NOT NULL,
+    PRIMARY KEY (forecast_id, component_forecast_id)
+);
+
+CREATE TABLE IF NOT EXISTS official_evaluations (
+    evaluation_id VARCHAR PRIMARY KEY,
+    experiment_id VARCHAR NOT NULL,
+    variant_id VARCHAR NOT NULL,
+    candidate VARCHAR NOT NULL,
+    benchmark_configuration_id VARCHAR NOT NULL,
+    evaluator VARCHAR NOT NULL,
+    evaluator_revision VARCHAR NOT NULL,
+    options JSON NOT NULL,
+    metrics JSON NOT NULL,
+    is_complete_manifest BOOLEAN NOT NULL,
+    is_submittable BOOLEAN NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
+    UNIQUE (experiment_id, variant_id, candidate, benchmark_configuration_id)
+);
+
+CREATE TABLE IF NOT EXISTS submission_exports (
+    export_id VARCHAR PRIMARY KEY,
+    experiment_id VARCHAR NOT NULL,
+    model_name VARCHAR NOT NULL,
+    output_directory VARCHAR NOT NULL,
+    manifest_revision VARCHAR NOT NULL,
+    validation JSON NOT NULL,
+    is_submittable BOOLEAN NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp
+);
+"""
+
+
 @dataclass(frozen=True)
 class EvaluationWindow:
     window_id: str
@@ -172,10 +369,16 @@ def migrate_database(path: Path = DEFAULT_DATABASE) -> Path:
     try:
         connection.execute("BEGIN TRANSACTION")
         connection.execute(SCHEMA_SQL)
+        connection.execute(POC1_SCHEMA_SQL)
         connection.execute(
             "INSERT INTO schema_versions (version, description) VALUES (?, ?) "
             "ON CONFLICT (version) DO NOTHING",
-            [SCHEMA_VERSION, "Foundation Stage 1 canonical GIFT-Eval import"],
+            [1, "Foundation Stage 1 canonical GIFT-Eval import"],
+        )
+        connection.execute(
+            "INSERT INTO schema_versions (version, description) VALUES (?, ?) "
+            "ON CONFLICT (version) DO NOTHING",
+            [SCHEMA_VERSION, "POC 1 official GIFT-Eval experiment pipeline"],
         )
         connection.execute("COMMIT")
     except BaseException:

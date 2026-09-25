@@ -1,4 +1,4 @@
-# Foundation Stage 1 architecture
+# ShapeFM POC architecture
 
 ## One authoritative database
 
@@ -15,9 +15,10 @@ changed input therefore creates a new dataset version.
 
 ## Coordinator and workers
 
-Only `ImportCoordinator` opens the database for writing. It streams source rows,
+Only a coordinator opens the database for writing. `ImportCoordinator` streams source rows,
 creates deterministic per-series tasks, and sends ordinary task objects to a
-pure worker function. Workers return result objects without database access.
+pure worker function. POC 1 uses the same rule through `POC1Coordinator` for
+Stages 2–6. Workers return result objects without database access.
 
 `workers = 1` calls the same worker function sequentially. `workers > 1` uses
 local processes but retains one coordinator and one writer. Worker count is an
@@ -33,10 +34,21 @@ tasks are retried. `runs` stores the logical restartable import, while
 `run_invocations` preserves every call, including all-skipped calls, with its
 scope, worker count, environment, status, and summary.
 
-## Scope and evolution
+## Schema evolution
 
 Schema version 1 contains only `schema_versions`, `datasets`, `series`,
 `evaluation_windows`, `runs`, `run_invocations`, `tasks`, and `task_attempts`.
-Future research tables will be introduced by explicit migrations when those stages are built.
-POC 2 will address Mantis, MOMENT, and training architecture. The complete
-six-stage experiment is intentionally outside this POC.
+
+Schema version 2 preserves all version 1 rows and adds:
+
+- benchmark and experiment identity: `benchmark_configurations`, `experiments`,
+  `experiment_variants`, and `forecast_instances`;
+- restart state: `experiment_invocations`, `experiment_tasks`, and
+  `experiment_task_attempts`;
+- scientific results: `preprocessed_series`, `transformed_series`, `forecasts`,
+  and `forecast_components`;
+- official outputs: `official_evaluations` and `submission_exports`.
+
+Arrays stay in DuckDB list columns; model weights and temporary worker data do
+not. POC 2 will address Mantis, MOMENT, and training architecture through later
+explicit migrations, without pre-creating speculative tables here.

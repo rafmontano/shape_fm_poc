@@ -1,0 +1,15 @@
+[project]
+name = "shapefm-chronos-2-environment"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "chronos-forecasting==2.2.2",
+]
+
+[tool.uv]
+required-version = "==0.12.18"
+package = false
+environments = [
+  "sys_platform == 'darwin' and platform_machine == 'arm64'",
+  "sys_platform == 'linux' and platform_machine == 'x86_64'",
+]

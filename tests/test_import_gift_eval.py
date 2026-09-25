@@ -133,13 +133,12 @@ class DatabaseTests(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.temp)
 
-    def test_migration_creates_only_stage_1_tables(self):
+    def test_migration_preserves_stage_1_tables_and_adds_poc1(self):
         database = migrate_database(self.temp / "test.duckdb")
         connection = duckdb.connect(str(database), read_only=True)
         names = {row[0] for row in connection.execute("SHOW TABLES").fetchall()}
         connection.close()
-        self.assertEqual(
-            names,
+        self.assertTrue(
             {
                 "schema_versions",
                 "datasets",
@@ -149,7 +148,24 @@ class DatabaseTests(unittest.TestCase):
                 "run_invocations",
                 "tasks",
                 "task_attempts",
-            },
+            }.issubset(names)
+        )
+        self.assertTrue(
+            {
+                "benchmark_configurations",
+                "experiments",
+                "experiment_variants",
+                "forecast_instances",
+                "experiment_invocations",
+                "experiment_tasks",
+                "experiment_task_attempts",
+                "preprocessed_series",
+                "transformed_series",
+                "forecasts",
+                "forecast_components",
+                "official_evaluations",
+                "submission_exports",
+            }.issubset(names)
         )
 
     def test_failure_is_preserved_and_retried(self):

@@ -55,6 +55,7 @@ rsconnect/
 /data/
 /models/
 /.cache/
+/results/
 
 # Generated environments inside independently locked uv projects
 /environments/*/.venv/

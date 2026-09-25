@@ -17,6 +17,7 @@ dependencies = [
 [project.scripts]
 shapefm-acquire = "shapefm.acquire_gift_eval:main"
 shapefm-import = "shapefm.import_gift_eval:main"
+shapefm-poc1 = "shapefm.poc1_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

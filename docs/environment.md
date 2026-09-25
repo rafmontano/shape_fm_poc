@@ -86,8 +86,24 @@ RENV_PATHS_CACHE="$PWD/.tools/renv-cache" \
   Rscript -e 'renv::restore(prompt = FALSE)'
 ```
 
-Only DBI and duckdb are application dependencies. R Arrow and forecasting
-packages are intentionally absent.
+Foundation Stage 1 uses DBI and DuckDB. POC 1 adds `forecast` for `tsclean` and
+AutoARIMA plus `jsonlite` for the isolated R worker protocol. R Arrow remains
+unnecessary. Training environments are deliberately deferred to POC 2, which
+will address Mantis and MOMENT separately.
 
-Model environments and training architecture are deliberately deferred to POC 2,
-which will address Mantis and MOMENT separately from this ingestion foundation.
+## Chronos-2 environment (POC 1)
+
+Chronos-2 is isolated and locked separately:
+
+```sh
+.tools/uv/uv sync --project environments/chronos-2 --locked
+```
+
+The model is `amazon/chronos-2` at revision
+`29ec3766d36d6f73f0696f85560a422f50e8498c`, used through
+`chronos-forecasting==2.2.2`. Weights are cached outside Git. `device=auto`
+selects CUDA on Ubuntu when available, then supported Apple MPS, otherwise CPU;
+the actual device and float32 dtype are recorded per result. Environments are
+restored independently on macOS and Ubuntu rather than copied between them.
+
+POC 1 also adds locked R packages `forecast` 8.24.0 and `jsonlite` 2.0.0.

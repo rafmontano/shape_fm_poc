@@ -1,0 +1,46 @@
+{
+  "contract_version": "poc1-v2-official-seasonality",
+  "benchmark": {
+    "configuration": "m4_daily/D/short",
+    "dataset_name": "m4_daily",
+    "term": "short",
+    "gift_eval_revision": "4d5ab3fa0fe7451bbf59bb1ff6dd76e6e414d64a"
+  },
+  "cleaning": ["identity", "tsclean"],
+  "transformations": ["identity", "minmax_then_standardize"],
+  "models": {
+    "auto_arima": {
+      "package": "forecast",
+      "settings": {"stepwise": true, "approximation": false, "allowdrift": true, "allowmean": true, "num_cores": 1}
+    },
+    "chronos_2": {
+      "repository": "amazon/chronos-2",
+      "revision": "29ec3766d36d6f73f0696f85560a422f50e8498c",
+      "chronos_forecasting": "2.2.2",
+      "dtype": "float32",
+      "quantile_levels": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
+      "predict_batches_jointly": false,
+      "internal_cpu_threads": 1
+    }
+  },
+  "adjustment": "identity",
+  "combination": {"method": "equal_weight", "weights": {"auto_arima": 0.5, "chronos_2": 0.5}},
+  "provisional_candidate": {
+    "cleaning": "identity",
+    "transformation": "minmax_then_standardize",
+    "candidate": "equal_weight",
+    "label": "provisional"
+  },
+  "submission_metadata": {
+    "status": "draft",
+    "submission_approved": false,
+    "model_name": null,
+    "model_type": null,
+    "model_dtype": "float64-and-float32",
+    "model_link": null,
+    "code_link": null,
+    "org": null,
+    "testdata_leakage": null,
+    "replication_code_available": "No"
+  }
+}

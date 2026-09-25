@@ -1,5 +1,32 @@
 # ShapeFM proof of concept
 
+Foundation Stage 1 is frozen at tag `v0.1-foundation`. POC 1 adds an
+end-to-end, restartable research grid while keeping official GIFT-Eval as the
+enclosing benchmark and sole evaluation authority.
+
+## Start POC 1 in RStudio
+
+```r
+source("R/shapefm_import.R")
+source("R/shapefm_database.R")
+source("R/shapefm_poc1.R")
+
+plan <- shapefm_plan_poc1(scope = "smoke")
+shapefm_run_poc1(plan, workers = 1L)
+
+db <- shapefm_open()
+forecast <- shapefm_get_forecast(db, plan, series_id = "0")
+results <- shapefm_get_official_results(db, plan)
+print(results) # concise MASE, sMAPE, CRPS, and RMSE comparison
+status <- shapefm_experiment_status(db, plan)
+shapefm_close(db)
+```
+
+The smoke plan means the first ten **official forecast instances**, not the
+first ten arbitrary rows. It produces 4 cleaning/transformation branches and
+three candidates per branch (AutoARIMA, Chronos-2, and their equal-weight
+combination), for 120 candidate forecasts. See [POC 1](docs/poc1.md).
+
 Foundation Stage 1 imports pinned GIFT-Eval M4 Daily source data into one
 authoritative DuckDB database: `data/shapefm.duckdb`. The original source under
 `data/source/gift_eval/` remains immutable.
@@ -68,11 +95,11 @@ coordinator commits each result and task completion in one transaction.
 
 ## Scope
 
-This POC implements foundational ingestion only. It deliberately excludes the
-paper's six research stages, preprocessing, forecasting, models, training,
-Snakemake, NAS coordination, and multi-machine execution. Future stages will be
-added through explicit schema migrations. POC 2 will address Mantis, MOMENT, and
-training architecture.
+Foundation Stage 1 remains the canonical ingestion layer. POC 1 demonstrates
+identity/`tsclean` preprocessing, reversible transformations, AutoARIMA,
+Chronos-2, equal-weight combination, and official GIFT-Eval evaluation. It
+deliberately excludes Mantis, MOMENT, fine-tuning, learned selection, NAS,
+multi-machine execution, and automatic leaderboard submission.
 
 See [architecture](docs/architecture.md), [data contract](docs/data-contract.md),
 [environment setup](docs/environment.md), and the
