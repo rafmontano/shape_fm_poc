@@ -1,0 +1,6 @@
+# Optional machine-specific overrides. Without these, ShapeFM uses:
+#   <repository>/data/source/gift_eval
+#   <repository>/data/shapefm.duckdb
+# Uncomment only when data belongs at another location.
+# SHAPEFM_GIFT_EVAL_ROOT=/path/to/gift_eval
+# SHAPEFM_DATABASE=/path/to/shapefm.duckdb

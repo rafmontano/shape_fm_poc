@@ -39,11 +39,43 @@ vignettes/*.pdf
 # R Environment Variables
 .Renviron
 
-# pkgdown site
-docs/
+# Machine-local IDE state
+/.idea/
 
 # translation temp files
 po/*~
 
 # RStudio Connect folder
 rsconnect/
+
+# Legacy generated Stage 1 output (no longer authoritative)
+/stage/
+
+# Immutable downloaded source, model weights, caches, and canonical DuckDB database
+/data/
+/models/
+/.cache/
+
+# Generated environments inside independently locked uv projects
+/environments/*/.venv/
+
+# Repository-local tools and Python environment
+/.tools/
+/.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# macOS metadata
+.DS_Store
+
+# Test scratch space
+/.test-tmp/
+
+# renv private library and transient state (activation files remain tracked)
+/renv/library/
+/renv/staging/
+/renv/python/
+/renv/cellar/
+/renv/sandbox/
+/renv/lock/

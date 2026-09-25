@@ -1,0 +1,3 @@
+[submodule "external/gift-eval"]
+	path = external/gift-eval
+	url = https://github.com/SalesforceAIResearch/gift-eval.git

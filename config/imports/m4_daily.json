@@ -1,0 +1,12 @@
+{
+  "schema_version": "1",
+  "dataset_name": "m4_daily",
+  "source_system": "Salesforce/GiftEval",
+  "benchmark": {
+    "frequency": "D",
+    "term": "short",
+    "prediction_length": 14,
+    "evaluation_windows": 1,
+    "boundary_convention": "zero-based, end-exclusive"
+  }
+}

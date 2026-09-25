@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "shape-fm-poc"
+version = "0.1.0"
+description = "ShapeFM canonical time-series database proof of concept"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "duckdb>=1.2",
+  "huggingface-hub>=0.36,<0.37",
+  "pyarrow>=20",
+]
+
+[project.scripts]
+shapefm-acquire = "shapefm.acquire_gift_eval:main"
+shapefm-import = "shapefm.import_gift_eval:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.uv]
+required-version = "==0.12.18"
+environments = [
+  "sys_platform == 'darwin' and platform_machine == 'arm64'",
+  "sys_platform == 'linux' and platform_machine == 'x86_64'",
+]

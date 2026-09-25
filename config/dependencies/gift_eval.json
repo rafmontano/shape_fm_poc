@@ -1,0 +1,28 @@
+{
+  "code": {
+    "repository": "https://github.com/SalesforceAIResearch/gift-eval.git",
+    "commit": "4d5ab3fa0fe7451bbf59bb1ff6dd76e6e414d64a",
+    "path": "external/gift-eval"
+  },
+  "dataset": {
+    "repository": "Salesforce/GiftEval",
+    "revision": "30841734ac5cfddbd0c3bad6d09d2b6b32becbb0",
+    "default_local_source_directory": "data/source/gift_eval",
+    "phase_0_1_subset": "m4_daily",
+    "required_files": [
+      "data-00000-of-00001.arrow",
+      "dataset_info.json",
+      "state.json"
+    ],
+    "phase_0_1_sha256": {
+      "data-00000-of-00001.arrow": "bb82fc356772441f3354ba9d74aaa7288db2d7e589d5e62b43b8a87736bc47e2",
+      "dataset_info.json": "ea92f9b9238f54ada08d0d52123e1f07ee5e08a08fdfc0b8658789f312596dbf",
+      "state.json": "cbf09993d018ff75ea8a31fcf9b26a80c4a8499f16aca675c91a0de4d3ec6d2d"
+    }
+  },
+  "references": {
+    "code_license": "https://github.com/SalesforceAIResearch/gift-eval/blob/4d5ab3fa0fe7451bbf59bb1ff6dd76e6e414d64a/LICENSE.txt",
+    "dataset_card": "https://huggingface.co/datasets/Salesforce/GiftEval",
+    "citation": "https://github.com/SalesforceAIResearch/gift-eval/tree/4d5ab3fa0fe7451bbf59bb1ff6dd76e6e414d64a#citation"
+  }
+}

@@ -1,2 +1,79 @@
-# shape_fm_poc
-shape_fm_poc
+# ShapeFM proof of concept
+
+Foundation Stage 1 imports pinned GIFT-Eval M4 Daily source data into one
+authoritative DuckDB database: `data/shapefm.duckdb`. The original source under
+`data/source/gift_eval/` remains immutable.
+
+## Start here in RStudio
+
+1. Open `shape_fm_poc.Rproj`.
+2. If this is a new machine, source
+   `workflows/gate_00_setup/01_prepare_gift_eval.R` once.
+3. Source `workflows/stage_01_import/01_smoke_m4_daily.R`. This creates or
+   migrates the database and imports ten series sequentially.
+4. Source `workflows/stage_01_import/03_inspect_series.R`. It prints import
+   status and retrieves series `0` as an ordinary R object.
+
+The smoke workflow is restart-safe. Running it again skips its ten completed
+tasks without duplicating series or windows. The later full import has the same
+dataset and logical run identity, skips those ten tasks, and extends the database
+with the remaining 4,217 series. Every call has its own invocation record.
+
+## Researcher interface
+
+R:
+
+```r
+source("R/shapefm_import.R")
+source("R/shapefm_database.R")
+
+db <- shapefm_open()
+series <- shapefm_get_series(db, dataset = "m4_daily", series_id = "0")
+status <- shapefm_stage_status(db, stage = "import", dataset = "m4_daily")
+shapefm_close(db)
+```
+
+Python:
+
+```python
+from shapefm import ShapeFMDatabase
+
+with ShapeFMDatabase.open() as db:
+    series = db.get_series(dataset="m4_daily", series_id="0")
+    status = db.stage_status(stage="import", dataset="m4_daily")
+```
+
+Researchers use these objects rather than source-file or SQL details.
+
+## Stage 1 commands
+
+```sh
+# Create or migrate the database
+.tools/uv/uv run --locked shapefm-import migrate
+
+# Import the ten-series smoke sample (normal sequential path)
+.tools/uv/uv run --locked shapefm-import import --max-series 10 --workers 1
+
+# Inspect status and retrieve one series
+.tools/uv/uv run --locked shapefm-import status --dataset m4_daily
+.tools/uv/uv run --locked shapefm-import get --dataset m4_daily --series-id 0
+
+# Available later; do not run as part of the smoke gate
+Rscript workflows/stage_01_import/02_import_m4_daily.R
+```
+
+Set `workers` above one only for local parallel computation. Workers receive
+ordinary task objects and never open writable DuckDB connections; the single
+coordinator commits each result and task completion in one transaction.
+
+## Scope
+
+This POC implements foundational ingestion only. It deliberately excludes the
+paper's six research stages, preprocessing, forecasting, models, training,
+Snakemake, NAS coordination, and multi-machine execution. Future stages will be
+added through explicit schema migrations. POC 2 will address Mantis, MOMENT, and
+training architecture.
+
+See [architecture](docs/architecture.md), [data contract](docs/data-contract.md),
+[environment setup](docs/environment.md), and the
+[Stage 1 walkthrough](docs/foundation-stage-1.md).
