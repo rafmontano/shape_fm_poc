@@ -40,7 +40,9 @@ The development grid is:
 For ten forecast instances, deterministic task counts are Stage 2: 20,
 Stage 3: 40, Stage 4: 80, Stage 5: 120, Stage 6: 12. Gates are strict and run in
 order. Completed IDs skip on restart; failures retain attempts and retry alone.
-`workers=1` is the default. Larger values use spawned local workers for pure
+`sequential_safe` is the default execution profile. Profiles and manual
+overrides are invocation controls: they are recorded but never enter experiment
+or task identity. Larger profile values use bounded local workers for pure
 computations, while R and model adapters keep internal CPU threading at one.
 Stage 2 and Stage 4 split external R/model work into bounded `batch_size`
 payloads. Up to `workers` payloads may run concurrently, but only the coordinator
@@ -66,7 +68,10 @@ completed variant can be frozen later without recomputing upstream results.
 .tools/uv/uv run --locked shapefm-poc1 plan --scope smoke
 
 # Run/resume all gates (sequential default)
-.tools/uv/uv run --locked shapefm-poc1 run --workers 1 --device auto
+.tools/uv/uv run --locked shapefm-poc1 run --profile sequential_safe
+
+# Run/resume on the validated Mac profile
+.tools/uv/uv run --locked shapefm-poc1 run --profile mac_m1pro_10core_16gb
 
 # Inspect status and official results
 .tools/uv/uv run --locked shapefm-poc1 status
@@ -79,6 +84,10 @@ completed variant can be frozen later without recomputing upstream results.
 .tools/uv/uv run --locked shapefm-poc1 plan --scope m4_daily
 .tools/uv/uv run --locked shapefm-poc1 plan --scope manifest
 ```
+
+See [local execution](local-execution.md) for committed profile values,
+accelerator validation, persistent Chronos batching, calibration, and the
+Ubuntu CUDA validation procedure.
 
 The subset exporter writes the official 15-column shape but marks its config
 `NON_SUBMITTABLE_DEVELOPMENT_SUBSET` and records all missing manifest rows. A

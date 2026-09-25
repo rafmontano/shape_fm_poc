@@ -12,7 +12,7 @@ source("R/shapefm_database.R")
 source("R/shapefm_poc1.R")
 
 plan <- shapefm_plan_poc1(scope = "smoke")
-shapefm_run_poc1(plan, workers = 1L)
+shapefm_run_poc1(plan, profile = "sequential_safe")
 
 db <- shapefm_open()
 forecast <- shapefm_get_forecast(db, plan, series_id = "0")
@@ -103,4 +103,5 @@ multi-machine execution, and automatic leaderboard submission.
 
 See [architecture](docs/architecture.md), [data contract](docs/data-contract.md),
 [environment setup](docs/environment.md), and the
-[Stage 1 walkthrough](docs/foundation-stage-1.md).
+[Stage 1 walkthrough](docs/foundation-stage-1.md). Hardware-aware POC 1
+execution is described in [local execution](docs/local-execution.md).

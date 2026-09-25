@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import tempfile
 from dataclasses import asdict
 from pathlib import Path
 
+from .calibration import calibrate
 from .database import DEFAULT_DATABASE
+from .execution import resolve_execution_profile
 from .poc1 import (
     ExperimentPlan,
     POC1Coordinator,
@@ -27,9 +30,20 @@ def main() -> None:
     run_parser = subparsers.add_parser("run")
     run_parser.add_argument("--experiment-id")
     run_parser.add_argument("--stage", type=int, choices=range(2, 7))
-    run_parser.add_argument("--workers", type=int, default=1)
-    run_parser.add_argument("--device", default="auto")
-    run_parser.add_argument("--batch-size", type=int, default=8)
+    run_parser.add_argument("--profile", default="sequential_safe")
+    run_parser.add_argument("--workers", type=int)
+    run_parser.add_argument("--device")
+    run_parser.add_argument("--batch-size", type=int)
+    run_parser.add_argument("--cleaning-workers", type=int)
+    run_parser.add_argument("--transformation-workers", type=int)
+    run_parser.add_argument("--autoarima-workers", type=int)
+    run_parser.add_argument("--chronos-processes", type=int)
+    run_parser.add_argument("--chronos-batch-size", type=int)
+    run_parser.add_argument("--combination-workers", type=int)
+    run_parser.add_argument("--evaluation-workers", type=int)
+    run_parser.add_argument(
+        "--cpu-gpu-overlap", action=argparse.BooleanOptionalAction, default=None
+    )
     status_parser = subparsers.add_parser("status")
     status_parser.add_argument("--experiment-id")
     results_parser = subparsers.add_parser("results")
@@ -42,6 +56,12 @@ def main() -> None:
     get_parser.add_argument("--variant-id", required=True)
     get_parser.add_argument("--series-id", required=True)
     get_parser.add_argument("--candidate", required=True)
+    hardware_parser = subparsers.add_parser("validate-hardware")
+    hardware_parser.add_argument("--profile", required=True)
+    hardware_parser.add_argument("--chronos-smoke", action="store_true")
+    calibration_parser = subparsers.add_parser("calibrate")
+    calibration_parser.add_argument("--profile", required=True)
+    calibration_parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if args.command == "get-forecast":
         print(json.dumps(asdict(get_forecast(args.database, args.experiment_id, args.variant_id, args.series_id, args.candidate))))
@@ -55,6 +75,22 @@ def main() -> None:
         )
         print(json.dumps(result, default=str))
         return
+    if args.command == "validate-hardware":
+        profile, _ = resolve_execution_profile(args.profile)
+        with POC1Coordinator(args.database) as coordinator:
+            result = coordinator.validate_hardware(profile, args.chronos_smoke)
+        print(json.dumps(result, default=str))
+        return
+    if args.command == "calibrate":
+        profile, _ = resolve_execution_profile(args.profile)
+        with tempfile.TemporaryDirectory(prefix="shapefm-calibration-cli-") as directory:
+            with POC1Coordinator(Path(directory) / "hardware.duckdb") as coordinator:
+                hardware = coordinator.validate_hardware(
+                    profile, run_chronos_smoke=False
+                )["hardware"]
+        result = calibrate(profile, hardware, args.database, args.output)
+        print(json.dumps(result, default=str))
+        return
     selected_experiment = getattr(args, "experiment_id", None)
     if args.command in {"run", "export"} and selected_experiment is None:
         selected_experiment = latest_experiment_id(args.database)
@@ -64,9 +100,34 @@ def main() -> None:
             result = asdict(value) if isinstance(value, ExperimentPlan) else value
         elif args.command == "run":
             experiment_id = selected_experiment
+            overrides = {
+                "cleaning_workers": args.cleaning_workers,
+                "transformation_workers": args.transformation_workers,
+                "autoarima_workers": args.autoarima_workers,
+                "chronos_processes": args.chronos_processes,
+                "chronos_inference_batch_size": args.chronos_batch_size
+                if args.chronos_batch_size is not None
+                else args.batch_size,
+                "combination_workers": args.combination_workers,
+                "evaluation_workers": args.evaluation_workers,
+                "cpu_gpu_overlap": args.cpu_gpu_overlap,
+            }
+            if args.workers is not None:
+                for field in (
+                    "cleaning_workers",
+                    "transformation_workers",
+                    "autoarima_workers",
+                    "combination_workers",
+                    "evaluation_workers",
+                ):
+                    if overrides[field] is None:
+                        overrides[field] = args.workers
+            if args.device and args.device != "auto":
+                overrides["required_accelerator"] = args.device
+            execution = resolve_execution_profile(args.profile, overrides)
             if args.stage:
                 result = coordinator.run_gate(
-                    experiment_id, args.stage, args.workers, args.device, args.batch_size
+                    experiment_id, args.stage, execution=execution
                 )
             else:
                 count = coordinator.connection.execute(
@@ -74,7 +135,7 @@ def main() -> None:
                     [experiment_id],
                 ).fetchone()[0]
                 plan = ExperimentPlan(experiment_id, "stored", count, 4, {}, "m4_daily/D/short")
-                result = coordinator.run_all(plan, args.workers, args.device, args.batch_size)
+                result = coordinator.run_all(plan, execution=execution)
         else:
             result = coordinator.export_candidate(
                 selected_experiment, args.model_name

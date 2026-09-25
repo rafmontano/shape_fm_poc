@@ -1,9 +1,12 @@
+import json
 import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from shapefm.config import json_fingerprint
+from shapefm.execution import resolve_execution_profile
 from shapefm.poc1 import (
     POC1Coordinator,
     _batches,
@@ -244,7 +247,13 @@ class TransactionTests(unittest.TestCase):
             ],
             "packages": {},
         }
-        result = self.coordinator.run_gate("experiment", 2, workers=1, batch_size=1)
+        result = self.coordinator.run_gate(
+            "experiment",
+            2,
+            execution=resolve_execution_profile(
+                "sequential_safe", {"cleaning_workers": 2}
+            ),
+        )
         self.assertEqual(result["selected"], 1)
         self.assertEqual(connection.execute("SELECT count(*) FROM preprocessed_series").fetchone()[0], 2)
         self.assertEqual(
@@ -252,6 +261,23 @@ class TransactionTests(unittest.TestCase):
                 "SELECT attempt_count FROM experiment_tasks ORDER BY task_id"
             ).fetchall(),
             [(1,), (2,)],
+        )
+        invocations = connection.execute(
+            """SELECT execution_profile, resolved_execution, execution_overrides, hardware
+            FROM experiment_invocations
+            WHERE CAST(execution_overrides AS VARCHAR) != '{}'"""
+        ).fetchall()
+        invocation = next(
+            row for row in invocations
+            if json.loads(row[2]) == {"cleaning_workers": 2}
+        )
+        self.assertEqual(invocation[0], "sequential_safe")
+        self.assertEqual(json.loads(invocation[1])["cleaning_workers"], 2)
+        self.assertEqual(json.loads(invocation[2]), {"cleaning_workers": 2})
+        self.assertIn("logical_cpu_count", json.loads(invocation[3]))
+        self.assertEqual(
+            connection.execute("SELECT task_id FROM experiment_tasks ORDER BY task_id").fetchall(),
+            [("task-0",), ("task-1",)],
         )
 
     def test_stage4_batched_failure_preserves_forecast_and_retries_rest(self):
@@ -322,6 +348,98 @@ class TransactionTests(unittest.TestCase):
             ).fetchall(),
             [(1,), (2,)],
         )
+
+    def test_chronos_oom_restarts_splits_and_preserves_successes(self):
+        self._insert_benchmark_and_instances()
+        connection = self.coordinator.connection
+        connection.execute(
+            """INSERT INTO experiment_variants
+            (variant_id, experiment_id, cleaning_method, transformation_method,
+             adjustment_method, configuration)
+            VALUES ('variant', 'experiment', 'identity', 'identity', 'identity', '{}')"""
+        )
+        for index in range(2):
+            connection.execute(
+                """INSERT INTO transformed_series
+                (transformation_id, experiment_id, variant_id,
+                 forecast_instance_id, preprocessing_id, transformation_method,
+                 input_hash, output_hash, transformed_target, parameters,
+                 parent_result_id)
+                VALUES (?, 'experiment', 'variant', ?, ?, 'identity', 'in', 'out',
+                        [1.0, 2.0, 3.0], '{}', ?)""",
+                [f"transformed-{index}", f"instance-{index}", f"pre-{index}", f"pre-{index}"],
+            )
+            connection.execute(
+                """INSERT INTO experiment_tasks
+                (task_id, experiment_id, stage, forecast_instance_id, variant_id,
+                 candidate, status)
+                VALUES (?, 'experiment', 4, ?, 'variant', 'chronos_2', 'pending')""",
+                [f"task-{index}", f"instance-{index}"],
+            )
+
+        class OOMThenSuccessWorker:
+            starts = 0
+            requests = 0
+
+            def __init__(self, command):
+                self.command = command
+
+            def start(self):
+                type(self).starts += 1
+                return {
+                    "type": "ready",
+                    "accelerator_backend": "test",
+                    "accelerator_memory": {"available_bytes": None},
+                    "model_load_count": 1,
+                    "model_load_seconds": 0.01,
+                }
+
+            def request(self, payload):
+                type(self).requests += 1
+                if type(self).requests == 1:
+                    return {
+                        "type": "error",
+                        "batch_id": payload["batch_id"],
+                        "error_kind": "out_of_memory",
+                        "error": "simulated OOM",
+                    }
+                values = [3.0, 3.0]
+                return {
+                    "type": "result",
+                    "batch_id": payload["batch_id"],
+                    "results": [
+                        {
+                            "id": job["id"],
+                            "mean": values,
+                            "median": values,
+                            "quantiles": [values] * 9,
+                        }
+                        for job in payload["jobs"]
+                    ],
+                    "effective_batch_size": len(payload["jobs"]),
+                    "inference_seconds": 0.1,
+                    "peak_process_memory_bytes": 100,
+                    "accelerator_memory": {"available_bytes": None},
+                }
+
+            def close(self, force=False):
+                return None
+
+        self.coordinator.execution_hardware = lambda profile: {"accelerator_backend": "test"}
+        execution = resolve_execution_profile(
+            "sequential_safe", {"chronos_inference_batch_size": 2}
+        )
+        with patch("shapefm.poc1.PersistentChronosWorker", OOMThenSuccessWorker):
+            result = self.coordinator.run_gate("experiment", 4, execution=execution)
+        self.assertEqual(result["counts"], {"completed": 2})
+        self.assertEqual(OOMThenSuccessWorker.starts, 2)
+        self.assertEqual(connection.execute("SELECT count(*) FROM forecasts").fetchone()[0], 2)
+        metadata = [
+            json.loads(row[0])
+            for row in connection.execute("SELECT execution_metadata FROM forecasts").fetchall()
+        ]
+        self.assertTrue(all(value["retry_count"] == 1 for value in metadata))
+        self.assertTrue(all(value["effective_batch_size"] == 1 for value in metadata))
 
 
 if __name__ == "__main__":

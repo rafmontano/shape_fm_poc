@@ -9,7 +9,7 @@ from typing import Any
 import duckdb
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 DEFAULT_DATABASE = Path("data/shapefm.duckdb")
 
 
@@ -199,7 +199,11 @@ CREATE TABLE IF NOT EXISTS experiment_invocations (
     ended_at TIMESTAMPTZ,
     status VARCHAR NOT NULL CHECK (status IN ('running', 'completed', 'failed')),
     summary JSON,
-    error VARCHAR
+    error VARCHAR,
+    execution_profile VARCHAR,
+    resolved_execution JSON,
+    execution_overrides JSON,
+    hardware JSON
 );
 
 CREATE TABLE IF NOT EXISTS experiment_tasks (
@@ -371,6 +375,18 @@ def migrate_database(path: Path = DEFAULT_DATABASE) -> Path:
         connection.execute(SCHEMA_SQL)
         connection.execute(POC1_SCHEMA_SQL)
         connection.execute(
+            "ALTER TABLE experiment_invocations ADD COLUMN IF NOT EXISTS execution_profile VARCHAR"
+        )
+        connection.execute(
+            "ALTER TABLE experiment_invocations ADD COLUMN IF NOT EXISTS resolved_execution JSON"
+        )
+        connection.execute(
+            "ALTER TABLE experiment_invocations ADD COLUMN IF NOT EXISTS execution_overrides JSON"
+        )
+        connection.execute(
+            "ALTER TABLE experiment_invocations ADD COLUMN IF NOT EXISTS hardware JSON"
+        )
+        connection.execute(
             "INSERT INTO schema_versions (version, description) VALUES (?, ?) "
             "ON CONFLICT (version) DO NOTHING",
             [1, "Foundation Stage 1 canonical GIFT-Eval import"],
@@ -378,7 +394,12 @@ def migrate_database(path: Path = DEFAULT_DATABASE) -> Path:
         connection.execute(
             "INSERT INTO schema_versions (version, description) VALUES (?, ?) "
             "ON CONFLICT (version) DO NOTHING",
-            [SCHEMA_VERSION, "POC 1 official GIFT-Eval experiment pipeline"],
+            [2, "POC 1 official GIFT-Eval experiment pipeline"],
+        )
+        connection.execute(
+            "INSERT INTO schema_versions (version, description) VALUES (?, ?) "
+            "ON CONFLICT (version) DO NOTHING",
+            [SCHEMA_VERSION, "POC 1.1 hardware-aware local execution"],
         )
         connection.execute("COMMIT")
     except BaseException:

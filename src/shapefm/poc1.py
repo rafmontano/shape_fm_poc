@@ -11,6 +11,7 @@ import tempfile
 import time
 import uuid
 import csv
+from collections import deque
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +21,14 @@ import duckdb
 
 from .config import canonical_json, json_fingerprint
 from .database import DEFAULT_DATABASE, migrate_database
+from .execution import (
+    GIB,
+    ExecutionProfile,
+    PersistentChronosWorker,
+    resolve_execution_profile,
+    system_hardware,
+    validate_system_memory,
+)
 from .orchestration import repository_root
 from .transformations import TransformationResult, inverse, transform
 from .utils import utc_now
@@ -135,6 +144,21 @@ def _batches(values: list[Any], batch_size: int) -> list[list[Any]]:
     return [values[offset : offset + batch_size] for offset in range(0, len(values), batch_size)]
 
 
+def _length_aware_batches(
+    jobs: list[dict[str, Any]], batch_size: int
+) -> list[list[dict[str, Any]]]:
+    """Batch by power-of-two context ranges, then by the configured bound."""
+    grouped: dict[int, list[dict[str, Any]]] = {}
+    for job in sorted(jobs, key=lambda value: (len(value["context"]), value["id"])):
+        length_bucket = max(1, len(job["context"])).bit_length()
+        grouped.setdefault(length_bucket, []).append(job)
+    return [
+        batch
+        for bucket in sorted(grouped)
+        for batch in _batches(grouped[bucket], batch_size)
+    ]
+
+
 def _run_external_batches(
     function: Callable[[Any], Any], batches: list[Any], workers: int
 ) -> Iterable[Any]:
@@ -180,6 +204,7 @@ class POC1Coordinator:
         self.config = json.loads(
             (self.root / "config/experiments/poc1.json").read_text(encoding="utf-8")
         )
+        self._hardware_cache: dict[str, dict[str, Any]] = {}
 
     def close(self) -> None:
         self.connection.close()
@@ -437,12 +462,23 @@ class POC1Coordinator:
         return task_id
 
     def _begin_invocation(
-        self, experiment_id: str, stage: int, workers: int, device: str, batch_size: int
+        self,
+        experiment_id: str,
+        stage: int,
+        workers: int,
+        device: str,
+        batch_size: int,
+        profile: ExecutionProfile | None = None,
+        overrides: dict[str, Any] | None = None,
+        hardware: dict[str, Any] | None = None,
     ) -> str:
         invocation_id = f"poc1-invocation/{uuid.uuid4().hex}"
         self.connection.execute(
-            """INSERT INTO experiment_invocations VALUES
-            (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'running', NULL, NULL)""",
+            """INSERT INTO experiment_invocations
+            (invocation_id, experiment_id, requested_gate, worker_count, device,
+             batch_size, environment, machine, started_at, status,
+             execution_profile, resolved_execution, execution_overrides, hardware)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?)""",
             [
                 invocation_id,
                 experiment_id,
@@ -455,6 +491,10 @@ class POC1Coordinator:
                     {"system": platform.system(), "machine": platform.machine(), "node": platform.node()}
                 ),
                 utc_now(),
+                profile.name if profile else "legacy_manual",
+                canonical_json(profile.to_dict()) if profile else None,
+                canonical_json(overrides or {}),
+                canonical_json(hardware or {}),
             ],
         )
         self.connection.execute(
@@ -470,6 +510,115 @@ class POC1Coordinator:
             [experiment_id, stage],
         )
         return invocation_id
+
+    def _chronos_hardware(self, requested_device: str) -> dict[str, Any]:
+        try:
+            completed = subprocess.run(
+                [
+                    str(self.root / "environments/chronos-2/.venv/bin/python"),
+                    str(self.root / "src/shapefm/chronos_worker.py"),
+                    "hardware",
+                    "--device",
+                    requested_device,
+                ],
+                cwd=self.root,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        except subprocess.CalledProcessError as error:
+            detail = (error.stderr or error.stdout or str(error)).strip()
+            raise RuntimeError(
+                f"required accelerator {requested_device!r} is unavailable: {detail}"
+            ) from error
+        return json.loads(completed.stdout)
+
+    def execution_hardware(self, profile: ExecutionProfile) -> dict[str, Any]:
+        requested = profile.required_accelerator or "auto"
+        if requested not in self._hardware_cache:
+            accelerator = self._chronos_hardware(requested)
+            expected = profile.expected_accelerator_name
+            if expected and expected.lower() not in accelerator["accelerator_device_name"].lower():
+                raise RuntimeError(
+                    f"profile {profile.name} requires {expected}, detected "
+                    f"{accelerator['accelerator_device_name']}"
+                )
+            system = system_hardware()
+            validate_system_memory(profile, system)
+            r_output = subprocess.run(
+                [
+                    "Rscript",
+                    "-e",
+                    'cat(R.version.string, "|", as.character(packageVersion("forecast")))',
+                ],
+                cwd=self.root,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            ).stdout.split("|")
+            self._hardware_cache[requested] = {
+                **system,
+                **accelerator,
+                "R_version": r_output[0].strip(),
+                "forecast_package_version": r_output[1].strip(),
+                "model_revision": self.config["models"]["chronos_2"]["revision"],
+                "model_dtype": self.config["models"]["chronos_2"]["dtype"],
+            }
+        return self._hardware_cache[requested]
+
+    def validate_hardware(
+        self, profile: ExecutionProfile, run_chronos_smoke: bool = False
+    ) -> dict[str, Any]:
+        details = self.execution_hardware(profile)
+        result: dict[str, Any] = {
+            "profile": profile.to_dict(),
+            "hardware": details,
+            "chronos_smoke": None,
+        }
+        if not run_chronos_smoke:
+            return result
+        row = self.connection.execute(
+            "SELECT context_target, horizon FROM forecast_instances ORDER BY official_position LIMIT 1"
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("plan the smoke experiment before running Chronos validation")
+        chronos = self.config["models"]["chronos_2"]
+        command = [
+            str(self.root / "environments/chronos-2/.venv/bin/python"),
+            str(self.root / "src/shapefm/chronos_worker.py"),
+            "serve",
+            "--model",
+            chronos["repository"],
+            "--revision",
+            chronos["revision"],
+            "--device",
+            profile.required_accelerator or "auto",
+        ]
+        with PersistentChronosWorker(command) as worker:
+            response = worker.request(
+                {
+                    "command": "predict",
+                    "batch_id": "hardware-validation",
+                    "jobs": [{"id": "validation", "context": row[0]}],
+                    "horizon": row[1],
+                    "quantile_levels": list(QUANTILES),
+                    "inference_batch_size": 1,
+                }
+            )
+            if response.get("type") != "result" or len(response["results"]) != 1:
+                raise RuntimeError(f"Chronos hardware validation failed: {response}")
+            result["chronos_smoke"] = {
+                "model_load_seconds": worker.ready["model_load_seconds"],
+                "model_load_count": worker.ready["model_load_count"],
+                "inference_seconds": response["inference_seconds"],
+                "effective_batch_size": response["effective_batch_size"],
+                "forecast_horizon": len(response["results"][0]["mean"]),
+                "backend": worker.ready["accelerator_backend"],
+                "device_name": worker.ready["accelerator_device_name"],
+            }
+        return result
 
     def _start_tasks(self, rows: list[tuple], invocation_id: str) -> dict[str, int]:
         attempts = {}
@@ -581,26 +730,66 @@ class POC1Coordinator:
         workers: int = 1,
         device: str = "auto",
         batch_size: int = 8,
+        execution: tuple[ExecutionProfile, dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         if stage not in STAGES or workers < 1 or batch_size < 1:
             raise ValueError("stage must be 2..6; workers and batch_size must be positive")
+        legacy_batch_size = batch_size
+        if execution is None:
+            profile, overrides = resolve_execution_profile(
+                "sequential_safe",
+                {
+                    "cleaning_workers": workers,
+                    "transformation_workers": workers,
+                    "autoarima_workers": workers,
+                    "chronos_inference_batch_size": batch_size,
+                    "combination_workers": workers,
+                    "evaluation_workers": workers,
+                },
+            )
+        else:
+            profile, overrides = execution
+        hardware = self.execution_hardware(profile)
+        resolved_device = profile.required_accelerator or device
+        stage_workers = {
+            2: profile.cleaning_workers,
+            3: profile.transformation_workers,
+            4: max(profile.autoarima_workers, profile.chronos_processes),
+            5: profile.combination_workers,
+            6: profile.evaluation_workers,
+        }[stage]
         self._check_gate(experiment_id, stage)
-        invocation = self._begin_invocation(experiment_id, stage, workers, device, batch_size)
+        invocation = self._begin_invocation(
+            experiment_id,
+            stage,
+            stage_workers,
+            resolved_device,
+            profile.chronos_inference_batch_size,
+            profile,
+            overrides,
+            hardware,
+        )
         rows = self._pending(experiment_id, stage)
         attempts = self._start_tasks(rows, invocation)
         started = time.monotonic()
         failures = []
         try:
             if stage == 2:
-                self._stage2(experiment_id, rows, attempts, workers, batch_size)
+                self._stage2(
+                    experiment_id,
+                    rows,
+                    attempts,
+                    profile.cleaning_workers,
+                    legacy_batch_size if execution is None else 8,
+                )
             elif stage == 3:
-                self._stage3(experiment_id, rows, attempts, workers)
+                self._stage3(experiment_id, rows, attempts, profile.transformation_workers)
             elif stage == 4:
-                self._stage4(experiment_id, rows, attempts, workers, device, batch_size)
+                self._stage4(experiment_id, rows, attempts, profile, resolved_device)
             elif stage == 5:
-                self._stage5(experiment_id, rows, attempts, workers)
+                self._stage5(experiment_id, rows, attempts, profile.combination_workers)
             else:
-                self._stage6(experiment_id, rows, attempts)
+                self._stage6(experiment_id, rows, attempts, profile.evaluation_workers)
         except BaseException as exc:
             error = f"{type(exc).__name__}: {exc}"
             for row in rows:
@@ -758,9 +947,8 @@ class POC1Coordinator:
         experiment_id: str,
         rows: list[tuple],
         attempts: dict[str, int],
-        workers: int,
+        profile: ExecutionProfile,
         device: str,
-        batch_size: int,
     ) -> None:
         prepared = []
         for task_id, instance_id, variant_id, model in rows:
@@ -783,59 +971,33 @@ class POC1Coordinator:
                     "variant_id": variant_id,
                 }
             )
-        external_batches = []
-        for model in self.config["models"]:
-            external_batches.extend(
-                (model, batch) for batch in _batches([job for job in prepared if job["model"] == model], batch_size)
-            )
+        auto_jobs = [job for job in prepared if job["model"] == "auto_arima"]
+        chronos_jobs = [job for job in prepared if job["model"] == "chronos_2"]
 
-        def invoke(model_batch: tuple[str, list[dict[str, Any]]]) -> tuple[list[dict[str, Any]], dict[str, Any], float]:
-            model, batch = model_batch
+        def invoke_auto(batch: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any], float]:
             jobs = [
                 {key: value for key, value in job.items() if key not in {"model", "instance_id", "variant_id"}}
                 for job in batch
             ]
-            model_started = time.monotonic()
-            if model == "auto_arima":
-                response = self._r_worker({"action": "forecast", "jobs": jobs})
-                metadata = {"packages": response["packages"], "settings": self.config["models"][model]["settings"]}
-            else:
-                chronos = self.config["models"][model]
-                payload = {"quantile_levels": list(QUANTILES), "horizon": jobs[0]["horizon"], "jobs": jobs}
-                with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as stream:
-                    json.dump(payload, stream)
-                    payload_path = Path(stream.name)
-                try:
-                    completed = subprocess.run(
-                        [
-                            str(self.root / "environments/chronos-2/.venv/bin/python"),
-                            str(self.root / "src/shapefm/chronos_worker.py"),
-                            "--payload",
-                            str(payload_path),
-                            "--model",
-                            chronos["repository"],
-                            "--revision",
-                            chronos["revision"],
-                            "--device",
-                            device,
-                            "--batch-size",
-                            str(batch_size),
-                        ],
-                        cwd=self.root,
-                        check=True,
-                        capture_output=True,
-                        text=True,
-                        timeout=3600,
-                    )
-                    response = json.loads(completed.stdout)
-                    metadata = {key: value for key, value in response.items() if key != "results"}
-                finally:
-                    payload_path.unlink(missing_ok=True)
-            runtime = time.monotonic() - model_started
-            metadata["runtime_seconds"] = runtime
+            started = time.monotonic()
+            response = self._r_worker({"action": "forecast", "jobs": jobs})
+            runtime = time.monotonic() - started
+            metadata = {
+                "packages": response["packages"],
+                "settings": self.config["models"]["auto_arima"]["settings"],
+                "execution_backend": "R/CPU",
+                "runtime_seconds": runtime,
+                "batch_task_count": len(batch),
+            }
             return batch, {"results": response["results"], "metadata": metadata}, runtime
 
-        for batch, response, runtime in _run_external_batches(invoke, external_batches, workers):
+        auto_batches = _batches(auto_jobs, 1)
+
+        def commit_response(
+            batch: list[dict[str, Any]],
+            response: dict[str, Any],
+            runtime: float,
+        ) -> None:
             by_id = {item["id"]: item for item in response["results"]}
             if set(by_id) != {job["id"] for job in batch}:
                 raise RuntimeError("Stage 4 worker returned missing, duplicate, or unexpected task IDs")
@@ -899,6 +1061,144 @@ class POC1Coordinator:
                     task_id, attempts[task_id], runtime / len(batch), insert, metadata
                 )
 
+        def run_chronos(progress: Callable[[], None] = lambda: None) -> None:
+            if not chronos_jobs:
+                return
+            chronos = self.config["models"]["chronos_2"]
+            command = [
+                str(self.root / "environments/chronos-2/.venv/bin/python"),
+                str(self.root / "src/shapefm/chronos_worker.py"),
+                "serve",
+                "--model",
+                chronos["repository"],
+                "--revision",
+                chronos["revision"],
+                "--device",
+                device,
+            ]
+            pending = deque(
+                _length_aware_batches(
+                    chronos_jobs, profile.chronos_inference_batch_size
+                )
+            )
+            retries = {job["id"]: 0 for job in chronos_jobs}
+            worker: PersistentChronosWorker | None = None
+            generation = 0
+            try:
+                while pending:
+                    validate_system_memory(profile, system_hardware())
+                    if worker is None:
+                        worker = PersistentChronosWorker(command)
+                        ready = worker.start()
+                        generation += 1
+                        available = ready["accelerator_memory"].get("available_bytes")
+                        threshold = int(profile.accelerator_memory_min_available_gib * GIB)
+                        if available is not None and available < threshold:
+                            raise RuntimeError(
+                                "accelerator memory safety threshold reached before inference"
+                            )
+                    batch = pending.popleft()
+                    batch_id = f"chronos-batch/{uuid.uuid4().hex}"
+                    payload_jobs = [
+                        {
+                            key: value
+                            for key, value in job.items()
+                            if key not in {"model", "instance_id", "variant_id", "seasonality"}
+                        }
+                        for job in batch
+                    ]
+                    response = worker.request(
+                        {
+                            "command": "predict",
+                            "batch_id": batch_id,
+                            "jobs": payload_jobs,
+                            "horizon": batch[0]["horizon"],
+                            "quantile_levels": list(QUANTILES),
+                            "inference_batch_size": len(batch),
+                        }
+                    )
+                    if response.get("type") == "error":
+                        if response.get("error_kind") != "out_of_memory":
+                            raise RuntimeError(response["error"])
+                        worker.close(force=True)
+                        worker = None
+                        if len(batch) == 1:
+                            raise RuntimeError(
+                                f"Chronos out of memory at minimum batch size: {response['error']}"
+                            )
+                        smaller = max(1, len(batch) // 2)
+                        for job in batch:
+                            retries[job["id"]] += 1
+                        for split_batch in reversed(_batches(batch, smaller)):
+                            pending.appendleft(split_batch)
+                        continue
+                    if response.get("type") != "result":
+                        raise RuntimeError(f"invalid Chronos worker response: {response}")
+                    metadata = {
+                        **{key: value for key, value in ready.items() if key != "type"},
+                        "execution_backend": ready["accelerator_backend"],
+                        "batch_id": batch_id,
+                        "requested_batch_size": profile.chronos_inference_batch_size,
+                        "effective_batch_size": response["effective_batch_size"],
+                        "retry_count": max(retries[job["id"]] for job in batch),
+                        "worker_generation": generation,
+                        "inference_seconds": response["inference_seconds"],
+                        "peak_process_memory_bytes": response["peak_process_memory_bytes"],
+                        "accelerator_memory_after": response["accelerator_memory"],
+                        "runtime_seconds": response["inference_seconds"],
+                    }
+                    commit_response(
+                        batch,
+                        {"results": response["results"], "metadata": metadata},
+                        response["inference_seconds"],
+                    )
+                    progress()
+                    available = response["accelerator_memory"].get("available_bytes")
+                    threshold = int(profile.accelerator_memory_min_available_gib * GIB)
+                    if available is not None and available < threshold and pending:
+                        raise RuntimeError(
+                            "accelerator memory safety threshold reached after committed batch"
+                        )
+            finally:
+                if worker is not None:
+                    worker.close()
+
+        if profile.cpu_gpu_overlap and auto_batches and chronos_jobs:
+            with ThreadPoolExecutor(max_workers=profile.autoarima_workers) as executor:
+                futures = [
+                    (batch, executor.submit(invoke_auto, batch)) for batch in auto_batches
+                ]
+                committed: set[int] = set()
+
+                def commit_finished_auto() -> None:
+                    for index, (_, future) in enumerate(futures):
+                        if index in committed or not future.done():
+                            continue
+                        batch, response, runtime = future.result()
+                        commit_response(batch, response, runtime)
+                        committed.add(index)
+
+                chronos_error = None
+                try:
+                    run_chronos(commit_finished_auto)
+                except BaseException as error:
+                    chronos_error = error
+                commit_finished_auto()
+                if chronos_error is not None:
+                    raise chronos_error
+                for index, (_, future) in enumerate(futures):
+                    if index in committed:
+                        continue
+                    batch, response, runtime = future.result()
+                    commit_response(batch, response, runtime)
+                    committed.add(index)
+        else:
+            for batch, response, runtime in _run_external_batches(
+                invoke_auto, auto_batches, profile.autoarima_workers
+            ):
+                commit_response(batch, response, runtime)
+            run_chronos()
+
     def _stage5(
         self, experiment_id: str, rows: list[tuple], attempts: dict[str, int], workers: int
     ) -> None:
@@ -957,7 +1257,13 @@ class POC1Coordinator:
 
             self._commit_task(task_id, attempts[task_id], 0.0, insert)
 
-    def _stage6(self, experiment_id: str, rows: list[tuple], attempts: dict[str, int]) -> None:
+    def _stage6(
+        self,
+        experiment_id: str,
+        rows: list[tuple],
+        attempts: dict[str, int],
+        workers: int,
+    ) -> None:
         source_root = Path(
             os.environ.get("SHAPEFM_GIFT_EVAL_ROOT", self.root / "data/source/gift_eval")
         )
@@ -965,6 +1271,7 @@ class POC1Coordinator:
             "SELECT benchmark_configuration_id FROM experiments WHERE experiment_id=?",
             [experiment_id],
         ).fetchone()[0]
+        prepared = []
         for task_id, _, variant_id, candidate in rows:
             records = self.connection.execute(
                 """SELECT f.mean, f.quantiles FROM forecasts f JOIN forecast_instances i USING (forecast_instance_id)
@@ -972,9 +1279,23 @@ class POC1Coordinator:
                 ORDER BY i.official_position""",
                 [experiment_id, variant_id, candidate],
             ).fetchall()
-            payload = {"forecasts": [{"mean": row[0], "quantiles": row[1]} for row in records]}
+            prepared.append(
+                {
+                    "task_id": task_id,
+                    "variant_id": variant_id,
+                    "candidate": candidate,
+                    "payload": {
+                        "forecasts": [
+                            {"mean": row[0], "quantiles": row[1]} for row in records
+                        ]
+                    },
+                }
+            )
+
+        def invoke(item: dict[str, Any]) -> tuple[dict[str, Any], dict[str, float], float]:
+            started = time.monotonic()
             with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as stream:
-                json.dump(payload, stream)
+                json.dump(item["payload"], stream)
                 path = Path(stream.name)
             try:
                 official = self._gift_bridge(
@@ -982,6 +1303,14 @@ class POC1Coordinator:
                 )
             finally:
                 path.unlink(missing_ok=True)
+            return item, official, time.monotonic() - started
+
+        for item, official, runtime in _run_external_batches(
+            invoke, prepared, workers
+        ):
+            task_id = item["task_id"]
+            variant_id = item["variant_id"]
+            candidate = item["candidate"]
             evaluation_id = f"evaluation/{json_fingerprint({'experiment': experiment_id, 'variant': variant_id, 'candidate': candidate})[:32]}"
 
             def insert():
@@ -1003,7 +1332,13 @@ class POC1Coordinator:
                     ],
                 )
 
-            self._commit_task(task_id, attempts[task_id], 0.0, insert)
+            self._commit_task(
+                task_id,
+                attempts[task_id],
+                runtime,
+                insert,
+                {"execution_backend": "official GIFT-Eval CPU evaluator"},
+            )
 
     def run_all(
         self,
@@ -1011,10 +1346,20 @@ class POC1Coordinator:
         workers: int = 1,
         device: str = "auto",
         batch_size: int = 8,
+        execution: tuple[ExecutionProfile, dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
         results = []
         for stage in STAGES:
-            results.append(self.run_gate(plan.experiment_id, stage, workers, device, batch_size))
+            results.append(
+                self.run_gate(
+                    plan.experiment_id,
+                    stage,
+                    workers,
+                    device,
+                    batch_size,
+                    execution,
+                )
+            )
         self.connection.execute(
             "UPDATE experiments SET status='completed', updated_at=current_timestamp WHERE experiment_id=?",
             [plan.experiment_id],

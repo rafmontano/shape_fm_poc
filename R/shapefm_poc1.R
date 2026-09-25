@@ -23,22 +23,35 @@ shapefm_plan_poc1 <- function(scope = "smoke") {
   plan
 }
 
-shapefm_run_poc1 <- function(plan, workers = 1L, device = "auto", batch_size = 8L) {
-  shapefm_poc1_cli(c(
-    "run", "--experiment-id", plan$experiment_id,
-    "--workers", as.character(workers),
-    "--device", device,
-    "--batch-size", as.character(batch_size)
-  ))
+shapefm_run_poc1 <- function(
+    plan, profile = "sequential_safe", workers = NULL,
+    device = NULL, batch_size = NULL) {
+  args <- c("run", "--experiment-id", plan$experiment_id, "--profile", profile)
+  if (!is.null(workers)) args <- c(args, "--workers", as.character(workers))
+  if (!is.null(device)) args <- c(args, "--device", device)
+  if (!is.null(batch_size)) args <- c(args, "--batch-size", as.character(batch_size))
+  shapefm_poc1_cli(args)
 }
 
-shapefm_run_gate <- function(plan, stage, workers = 1L, device = "auto", batch_size = 8L) {
-  shapefm_poc1_cli(c(
+shapefm_run_gate <- function(
+    plan, stage, profile = "sequential_safe", workers = NULL,
+    device = NULL, batch_size = NULL) {
+  args <- c(
     "run", "--experiment-id", plan$experiment_id,
     "--stage", as.character(stage),
-    "--workers", as.character(workers),
-    "--device", device,
-    "--batch-size", as.character(batch_size)
+    "--profile", profile
+  )
+  if (!is.null(workers)) args <- c(args, "--workers", as.character(workers))
+  if (!is.null(device)) args <- c(args, "--device", device)
+  if (!is.null(batch_size)) args <- c(args, "--batch-size", as.character(batch_size))
+  shapefm_poc1_cli(args)
+}
+
+shapefm_calibrate_poc1 <- function(
+    profile = "mac_m1pro_10core_16gb",
+    output = "docs/calibration/mac_m1pro_calibration.json") {
+  shapefm_poc1_cli(c(
+    "calibrate", "--profile", profile, "--output", output
   ))
 }
 

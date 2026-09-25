@@ -101,9 +101,13 @@ Chronos-2 is isolated and locked separately:
 
 The model is `amazon/chronos-2` at revision
 `29ec3766d36d6f73f0696f85560a422f50e8498c`, used through
-`chronos-forecasting==2.2.2`. Weights are cached outside Git. `device=auto`
-selects CUDA on Ubuntu when available, then supported Apple MPS, otherwise CPU;
-the actual device and float32 dtype are recorded per result. Environments are
-restored independently on macOS and Ubuntu rather than copied between them.
+`chronos-forecasting==2.2.2`. Weights are cached outside Git. The
+`sequential_safe` profile may auto-select an available accelerator.
+Hardware-specific profiles are strict: the Mac profile requires MPS and the
+Ubuntu profile requires CUDA plus an RTX 5090; neither may silently fall back
+to CPU. The actual backend, device, float32 dtype, package versions, and model
+revision are recorded. Environments are restored independently on macOS and
+Ubuntu rather than copied between them. See
+[local execution](local-execution.md) for exact validation commands.
 
 POC 1 also adds locked R packages `forecast` 8.24.0 and `jsonlite` 2.0.0.

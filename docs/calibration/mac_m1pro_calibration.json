@@ -1,0 +1,420 @@
+{
+  "profile": {
+    "name": "mac_m1pro_10core_16gb",
+    "required_accelerator": "mps",
+    "expected_accelerator_name": "Apple M1 Pro",
+    "cleaning_workers": 2,
+    "transformation_workers": 4,
+    "autoarima_workers": 2,
+    "chronos_processes": 1,
+    "chronos_inference_batch_size": 8,
+    "combination_workers": 4,
+    "evaluation_workers": 1,
+    "cpu_gpu_overlap": false,
+    "system_memory_min_available_gib": 3.0,
+    "accelerator_memory_min_available_gib": 1.0,
+    "database_writers": 1
+  },
+  "hardware": {
+    "operating_system": "Darwin",
+    "operating_system_release": "27.0.0",
+    "architecture": "arm64",
+    "physical_cpu_count": 10,
+    "logical_cpu_count": 10,
+    "system_memory": {
+      "total_bytes": 17179869184,
+      "available_bytes": 5757665280,
+      "swap_total_bytes": 0,
+      "swap_free_bytes": 0
+    },
+    "python_version": "3.12.14",
+    "accelerator_backend": "mps",
+    "accelerator_device_name": "Apple M1 Pro",
+    "accelerator_memory": {
+      "total_bytes": 12713115648,
+      "available_bytes": 12712722432,
+      "allocated_bytes": 0,
+      "reserved_bytes": 393216
+    },
+    "torch_version": "2.14.0",
+    "chronos_forecasting_version": "2.2.2",
+    "cuda_version": null,
+    "mps_available": true,
+    "mps_backend_version": "2.14.0",
+    "R_version": "R version 4.6.1 (2026-06-24)",
+    "forecast_package_version": "8.24.0",
+    "model_revision": "29ec3766d36d6f73f0696f85560a422f50e8498c",
+    "model_dtype": "float32"
+  },
+  "representative_contexts": [
+    {
+      "label": "short",
+      "series_id": "2084",
+      "length": 93
+    },
+    {
+      "label": "median",
+      "series_id": "569",
+      "length": 2940
+    },
+    {
+      "label": "long",
+      "series_id": "4098",
+      "length": 9919
+    }
+  ],
+  "measurements": [
+    {
+      "kind": "autoarima",
+      "workers": 1,
+      "task_count": 12,
+      "wall_clock_seconds": 44.07306675000291,
+      "tasks_per_second": 0.27227513047975516,
+      "observed_child_process_peak_rss_bytes": 399671296,
+      "memory_metric_scope": "maximum RSS observed for one child process, not aggregate concurrent RSS",
+      "system_memory_before": {
+        "total_bytes": 17179869184,
+        "available_bytes": 5593661440,
+        "swap_total_bytes": 0,
+        "swap_free_bytes": 0
+      },
+      "system_memory_after": {
+        "total_bytes": 17179869184,
+        "available_bytes": 5555585024,
+        "swap_total_bytes": 0,
+        "swap_free_bytes": 0
+      },
+      "minimum_system_memory_available_bytes": 5309743104,
+      "maximum_swap_used_bytes": 0,
+      "memory_sample_count": 163,
+      "safe": true,
+      "safety_rejection_reason": null,
+      "failure": null,
+      "retries": 0,
+      "repeat_max_abs_difference": 0.0,
+      "repeat_max_relative_difference": 0.0,
+      "strictly_equivalent": true,
+      "equivalence_relative_tolerance": 1e-05,
+      "equivalence_absolute_tolerance": 1e-05
+    },
+    {
+      "kind": "autoarima",
+      "workers": 2,
+      "task_count": 12,
+      "wall_clock_seconds": 22.703792291002173,
+      "tasks_per_second": 0.5285460616531348,
+      "observed_child_process_peak_rss_bytes": 399671296,
+      "memory_metric_scope": "maximum RSS observed for one child process, not aggregate concurrent RSS",
+      "system_memory_before": {
+        "total_bytes": 17179869184,
+        "available_bytes": 5558124544,
+        "swap_total_bytes": 0,
+        "swap_free_bytes": 0
+      },
+      "system_memory_after": {
+        "total_bytes": 17179869184,
+        "available_bytes": 5584748544,
+        "swap_total_bytes": 0,
+        "swap_free_bytes": 0
+      },
+      "minimum_system_memory_available_bytes": 5129797632,
+      "maximum_swap_used_bytes": 0,
+      "memory_sample_count": 84,
+      "safe": true,
+      "safety_rejection_reason": null,
+      "failure": null,
+      "retries": 0,
+      "repeat_max_abs_difference": 0.0,
+      "repeat_max_relative_difference": 0.0,
+      "strictly_equivalent": true,
+      "equivalence_relative_tolerance": 1e-05,
+      "equivalence_absolute_tolerance": 1e-05
+    },
+    {
+      "kind": "autoarima",
+      "workers": 4,
+      "task_count": 12,
+      "wall_clock_seconds": 14.091113500006031,
+      "tasks_per_second": 0.8516005495232768,
+      "observed_child_process_peak_rss_bytes": 399671296,
+      "memory_metric_scope": "maximum RSS observed for one child process, not aggregate concurrent RSS",
+      "system_memory_before": {
+        "total_bytes": 17179869184,
+        "available_bytes": 5584699392,
+        "swap_total_bytes": 0,
+        "swap_free_bytes": 0
+      },
+      "system_memory_after": {
+        "total_bytes": 17179869184,
+        "available_bytes": 5615501312,
+        "swap_total_bytes": 0,
+        "swap_free_bytes": 0
+      },
+      "minimum_system_memory_available_bytes": 4984340480,
+      "maximum_swap_used_bytes": 0,
+      "memory_sample_count": 53,
+      "safe": true,
+      "safety_rejection_reason": null,
+      "failure": null,
+      "retries": 0,
+      "repeat_max_abs_difference": 0.0,
+      "repeat_max_relative_difference": 0.0,
+      "strictly_equivalent": true,
+      "equivalence_relative_tolerance": 1e-05,
+      "equivalence_absolute_tolerance": 1e-05
+    },
+    {
+      "kind": "chronos_2",
+      "batch_size": 1,
+      "length_groups": [
+        "short",
+        "median",
+        "long"
+      ],
+      "task_count": 3,
+      "model_loading_seconds": 0.7851645839982666,
+      "model_load_count": 1,
+      "inference_seconds": 0.3269813749939203,
+      "wall_clock_seconds": 0.3704483750043437,
+      "tasks_per_second": 9.174834499536189,
+      "observed_worker_peak_rss_bytes": 490536960,
+      "memory_metric_scope": "peak RSS reported by the one persistent Chronos worker",
+      "system_memory_before": {
+        "total_bytes": 17179869184,
+        "available_bytes": 4572020736,
+        "swap_total_bytes": 0,
+        "swap_free_bytes": 0
+      },
+      "system_memory_after": {
+        "total_bytes": 17179869184,
+        "available_bytes": 4215881728,
+        "swap_total_bytes": 0,
+        "swap_free_bytes": 0
+      },
+      "minimum_system_memory_available_bytes": 4215881728,
+      "maximum_swap_used_bytes": 0,
+      "memory_sample_count": 3,
+      "minimum_accelerator_memory_available_bytes": 11621924864,
+      "accelerator_memory_after": {
+        "total_bytes": 12713115648,
+        "available_bytes": 11621924864,
+        "allocated_bytes": 477914368,
+        "reserved_bytes": 1091190784
+      },
+      "safe": true,
+      "safety_rejection_reason": null,
+      "failure": null,
+      "retries": 0,
+      "effective_batch_size": 1,
+      "max_abs_difference_from_batch_one": 0.0,
+      "max_relative_difference_from_batch_one": 0.0,
+      "strictly_equivalent_to_batch_one": true,
+      "equivalence_relative_tolerance": 1e-05,
+      "equivalence_absolute_tolerance": 1e-05
+    },
+    {
+      "kind": "chronos_2",
+      "batch_size": 2,
+      "length_groups": [
+        "short",
+        "median",
+        "long"
+      ],
+      "task_count": 6,
+      "model_loading_seconds": 0.7851645839982666,
+      "model_load_count": 1,
+      "inference_seconds": 0.5410747490022914,
+      "wall_clock_seconds": 0.588340624999546,
+      "tasks_per_second": 11.089040859998793,
+      "observed_worker_peak_rss_bytes": 506396672,
+      "memory_metric_scope": "peak RSS reported by the one persistent Chronos worker",
+      "system_memory_before": {
+        "total_bytes": 17179869184,
+        "available_bytes": 4215848960,
+        "swap_total_bytes": 0,
+        "swap_free_bytes": 0
+      },
+      "system_memory_after": {
+        "total_bytes": 17179869184,
+        "available_bytes": 4199383040,
+        "swap_total_bytes": 0,
+        "swap_free_bytes": 0
+      },
+      "minimum_system_memory_available_bytes": 4199383040,
+      "maximum_swap_used_bytes": 0,
+      "memory_sample_count": 4,
+      "minimum_accelerator_memory_available_bytes": 11619778560,
+      "accelerator_memory_after": {
+        "total_bytes": 12713115648,
+        "available_bytes": 11619794944,
+        "allocated_bytes": 477914368,
+        "reserved_bytes": 1093320704
+      },
+      "safe": true,
+      "safety_rejection_reason": null,
+      "failure": null,
+      "retries": 0,
+      "effective_batch_size": 2,
+      "max_abs_difference_from_batch_one": 0.001953125,
+      "max_relative_difference_from_batch_one": 2.2174114249462776e-07,
+      "strictly_equivalent_to_batch_one": true,
+      "equivalence_relative_tolerance": 1e-05,
+      "equivalence_absolute_tolerance": 1e-05
+    },
+    {
+      "kind": "chronos_2",
+      "batch_size": 4,
+      "length_groups": [
+        "short",
+        "median",
+        "long"
+      ],
+      "task_count": 12,
+      "model_loading_seconds": 0.7851645839982666,
+      "model_load_count": 1,
+      "inference_seconds": 0.7023735830007354,
+      "wall_clock_seconds": 0.7624364590010373,
+      "tasks_per_second": 17.08492501772726,
+      "observed_worker_peak_rss_bytes": 521322496,
+      "memory_metric_scope": "peak RSS reported by the one persistent Chronos worker",
+      "system_memory_before": {
+        "total_bytes": 17179869184,
+        "available_bytes": 4199317504,
+        "swap_total_bytes": 0,
+        "swap_free_bytes": 0
+      },
+      "system_memory_after": {
+        "total_bytes": 17179869184,
+        "available_bytes": 4171120640,
+        "swap_total_bytes": 0,
+        "swap_free_bytes": 0
+      },
+      "minimum_system_memory_available_bytes": 4171120640,
+      "maximum_swap_used_bytes": 0,
+      "memory_sample_count": 4,
+      "minimum_accelerator_memory_available_bytes": 11619729408,
+      "accelerator_memory_after": {
+        "total_bytes": 12713115648,
+        "available_bytes": 11619729408,
+        "allocated_bytes": 477914368,
+        "reserved_bytes": 1093386240
+      },
+      "safe": true,
+      "safety_rejection_reason": null,
+      "failure": null,
+      "retries": 0,
+      "effective_batch_size": 4,
+      "max_abs_difference_from_batch_one": 0.001953125,
+      "max_relative_difference_from_batch_one": 2.120713560733207e-07,
+      "strictly_equivalent_to_batch_one": true,
+      "equivalence_relative_tolerance": 1e-05,
+      "equivalence_absolute_tolerance": 1e-05
+    },
+    {
+      "kind": "chronos_2",
+      "batch_size": 8,
+      "length_groups": [
+        "short",
+        "median",
+        "long"
+      ],
+      "task_count": 24,
+      "model_loading_seconds": 0.7851645839982666,
+      "model_load_count": 1,
+      "inference_seconds": 1.0521368340050685,
+      "wall_clock_seconds": 1.1353234159978456,
+      "tasks_per_second": 22.810721214503534,
+      "observed_worker_peak_rss_bytes": 537903104,
+      "memory_metric_scope": "peak RSS reported by the one persistent Chronos worker",
+      "system_memory_before": {
+        "total_bytes": 17179869184,
+        "available_bytes": 4174004224,
+        "swap_total_bytes": 0,
+        "swap_free_bytes": 0
+      },
+      "system_memory_after": {
+        "total_bytes": 17179869184,
+        "available_bytes": 4174905344,
+        "swap_total_bytes": 0,
+        "swap_free_bytes": 0
+      },
+      "minimum_system_memory_available_bytes": 4141514752,
+      "maximum_swap_used_bytes": 0,
+      "memory_sample_count": 6,
+      "minimum_accelerator_memory_available_bytes": 11619614720,
+      "accelerator_memory_after": {
+        "total_bytes": 12713115648,
+        "available_bytes": 11619614720,
+        "allocated_bytes": 477914368,
+        "reserved_bytes": 1093500928
+      },
+      "safe": true,
+      "safety_rejection_reason": null,
+      "failure": null,
+      "retries": 0,
+      "effective_batch_size": 8,
+      "max_abs_difference_from_batch_one": 0.001953125,
+      "max_relative_difference_from_batch_one": 2.120713560733207e-07,
+      "strictly_equivalent_to_batch_one": true,
+      "equivalence_relative_tolerance": 1e-05,
+      "equivalence_absolute_tolerance": 1e-05
+    },
+    {
+      "kind": "chronos_2",
+      "batch_size": 16,
+      "length_groups": [
+        "short",
+        "median",
+        "long"
+      ],
+      "task_count": 48,
+      "model_loading_seconds": 0.7851645839982666,
+      "model_load_count": 1,
+      "inference_seconds": 1.8938437499964493,
+      "wall_clock_seconds": 2.020073332998436,
+      "tasks_per_second": 25.345279936684317,
+      "observed_worker_peak_rss_bytes": 559169536,
+      "memory_metric_scope": "peak RSS reported by the one persistent Chronos worker",
+      "system_memory_before": {
+        "total_bytes": 17179869184,
+        "available_bytes": 4176920576,
+        "swap_total_bytes": 0,
+        "swap_free_bytes": 0
+      },
+      "system_memory_after": {
+        "total_bytes": 17179869184,
+        "available_bytes": 3370221568,
+        "swap_total_bytes": 0,
+        "swap_free_bytes": 0
+      },
+      "minimum_system_memory_available_bytes": 3331227648,
+      "maximum_swap_used_bytes": 0,
+      "memory_sample_count": 9,
+      "minimum_accelerator_memory_available_bytes": 10545643520,
+      "accelerator_memory_after": {
+        "total_bytes": 12713115648,
+        "available_bytes": 10545643520,
+        "allocated_bytes": 477914368,
+        "reserved_bytes": 2167472128
+      },
+      "safe": true,
+      "safety_rejection_reason": null,
+      "failure": null,
+      "retries": 0,
+      "effective_batch_size": 16,
+      "max_abs_difference_from_batch_one": 0.0068359375,
+      "max_relative_difference_from_batch_one": 7.83221340140944e-07,
+      "strictly_equivalent_to_batch_one": true,
+      "equivalence_relative_tolerance": 1e-05,
+      "equivalence_absolute_tolerance": 1e-05
+    }
+  ],
+  "recommendation": {
+    "autoarima_workers": 4,
+    "chronos_inference_batch_size": 16,
+    "applied_to_committed_profile": false
+  },
+  "stopped_early_reason": null,
+  "isolated_database_measurement_count": 8,
+  "total_wall_clock_seconds": 90.0335477080007
+}

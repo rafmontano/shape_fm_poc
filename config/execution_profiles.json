@@ -1,0 +1,47 @@
+{
+  "sequential_safe": {
+    "required_accelerator": null,
+    "expected_accelerator_name": null,
+    "cleaning_workers": 1,
+    "transformation_workers": 1,
+    "autoarima_workers": 1,
+    "chronos_processes": 1,
+    "chronos_inference_batch_size": 1,
+    "combination_workers": 1,
+    "evaluation_workers": 1,
+    "cpu_gpu_overlap": false,
+    "system_memory_min_available_gib": 2.0,
+    "accelerator_memory_min_available_gib": 0.5,
+    "database_writers": 1
+  },
+  "mac_m1pro_10core_16gb": {
+    "required_accelerator": "mps",
+    "expected_accelerator_name": "Apple M1 Pro",
+    "cleaning_workers": 2,
+    "transformation_workers": 4,
+    "autoarima_workers": 2,
+    "chronos_processes": 1,
+    "chronos_inference_batch_size": 8,
+    "combination_workers": 4,
+    "evaluation_workers": 1,
+    "cpu_gpu_overlap": false,
+    "system_memory_min_available_gib": 3.0,
+    "accelerator_memory_min_available_gib": 1.0,
+    "database_writers": 1
+  },
+  "ubuntu_5950x_16core_128gb_rtx5090": {
+    "required_accelerator": "cuda",
+    "expected_accelerator_name": "NVIDIA GeForce RTX 5090",
+    "cleaning_workers": 8,
+    "transformation_workers": 16,
+    "autoarima_workers": 12,
+    "chronos_processes": 1,
+    "chronos_inference_batch_size": 16,
+    "combination_workers": 16,
+    "evaluation_workers": 1,
+    "cpu_gpu_overlap": true,
+    "system_memory_min_available_gib": 16.0,
+    "accelerator_memory_min_available_gib": 4.0,
+    "database_writers": 1
+  }
+}
