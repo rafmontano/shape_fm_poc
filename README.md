@@ -89,6 +89,15 @@ Researchers use these objects rather than source-file or SQL details.
 Rscript workflows/stage_01_import/02_import_m4_daily.R
 ```
 
+Run the restartable two-machine POC 1 smoke experiment from the Mac with:
+
+```sh
+scripts/run_two_machine.sh --scope smoke
+```
+
+See [local and distributed execution](docs/local-execution.md) for worker
+preflight, dashboard, troubleshooting, resume, and later full-run commands.
+
 Set `workers` above one only for local parallel computation. Workers receive
 ordinary task objects and never open writable DuckDB connections; the single
 coordinator commits each result and task completion in one transaction.
@@ -97,9 +106,9 @@ coordinator commits each result and task completion in one transaction.
 
 Foundation Stage 1 remains the canonical ingestion layer. POC 1 demonstrates
 identity/`tsclean` preprocessing, reversible transformations, AutoARIMA,
-Chronos-2, equal-weight combination, and official GIFT-Eval evaluation. It
-deliberately excludes Mantis, MOMENT, fine-tuning, learned selection, NAS,
-multi-machine execution, and automatic leaderboard submission.
+Chronos-2, equal-weight combination, Dask execution across the Mac and Ubuntu,
+and official GIFT-Eval evaluation. It deliberately excludes Mantis, MOMENT,
+fine-tuning, learned selection, NAS, and automatic leaderboard submission.
 
 See [architecture](docs/architecture.md), [data contract](docs/data-contract.md),
 [environment setup](docs/environment.md), and the

@@ -13,7 +13,7 @@ import uuid
 import csv
 from collections import deque
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -24,6 +24,7 @@ from .database import DEFAULT_DATABASE, migrate_database
 from .execution import (
     GIB,
     ExecutionProfile,
+    ExecutionSettings,
     PersistentChronosWorker,
     resolve_execution_profile,
     system_hardware,
@@ -36,6 +37,18 @@ from .utils import utc_now
 
 QUANTILES = (0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
 STAGES = {2: "preprocess", 3: "transform", 4: "forecast", 5: "combine", 6: "evaluate"}
+
+
+def expected_task_counts(instance_count: int) -> dict[int, int]:
+    if instance_count < 0:
+        raise ValueError("instance count cannot be negative")
+    return {
+        2: instance_count * 2,
+        3: instance_count * 4,
+        4: instance_count * 8,
+        5: instance_count * 12,
+        6: 12,
+    }
 
 
 def scientific_configuration(config: dict[str, Any]) -> dict[str, Any]:
@@ -253,7 +266,9 @@ class POC1Coordinator:
                 f"{official['configuration_name']} has {official['window_count']}"
             )
 
-    def plan(self, scope: str = "smoke") -> ExperimentPlan | dict[str, Any]:
+    def plan(
+        self, scope: str = "smoke", dry_run: bool = False
+    ) -> ExperimentPlan | dict[str, Any]:
         if scope == "manifest":
             manifest = self._gift_bridge("manifest", "--root", str(self.root))
             manifest["task_formula_per_forecast_instance"] = {
@@ -273,26 +288,55 @@ class POC1Coordinator:
             )
         )
         if scope == "m4_daily":
-            official = self._gift_bridge(
+            summary = self._gift_bridge(
                 "describe", "--source-root", str(source_root), "--limit", "1"
             )
-            self._validate_official_configuration(official)
-            instances = official["available_instances"]
-            return {
-                "scope": scope,
-                "mode": "dry-run",
-                "benchmark_configuration": official["configuration_name"],
-                "forecast_instances": instances,
-                "task_counts": {
-                    "2": instances * 2,
-                    "3": instances * 4,
-                    "4": instances * 8,
-                    "5": instances * 12,
-                    "6": 12,
-                },
-                "resource_note": "AutoARIMA and Chronos-2 runtimes must be measured from smoke invocations before scheduling",
+            self._validate_official_configuration(summary)
+            instances = summary["available_instances"]
+            if dry_run:
+                return {
+                    "scope": scope,
+                    "mode": "dry-run",
+                    "benchmark_configuration": summary["configuration_name"],
+                    "forecast_instances": instances,
+                    "task_counts": {
+                        str(stage): count
+                        for stage, count in expected_task_counts(instances).items()
+                    },
+                    "resource_note": "planning only; no experiment rows were materialised",
+                }
+            dataset_id = self._dataset_id()
+            benchmark_identity = {
+                "revision": self.config["benchmark"]["gift_eval_revision"],
+                "configuration": summary["configuration_name"],
             }
-        limit = 10
+            benchmark_id = f"benchmark/{json_fingerprint(benchmark_identity)[:24]}"
+            configuration_hash = json_fingerprint(
+                scientific_configuration(self.config)
+            )
+            experiment_id = f"experiment/{json_fingerprint({'benchmark': benchmark_id, 'dataset': dataset_id, 'configuration': configuration_hash})[:24]}"
+            existing_counts = {
+                int(stage): int(count)
+                for stage, count in self.connection.execute(
+                    """SELECT stage, count(*) FROM experiment_tasks
+                    WHERE experiment_id=? GROUP BY stage""",
+                    [experiment_id],
+                ).fetchall()
+            }
+            expected_counts = expected_task_counts(instances)
+            if existing_counts == expected_counts:
+                return ExperimentPlan(
+                    experiment_id,
+                    scope,
+                    instances,
+                    len(self.config["cleaning"])
+                    * len(self.config["transformations"]),
+                    existing_counts,
+                    summary["configuration_name"],
+                )
+            limit = instances
+        else:
+            limit = 10
         official = self._gift_bridge(
             "describe", "--source-root", str(source_root), "--limit", str(limit)
         )
@@ -374,50 +418,115 @@ class POC1Coordinator:
                             canonical_json(identity),
                         ],
                     )
-            for item in official["instances"]:
-                instance_identity = {
-                    "benchmark": benchmark_id,
-                    "series": item["item_id"],
-                    "variate": item["variate_id"],
-                    "window": item["window_id"],
-                }
-                instance_id = f"instance/{json_fingerprint(instance_identity)[:32]}"
-                context_end = len(item["context"])
-                actual_end = context_end + len(item["actual"])
-                self.connection.execute(
-                    """INSERT INTO forecast_instances VALUES
-                    (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
-                    ON CONFLICT (forecast_instance_id) DO NOTHING""",
-                    [
-                        instance_id,
-                        benchmark_id,
-                        dataset_id,
-                        item["item_id"],
-                        item["variate_id"],
-                        item["window_id"],
-                        item["official_position"],
-                        context_end,
-                        context_end,
-                        actual_end,
-                        len(item["actual"]),
-                        item["context"],
-                        item["actual"],
-                        canonical_json(
-                            {"start": item["start"], "forecast_start": item["forecast_start"]}
-                        ),
-                    ],
+            self.connection.execute("COMMIT")
+        except BaseException:
+            self.connection.execute("ROLLBACK")
+            raise
+        for instance_batch in _batches(official["instances"], 100):
+            self.connection.execute("BEGIN TRANSACTION")
+            try:
+                task_rows = []
+                for item in instance_batch:
+                    instance_identity = {
+                        "benchmark": benchmark_id,
+                        "series": item["item_id"],
+                        "variate": item["variate_id"],
+                        "window": item["window_id"],
+                    }
+                    instance_id = f"instance/{json_fingerprint(instance_identity)[:32]}"
+                    context_end = len(item["context"])
+                    actual_end = context_end + len(item["actual"])
+                    self.connection.execute(
+                        """INSERT INTO forecast_instances VALUES
+                        (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
+                        ON CONFLICT (forecast_instance_id) DO NOTHING""",
+                        [
+                            instance_id,
+                            benchmark_id,
+                            dataset_id,
+                            item["item_id"],
+                            item["variate_id"],
+                            item["window_id"],
+                            item["official_position"],
+                            context_end,
+                            context_end,
+                            actual_end,
+                            len(item["actual"]),
+                            item["context"],
+                            item["actual"],
+                            canonical_json(
+                                {
+                                    "start": item["start"],
+                                    "forecast_start": item["forecast_start"],
+                                }
+                            ),
+                        ],
+                    )
+                    for cleaning in self.config["cleaning"]:
+                        task_rows.append(
+                            self._task_row(
+                                experiment_id, 2, instance_id, None, cleaning
+                            )
+                        )
+                    for variant_id, _, _ in variants:
+                        task_rows.append(
+                            self._task_row(
+                                experiment_id, 3, instance_id, variant_id, None
+                            )
+                        )
+                        for model in self.config["models"]:
+                            task_rows.append(
+                                self._task_row(
+                                    experiment_id,
+                                    4,
+                                    instance_id,
+                                    variant_id,
+                                    model,
+                                )
+                            )
+                        for candidate in (
+                            *self.config["models"].keys(),
+                            "equal_weight",
+                        ):
+                            task_rows.append(
+                                self._task_row(
+                                    experiment_id,
+                                    5,
+                                    instance_id,
+                                    variant_id,
+                                    candidate,
+                                )
+                            )
+                self.connection.executemany(
+                    """INSERT INTO experiment_tasks
+                    (task_id, experiment_id, stage, forecast_instance_id,
+                     variant_id, candidate, status)
+                    VALUES (?, ?, ?, ?, ?, ?, 'pending')
+                    ON CONFLICT (task_id) DO NOTHING""",
+                    task_rows,
                 )
-                for cleaning in self.config["cleaning"]:
-                    self._register_task(experiment_id, 2, instance_id, None, cleaning)
-                for variant_id, _, _ in variants:
-                    self._register_task(experiment_id, 3, instance_id, variant_id, None)
-                    for model in self.config["models"]:
-                        self._register_task(experiment_id, 4, instance_id, variant_id, model)
-                    for candidate in (*self.config["models"].keys(), "equal_weight"):
-                        self._register_task(experiment_id, 5, instance_id, variant_id, candidate)
+                self.connection.execute("COMMIT")
+            except BaseException:
+                self.connection.execute("ROLLBACK")
+                raise
+        self.connection.execute("BEGIN TRANSACTION")
+        try:
+            evaluation_tasks = []
             for variant_id, _, _ in variants:
                 for candidate in (*self.config["models"].keys(), "equal_weight"):
-                    self._register_task(experiment_id, 6, None, variant_id, candidate)
+                    evaluation_tasks.append(
+                        self._task_row(
+                            experiment_id, 6, None, variant_id, candidate
+                        )
+                    )
+            self.connection.executemany(
+                """INSERT INTO experiment_tasks
+                (task_id, experiment_id, stage, forecast_instance_id,
+                 variant_id, candidate, status)
+                VALUES (?, ?, ?, ?, ?, ?, 'pending')
+                ON CONFLICT (task_id) DO NOTHING""",
+                evaluation_tasks,
+            )
             self.connection.execute("COMMIT")
         except BaseException:
             self.connection.execute("ROLLBACK")
@@ -445,6 +554,25 @@ class POC1Coordinator:
         variant_id: str | None,
         candidate: str | None,
     ) -> str:
+        row = self._task_row(
+            experiment_id, stage, instance_id, variant_id, candidate
+        )
+        self.connection.execute(
+            """INSERT INTO experiment_tasks
+            (task_id, experiment_id, stage, forecast_instance_id, variant_id, candidate, status)
+            VALUES (?, ?, ?, ?, ?, ?, 'pending') ON CONFLICT (task_id) DO NOTHING""",
+            row,
+        )
+        return row[0]
+
+    def _task_row(
+        self,
+        experiment_id: str,
+        stage: int,
+        instance_id: str | None,
+        variant_id: str | None,
+        candidate: str | None,
+    ) -> tuple[str, str, int, str | None, str | None, str | None]:
         identity = {
             "experiment": experiment_id,
             "stage": stage,
@@ -453,13 +581,14 @@ class POC1Coordinator:
             "candidate": candidate,
         }
         task_id = f"poc1-task/{json_fingerprint(identity)[:32]}"
-        self.connection.execute(
-            """INSERT INTO experiment_tasks
-            (task_id, experiment_id, stage, forecast_instance_id, variant_id, candidate, status)
-            VALUES (?, ?, ?, ?, ?, ?, 'pending') ON CONFLICT (task_id) DO NOTHING""",
-            [task_id, experiment_id, stage, instance_id, variant_id, candidate],
+        return (
+            task_id,
+            experiment_id,
+            stage,
+            instance_id,
+            variant_id,
+            candidate,
         )
-        return task_id
 
     def _begin_invocation(
         self,
@@ -731,6 +860,7 @@ class POC1Coordinator:
         device: str = "auto",
         batch_size: int = 8,
         execution: tuple[ExecutionProfile, dict[str, Any]] | None = None,
+        execution_settings: ExecutionSettings | None = None,
     ) -> dict[str, Any]:
         if stage not in STAGES or workers < 1 or batch_size < 1:
             raise ValueError("stage must be 2..6; workers and batch_size must be positive")
@@ -749,8 +879,67 @@ class POC1Coordinator:
             )
         else:
             profile, overrides = execution
-        hardware = self.execution_hardware(profile)
+        settings = execution_settings or ExecutionSettings()
+        if settings.mode == "sequential":
+            profile = replace(
+                profile,
+                cleaning_workers=1,
+                transformation_workers=1,
+                autoarima_workers=1,
+                chronos_processes=1,
+                chronos_inference_batch_size=1,
+                combination_workers=1,
+                evaluation_workers=1,
+                cpu_gpu_overlap=False,
+            )
+        coordinator_hardware = self.execution_hardware(profile)
+        hardware: dict[str, Any] = coordinator_hardware
         resolved_device = profile.required_accelerator or device
+        dask_client = None
+        if settings.mode == "dask" and stage != 6:
+            from distributed import Client
+
+            from .dask_execution import validate_cluster
+
+            if settings.dask_scheduler_address:
+                dask_client = Client(
+                    settings.dask_scheduler_address,
+                    timeout=f"{settings.dask_timeout_seconds}s",
+                )
+                expected_gpu_name = "NVIDIA GeForce RTX 5090"
+                resolved_device = "cuda"
+            else:
+                dask_client = Client(
+                    n_workers=1,
+                    threads_per_worker=1,
+                    processes=True,
+                    resources={"CPU": 1, "GPU": 1},
+                    timeout=f"{settings.dask_timeout_seconds}s",
+                )
+                expected_gpu_name = None
+            expected_commit = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=self.root,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            try:
+                cluster = validate_cluster(
+                    dask_client,
+                    expected_workers=settings.dask_expected_workers,
+                    timeout=settings.dask_timeout_seconds,
+                    expected_commit=expected_commit,
+                    expected_configuration_hash=json_fingerprint(
+                        scientific_configuration(self.config)
+                    ),
+                    require_gpu=stage == 4,
+                    expected_gpu_name=expected_gpu_name,
+                )
+            except BaseException:
+                dask_client.close()
+                raise
+            hardware = {"coordinator": coordinator_hardware, "dask_workers": cluster}
         stage_workers = {
             2: profile.cleaning_workers,
             3: profile.transformation_workers,
@@ -767,7 +956,7 @@ class POC1Coordinator:
             profile.chronos_inference_batch_size,
             profile,
             overrides,
-            hardware,
+            {**hardware, "execution_settings": settings.to_dict()},
         )
         rows = self._pending(experiment_id, stage)
         attempts = self._start_tasks(rows, invocation)
@@ -781,13 +970,37 @@ class POC1Coordinator:
                     attempts,
                     profile.cleaning_workers,
                     legacy_batch_size if execution is None else 8,
+                    dask_client,
+                    settings,
                 )
             elif stage == 3:
-                self._stage3(experiment_id, rows, attempts, profile.transformation_workers)
+                self._stage3(
+                    experiment_id,
+                    rows,
+                    attempts,
+                    profile.transformation_workers,
+                    dask_client,
+                    settings,
+                )
             elif stage == 4:
-                self._stage4(experiment_id, rows, attempts, profile, resolved_device)
+                self._stage4(
+                    experiment_id,
+                    rows,
+                    attempts,
+                    profile,
+                    resolved_device,
+                    dask_client,
+                    settings,
+                )
             elif stage == 5:
-                self._stage5(experiment_id, rows, attempts, profile.combination_workers)
+                self._stage5(
+                    experiment_id,
+                    rows,
+                    attempts,
+                    profile.combination_workers,
+                    dask_client,
+                    settings,
+                )
             else:
                 self._stage6(experiment_id, rows, attempts, profile.evaluation_workers)
         except BaseException as exc:
@@ -822,6 +1035,8 @@ class POC1Coordinator:
             WHERE invocation_id=?""",
             [status, canonical_json(summary), "; ".join(failures) or None, invocation],
         )
+        if dask_client is not None:
+            dask_client.close()
         if status == "failed":
             raise RuntimeError(f"Stage {stage} failed; rerun retries failed tasks")
         return {"invocation_id": invocation, **summary}
@@ -833,6 +1048,8 @@ class POC1Coordinator:
         attempts: dict[str, int],
         workers: int,
         batch_size: int,
+        dask_client: Any = None,
+        settings: ExecutionSettings | None = None,
     ) -> None:
         jobs = []
         for task_id, instance_id, _, method in rows:
@@ -860,9 +1077,39 @@ class POC1Coordinator:
             )
             return batch, response, time.monotonic() - started
 
-        for batch, response, runtime in _run_external_batches(invoke, _batches(jobs, batch_size), workers):
+        if dask_client is not None:
+            from .dask_execution import clean_batch, run_batches
+
+            dask_results = run_batches(
+                dask_client,
+                clean_batch,
+                _batches(jobs, batch_size),
+                resources={"CPU": 1},
+                max_in_flight=settings.dask_max_in_flight,
+                retries=settings.dask_retries,
+            )
+            responses = (
+                (
+                    batch,
+                    {
+                        "results": response["results"],
+                        "packages": response["packages"],
+                        "worker": response["worker"],
+                    },
+                    response["runtime_seconds"],
+                )
+                for batch, response in dask_results
+            )
+        else:
+            responses = _run_external_batches(
+                invoke, _batches(jobs, batch_size), workers
+            )
+        for batch, response, runtime in responses:
+            result_ids = [item["id"] for item in response["results"]]
             by_id = {item["id"]: item for item in response["results"]}
-            if set(by_id) != {job["id"] for job in batch}:
+            if len(result_ids) != len(set(result_ids)) or set(by_id) != {
+                job["id"] for job in batch
+            }:
                 raise RuntimeError("Stage 2 worker returned missing, duplicate, or unexpected task IDs")
             for job in batch:
                 task_id, instance_id, method = job["id"], job["instance_id"], job["method"]
@@ -896,10 +1143,22 @@ class POC1Coordinator:
                         ],
                     )
 
-                self._commit_task(task_id, attempts[task_id], runtime / len(batch), insert)
+                self._commit_task(
+                    task_id,
+                    attempts[task_id],
+                    runtime / len(batch),
+                    insert,
+                    response.get("worker"),
+                )
 
     def _stage3(
-        self, experiment_id: str, rows: list[tuple], attempts: dict[str, int], workers: int
+        self,
+        experiment_id: str,
+        rows: list[tuple],
+        attempts: dict[str, int],
+        workers: int,
+        dask_client: Any = None,
+        settings: ExecutionSettings | None = None,
     ) -> None:
         prepared = []
         metadata = []
@@ -915,8 +1174,13 @@ class POC1Coordinator:
             ).fetchone()
             prepared.append((values, method))
             metadata.append((task_id, instance_id, variant_id, pre_id, method, values))
-        results = _run_parallel(_transform_job, prepared, workers)
-        for meta, result in zip(metadata, results, strict=True):
+
+        def commit_result(
+            meta: tuple,
+            result: TransformationResult,
+            runtime: float,
+            resources: dict[str, Any] | None = None,
+        ) -> None:
             task_id, instance_id, variant_id, pre_id, method, values = meta
             transformation_id = f"transformed/{json_fingerprint({'experiment': experiment_id, 'variant': variant_id, 'instance': instance_id})[:32]}"
 
@@ -940,7 +1204,47 @@ class POC1Coordinator:
                     ],
                 )
 
-            self._commit_task(task_id, attempts[task_id], 0.0, insert)
+            self._commit_task(
+                task_id, attempts[task_id], runtime, insert, resources
+            )
+
+        if dask_client is None:
+            results = _run_parallel(_transform_job, prepared, workers)
+            for meta, result in zip(metadata, results, strict=True):
+                commit_result(meta, result, 0.0)
+            return
+
+        from .dask_execution import run_batches, transform_batch
+
+        jobs = [
+            {"id": meta[0], "values": values, "method": method}
+            for meta, (values, method) in zip(metadata, prepared, strict=True)
+        ]
+        by_task = {meta[0]: meta for meta in metadata}
+        for batch, response in run_batches(
+            dask_client,
+            transform_batch,
+            _batches(jobs, 32),
+            resources={"CPU": 1},
+            max_in_flight=settings.dask_max_in_flight,
+            retries=settings.dask_retries,
+        ):
+            result_ids = [item["id"] for item in response["results"]]
+            expected_ids = {job["id"] for job in batch}
+            if len(result_ids) != len(set(result_ids)) or set(result_ids) != expected_ids:
+                raise RuntimeError(
+                    "Stage 3 worker returned missing, duplicate, or unexpected task IDs"
+                )
+            runtime = response["runtime_seconds"] / len(batch)
+            for result in response["results"]:
+                commit_result(
+                    by_task[result["id"]],
+                    TransformationResult(
+                        tuple(result["values"]), result["parameters"]
+                    ),
+                    runtime,
+                    response["worker"],
+                )
 
     def _stage4(
         self,
@@ -949,6 +1253,8 @@ class POC1Coordinator:
         attempts: dict[str, int],
         profile: ExecutionProfile,
         device: str,
+        dask_client: Any = None,
+        settings: ExecutionSettings | None = None,
     ) -> None:
         prepared = []
         for task_id, instance_id, variant_id, model in rows:
@@ -998,8 +1304,11 @@ class POC1Coordinator:
             response: dict[str, Any],
             runtime: float,
         ) -> None:
+            result_ids = [item["id"] for item in response["results"]]
             by_id = {item["id"]: item for item in response["results"]}
-            if set(by_id) != {job["id"] for job in batch}:
+            if len(result_ids) != len(set(result_ids)) or set(by_id) != {
+                job["id"] for job in batch
+            }:
                 raise RuntimeError("Stage 4 worker returned missing, duplicate, or unexpected task IDs")
             metadata = response["metadata"]
             for job in batch:
@@ -1060,6 +1369,73 @@ class POC1Coordinator:
                 self._commit_task(
                     task_id, attempts[task_id], runtime / len(batch), insert, metadata
                 )
+
+        if dask_client is not None:
+            from .dask_execution import (
+                autoarima_batch,
+                chronos_batch,
+                run_batch_groups,
+            )
+
+            chronos_pending = deque(
+                _length_aware_batches(
+                    chronos_jobs, profile.chronos_inference_batch_size
+                )
+            )
+
+            def pending_chronos() -> Iterable[list[dict[str, Any]]]:
+                while chronos_pending:
+                    yield chronos_pending.popleft()
+
+            groups = {}
+            if auto_batches:
+                groups["auto_arima"] = (
+                    autoarima_batch,
+                    auto_batches,
+                    {"CPU": 1},
+                    (self.config["models"]["auto_arima"]["settings"],),
+                    settings.dask_max_in_flight,
+                )
+            if chronos_jobs:
+                chronos = self.config["models"]["chronos_2"]
+                groups["chronos_2"] = (
+                    chronos_batch,
+                    pending_chronos(),
+                    {"GPU": 1},
+                    (
+                        chronos["repository"],
+                        chronos["revision"],
+                        list(QUANTILES),
+                        device,
+                    ),
+                    1,
+                )
+            for model, batch, response in run_batch_groups(
+                dask_client, groups, retries=settings.dask_retries
+            ):
+                if isinstance(response, BaseException):
+                    if model == "chronos_2" and len(batch) > 1:
+                        smaller = max(1, len(batch) // 2)
+                        for split_batch in reversed(_batches(batch, smaller)):
+                            chronos_pending.appendleft(split_batch)
+                        continue
+                    raise response
+                metadata = {
+                    **response["worker"],
+                    "runtime_seconds": response["runtime_seconds"],
+                    "batch_task_count": len(batch),
+                    "requested_batch_size": (
+                        profile.chronos_inference_batch_size
+                        if model == "chronos_2"
+                        else len(batch)
+                    ),
+                }
+                commit_response(
+                    batch,
+                    {"results": response["results"], "metadata": metadata},
+                    response["runtime_seconds"],
+                )
+            return
 
         def run_chronos(progress: Callable[[], None] = lambda: None) -> None:
             if not chronos_jobs:
@@ -1200,11 +1576,17 @@ class POC1Coordinator:
             run_chronos()
 
     def _stage5(
-        self, experiment_id: str, rows: list[tuple], attempts: dict[str, int], workers: int
+        self,
+        experiment_id: str,
+        rows: list[tuple],
+        attempts: dict[str, int],
+        workers: int,
+        dask_client: Any = None,
+        settings: ExecutionSettings | None = None,
     ) -> None:
         combination_rows = [row for row in rows if row[3] == "equal_weight"]
         jobs = []
-        for _, instance_id, variant_id, _ in combination_rows:
+        for task_id, instance_id, variant_id, _ in combination_rows:
             components = self.connection.execute(
                 """SELECT candidate, mean, median, quantiles, forecast_id FROM forecasts
                 WHERE experiment_id=? AND variant_id=? AND forecast_instance_id=?
@@ -1214,24 +1596,25 @@ class POC1Coordinator:
             if len(components) != 2:
                 raise RuntimeError("equal-weight combination requires both model forecasts")
             mapped = {row[0]: {"mean": row[1], "median": row[2], "quantiles": row[3], "id": row[4]} for row in components}
-            jobs.append({"left": mapped["auto_arima"], "right": mapped["chronos_2"]})
-        combined = iter(_run_parallel(_combine_job, jobs, workers))
-        for task_id, instance_id, variant_id, candidate in rows:
-            existing = self.connection.execute(
-                """SELECT forecast_id FROM forecasts WHERE experiment_id=? AND variant_id=?
-                AND forecast_instance_id=? AND candidate=?""",
-                [experiment_id, variant_id, instance_id, candidate],
-            ).fetchone()
-            if candidate != "equal_weight":
-                if existing is None:
-                    raise RuntimeError(f"missing Stage 4 forecast for {candidate}")
-                self._commit_task(task_id, attempts[task_id], 0.0, lambda: None)
-                continue
-            result = next(combined)
-            forecast_id = f"forecast/{json_fingerprint({'experiment': experiment_id, 'variant': variant_id, 'instance': instance_id, 'candidate': candidate})[:32]}"
-            components = jobs[combination_rows.index((task_id, instance_id, variant_id, candidate))]
+            jobs.append(
+                {
+                    "id": task_id,
+                    "left": mapped["auto_arima"],
+                    "right": mapped["chronos_2"],
+                }
+            )
 
-            def insert(result=result, components=components):
+        def commit_combination(
+            row: tuple,
+            result: dict[str, Any],
+            components: dict[str, Any],
+            runtime: float = 0.0,
+            resources: dict[str, Any] | None = None,
+        ) -> None:
+            task_id, instance_id, variant_id, candidate = row
+            forecast_id = f"forecast/{json_fingerprint({'experiment': experiment_id, 'variant': variant_id, 'instance': instance_id, 'candidate': candidate})[:32]}"
+
+            def insert() -> None:
                 self.connection.execute(
                     """INSERT INTO forecasts VALUES
                     (?, ?, ?, ?, 'equal_weight', NULL, NULL, 'original', ?, ?, ?, ?, 0, ?, ?, current_timestamp)
@@ -1255,7 +1638,68 @@ class POC1Coordinator:
                         [forecast_id, component["id"], name],
                     )
 
-            self._commit_task(task_id, attempts[task_id], 0.0, insert)
+            self._commit_task(
+                task_id, attempts[task_id], runtime, insert, resources
+            )
+
+        for task_id, instance_id, variant_id, candidate in rows:
+            if candidate == "equal_weight":
+                continue
+            existing = self.connection.execute(
+                """SELECT forecast_id FROM forecasts WHERE experiment_id=? AND variant_id=?
+                AND forecast_instance_id=? AND candidate=?""",
+                [experiment_id, variant_id, instance_id, candidate],
+            ).fetchone()
+            if existing is None:
+                raise RuntimeError(f"missing Stage 4 forecast for {candidate}")
+            self._commit_task(
+                task_id,
+                attempts[task_id],
+                0.0,
+                lambda: None,
+                {
+                    "execution_backend": "Mac coordinator pass-through",
+                    "hostname": platform.node(),
+                    "retry_count": 0,
+                },
+            )
+
+        if dask_client is None:
+            results = _run_parallel(_combine_job, jobs, workers)
+            for row, job, result in zip(
+                combination_rows, jobs, results, strict=True
+            ):
+                commit_combination(row, result, job)
+            return
+
+        from .dask_execution import combine_batch, run_batches
+
+        rows_by_id = {row[0]: row for row in combination_rows}
+        jobs_by_id = {job["id"]: job for job in jobs}
+        for batch, response in run_batches(
+            dask_client,
+            combine_batch,
+            _batches(jobs, 32),
+            resources={"CPU": 1},
+            max_in_flight=settings.dask_max_in_flight,
+            retries=settings.dask_retries,
+        ):
+            result_ids = [item["id"] for item in response["results"]]
+            expected_ids = {job["id"] for job in batch}
+            if len(result_ids) != len(set(result_ids)) or set(result_ids) != expected_ids:
+                raise RuntimeError(
+                    "Stage 5 worker returned missing, duplicate, or unexpected task IDs"
+                )
+            runtime = response["runtime_seconds"] / len(batch)
+            for result in response["results"]:
+                task_id = result["id"]
+                commit_combination(
+                    rows_by_id[task_id],
+                    result,
+                    jobs_by_id[task_id],
+                    runtime,
+                    response["worker"],
+                )
 
     def _stage6(
         self,
@@ -1347,6 +1791,7 @@ class POC1Coordinator:
         device: str = "auto",
         batch_size: int = 8,
         execution: tuple[ExecutionProfile, dict[str, Any]] | None = None,
+        execution_settings: ExecutionSettings | None = None,
     ) -> list[dict[str, Any]]:
         results = []
         for stage in STAGES:
@@ -1358,6 +1803,7 @@ class POC1Coordinator:
                     device,
                     batch_size,
                     execution,
+                    execution_settings,
                 )
             )
         self.connection.execute(

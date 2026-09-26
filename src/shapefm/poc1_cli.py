@@ -10,7 +10,7 @@ from pathlib import Path
 
 from .calibration import calibrate
 from .database import DEFAULT_DATABASE
-from .execution import resolve_execution_profile
+from .execution import ExecutionSettings, resolve_execution_profile
 from .poc1 import (
     ExperimentPlan,
     POC1Coordinator,
@@ -27,6 +27,7 @@ def main() -> None:
     subparsers = parser.add_subparsers(dest="command", required=True)
     plan_parser = subparsers.add_parser("plan")
     plan_parser.add_argument("--scope", choices=["smoke", "m4_daily", "manifest"], default="smoke")
+    plan_parser.add_argument("--dry-run", action="store_true")
     run_parser = subparsers.add_parser("run")
     run_parser.add_argument("--experiment-id")
     run_parser.add_argument("--stage", type=int, choices=range(2, 7))
@@ -41,6 +42,14 @@ def main() -> None:
     run_parser.add_argument("--chronos-batch-size", type=int)
     run_parser.add_argument("--combination-workers", type=int)
     run_parser.add_argument("--evaluation-workers", type=int)
+    run_parser.add_argument(
+        "--execution", choices=["sequential", "local", "dask"], default="local"
+    )
+    run_parser.add_argument("--dask-address")
+    run_parser.add_argument("--dask-timeout", type=float, default=60.0)
+    run_parser.add_argument("--dask-expected-workers", type=int, default=1)
+    run_parser.add_argument("--dask-max-in-flight", type=int, default=8)
+    run_parser.add_argument("--dask-retries", type=int, default=2)
     run_parser.add_argument(
         "--cpu-gpu-overlap", action=argparse.BooleanOptionalAction, default=None
     )
@@ -96,7 +105,7 @@ def main() -> None:
         selected_experiment = latest_experiment_id(args.database)
     with POC1Coordinator(args.database) as coordinator:
         if args.command == "plan":
-            value = coordinator.plan(args.scope)
+            value = coordinator.plan(args.scope, dry_run=args.dry_run)
             result = asdict(value) if isinstance(value, ExperimentPlan) else value
         elif args.command == "run":
             experiment_id = selected_experiment
@@ -125,9 +134,20 @@ def main() -> None:
             if args.device and args.device != "auto":
                 overrides["required_accelerator"] = args.device
             execution = resolve_execution_profile(args.profile, overrides)
+            execution_settings = ExecutionSettings(
+                mode=args.execution,
+                dask_scheduler_address=args.dask_address,
+                dask_timeout_seconds=args.dask_timeout,
+                dask_expected_workers=args.dask_expected_workers,
+                dask_max_in_flight=args.dask_max_in_flight,
+                dask_retries=args.dask_retries,
+            )
             if args.stage:
                 result = coordinator.run_gate(
-                    experiment_id, args.stage, execution=execution
+                    experiment_id,
+                    args.stage,
+                    execution=execution,
+                    execution_settings=execution_settings,
                 )
             else:
                 count = coordinator.connection.execute(
@@ -135,7 +155,11 @@ def main() -> None:
                     [experiment_id],
                 ).fetchone()[0]
                 plan = ExperimentPlan(experiment_id, "stored", count, 4, {}, "m4_daily/D/short")
-                result = coordinator.run_all(plan, execution=execution)
+                result = coordinator.run_all(
+                    plan,
+                    execution=execution,
+                    execution_settings=execution_settings,
+                )
         else:
             result = coordinator.export_candidate(
                 selected_experiment, args.model_name

@@ -6,7 +6,7 @@
 
 set -Eeuo pipefail
 
-readonly BASE_COMMIT="c229060eeb5874a2d2393bfe78ab825b73abe10d"
+readonly BASE_COMMIT="7144ef957802042fd9ee2c8447e8d788bd96afe5"
 readonly EXPECTED_SUBMODULE_COMMIT="4d5ab3fa0fe7451bbf59bb1ff6dd76e6e414d64a"
 readonly UV_VERSION="0.12.18"
 readonly PYTHON_VERSION="3.12.14"

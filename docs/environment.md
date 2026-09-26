@@ -7,8 +7,10 @@ results—not executable environments.
 
 ## Core Python environment
 
-The importer uses uv 0.12.18, uv-managed CPython 3.12.14, and one `uv.lock`
-resolved for macOS ARM64 and Linux x86_64.
+The importer and distributed execution layer use uv 0.12.18, uv-managed
+CPython 3.12.14, and one `uv.lock` resolved for macOS ARM64 and Linux x86_64.
+Dask and Distributed are pinned together at 2026.8.0; scheduler and workers
+must report that exact pair before an experiment starts.
 
 ```sh
 mkdir -p .tools/uv
@@ -22,6 +24,11 @@ export UV_PYTHON_PREFERENCE=only-managed
 ```
 
 Run Python tools with `.tools/uv/uv run --locked`.
+
+Each machine restores this same lockfile independently. Never copy `.venv`
+between machines. The two-machine launcher runs `uv sync --locked` on both
+hosts and rejects a worker if Python, Dask, Git, configuration, R, GIFT-Eval,
+Chronos, checkpoint, CUDA, or GPU identity differs from the expected contract.
 
 ## Official GIFT-Eval environment
 

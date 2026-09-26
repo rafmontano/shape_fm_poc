@@ -9,6 +9,8 @@ description = "ShapeFM canonical time-series database proof of concept"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+  "dask==2026.8.0",
+  "distributed==2026.8.0",
   "duckdb>=1.2",
   "huggingface-hub>=0.36,<0.37",
   "pyarrow>=20",
@@ -16,6 +18,7 @@ dependencies = [
 
 [project.scripts]
 shapefm-acquire = "shapefm.acquire_gift_eval:main"
+shapefm-cluster = "shapefm.cluster_cli:main"
 shapefm-import = "shapefm.import_gift_eval:main"
 shapefm-poc1 = "shapefm.poc1_cli:main"
 

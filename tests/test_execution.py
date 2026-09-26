@@ -15,11 +15,12 @@ from shapefm.calibration import (
     _recommended_setting,
 )
 from shapefm.execution import (
+    ExecutionSettings,
     PersistentChronosWorker,
     resolve_execution_profile,
     system_hardware,
 )
-from shapefm.poc1 import _length_aware_batches
+from shapefm.poc1 import _length_aware_batches, expected_task_counts
 
 
 class ExecutionProfileTests(unittest.TestCase):
@@ -72,6 +73,27 @@ class ExecutionProfileTests(unittest.TestCase):
     def test_hardware_provenance_records_cpu_model(self) -> None:
         with patch("shapefm.execution.cpu_model", return_value="Test CPU"):
             self.assertEqual(system_hardware()["cpu_model"], "Test CPU")
+
+    def test_execution_settings_are_invocation_only_and_validated(self) -> None:
+        settings = ExecutionSettings(
+            mode="dask",
+            dask_scheduler_address="tcp://scheduler:8786",
+            dask_expected_workers=7,
+            dask_max_in_flight=12,
+            dask_retries=2,
+        )
+        self.assertEqual(settings.mode, "dask")
+        self.assertEqual(settings.dask_expected_workers, 7)
+        with self.assertRaisesRegex(ValueError, "execution mode"):
+            ExecutionSettings(mode="remote")
+
+    def test_full_m4_daily_task_counts(self) -> None:
+        counts = expected_task_counts(4_227)
+        self.assertEqual(
+            counts,
+            {2: 8_454, 3: 16_908, 4: 33_816, 5: 50_724, 6: 12},
+        )
+        self.assertEqual(sum(counts.values()), 109_914)
 
     def test_unknown_and_invalid_overrides_fail(self) -> None:
         with self.assertRaisesRegex(ValueError, "unknown execution profile"):
@@ -181,6 +203,65 @@ for line in sys.stdin:
             if isinstance(node, ast.ImportFrom)
         )
         self.assertNotIn("duckdb", imports)
+
+        dask_source = (
+            Path(__file__).parents[1] / "src/shapefm/dask_execution.py"
+        ).read_text(encoding="utf-8")
+        dask_imports = [
+            node.names[0].name
+            for node in ast.walk(ast.parse(dask_source))
+            if isinstance(node, ast.Import)
+        ]
+        dask_imports.extend(
+            node.module or ""
+            for node in ast.walk(ast.parse(dask_source))
+            if isinstance(node, ast.ImportFrom)
+        )
+        self.assertNotIn("duckdb", dask_imports)
+
+    def test_local_dask_batch_matches_sequential_transform(self) -> None:
+        from distributed import Client, LocalCluster
+
+        from shapefm.dask_execution import run_batches, transform_batch
+        from shapefm.transformations import transform
+
+        jobs = [
+            {
+                "id": f"task-{index}",
+                "values": [float(index), float(index + 2), float(index - 1)],
+                "method": "minmax_then_standardize",
+            }
+            for index in range(5)
+        ]
+        cluster = LocalCluster(
+            n_workers=1,
+            threads_per_worker=1,
+            processes=False,
+            dashboard_address=None,
+            resources={"CPU": 1},
+        )
+        try:
+            with Client(cluster) as client:
+                returned = []
+                for _, response in run_batches(
+                    client,
+                    transform_batch,
+                    [jobs[:3], jobs[3:]],
+                    resources={"CPU": 1},
+                    max_in_flight=1,
+                    retries=1,
+                ):
+                    returned.extend(response["results"])
+                    self.assertEqual(response["worker"]["resources"], {"CPU": 1})
+            expected = [
+                transform(job["values"], job["method"]) for job in jobs
+            ]
+            self.assertEqual(
+                [tuple(result["values"]) for result in returned],
+                [result.values for result in expected],
+            )
+        finally:
+            cluster.close()
 
 
 class CalibrationSafetyTests(unittest.TestCase):

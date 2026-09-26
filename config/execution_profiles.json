@@ -43,5 +43,20 @@
     "system_memory_min_available_gib": 16.0,
     "accelerator_memory_min_available_gib": 4.0,
     "database_writers": 1
+  },
+  "two_machine_dask": {
+    "required_accelerator": null,
+    "expected_accelerator_name": null,
+    "cleaning_workers": 6,
+    "transformation_workers": 6,
+    "autoarima_workers": 6,
+    "chronos_processes": 1,
+    "chronos_inference_batch_size": 16,
+    "combination_workers": 6,
+    "evaluation_workers": 1,
+    "cpu_gpu_overlap": true,
+    "system_memory_min_available_gib": 3.0,
+    "accelerator_memory_min_available_gib": 4.0,
+    "database_writers": 1
   }
 }

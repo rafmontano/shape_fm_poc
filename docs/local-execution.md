@@ -1,4 +1,4 @@
-# POC 1.1 local execution
+# POC 1.2 local and two-machine execution
 
 Execution profiles are committed in `config/execution_profiles.json`. They
 control local scheduling only and do not change scientific experiment or task
@@ -101,3 +101,48 @@ Ubuntu validation, calibration, and the smoke POC from an existing checkout:
 The script does not clone the repository or require GitHub CLI authentication.
 By default it reuses `~/ShapeFM-results/shapefm.duckdb` and writes reports and
 the append-only bootstrap log beside that database.
+
+## Mac-coordinated Dask execution
+
+The normal researcher interface starts the Mac scheduler, two bounded Mac CPU
+workers, four Ubuntu CPU workers, and one dedicated Ubuntu RTX 5090 worker. It
+validates all workers, runs Gates 2–6, prints the task/result report, and shuts
+the cluster down:
+
+```sh
+scripts/run_two_machine.sh --scope smoke
+scripts/run_two_machine.sh --scope smoke --resume
+```
+
+No Ubuntu command is required. Troubleshooting operations are separate:
+
+```sh
+scripts/run_two_machine.sh start
+scripts/run_two_machine.sh status
+scripts/run_two_machine.sh stop
+```
+
+While running, the dashboard is at <http://127.0.0.1:8787/status>. CPU workers
+advertise `CPU=1`; the dedicated GPU worker advertises only `GPU=1`. Chronos-2
+requests `GPU=1`, while cleaning, transformations, AutoARIMA, and combination
+request `CPU=1`. Stage 6 always executes through the official adapter on the
+Mac. Runtime files and logs are under ignored `data/dask/`.
+
+This POC uses unencrypted Dask TCP on the trusted private LAN. Do not expose
+ports 8786 or worker ports to an untrusted network; production deployment would
+require Dask TLS and network access controls.
+
+`plan --scope m4_daily` now materialises all 4,227 forecast instances and
+109,914 deterministic tasks. Use `--dry-run` to inspect counts without writes:
+
+```sh
+.tools/uv/uv run --locked shapefm-poc1 plan --scope m4_daily --dry-run
+```
+
+After smoke and restart validation is accepted, the exact later full run is:
+
+```sh
+scripts/run_two_machine.sh --scope m4_daily --resume
+```
+
+Do not run that command during POC validation; it performs the full experiment.

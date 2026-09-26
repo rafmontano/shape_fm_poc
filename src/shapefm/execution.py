@@ -11,7 +11,7 @@ import subprocess
 import threading
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from .orchestration import repository_root
 
@@ -44,6 +44,31 @@ class ExecutionProfile:
     system_memory_min_available_gib: float
     accelerator_memory_min_available_gib: float
     database_writers: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class ExecutionSettings:
+    """Invocation-only execution routing, excluded from scientific identity."""
+
+    mode: Literal["sequential", "local", "dask"] = "local"
+    dask_scheduler_address: str | None = None
+    dask_timeout_seconds: float = 60.0
+    dask_expected_workers: int = 1
+    dask_max_in_flight: int = 8
+    dask_retries: int = 2
+
+    def __post_init__(self) -> None:
+        if self.mode not in {"sequential", "local", "dask"}:
+            raise ValueError("execution mode must be sequential, local, or dask")
+        if self.dask_timeout_seconds <= 0:
+            raise ValueError("Dask timeout must be positive")
+        if self.dask_expected_workers < 1 or self.dask_max_in_flight < 1:
+            raise ValueError("Dask worker and in-flight limits must be positive")
+        if self.dask_retries < 0:
+            raise ValueError("Dask retries cannot be negative")
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
