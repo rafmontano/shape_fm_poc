@@ -241,17 +241,22 @@ calibrate_dask() {
       "$name" "$mac" "$ubuntu" "$chronos" "$maximum"
     SHAPEFM_MAC_CPU_WORKERS="$mac" SHAPEFM_UBUNTU_CPU_WORKERS="$ubuntu" \
       "$0" start
-    local baseline_arguments=()
-    if [[ "$index" -gt 0 ]]; then
-      baseline_arguments=(--baseline "$baseline_file")
-    fi
     local command_status=0
-    .tools/uv/uv run --locked shapefm-poc1 --database "$DATABASE" \
-      calibrate-dask --address "$SCHEDULER_ADDRESS" \
-      --expected-workers "$expected" --profile-name "$name" \
-      --mac-cpu-workers "$mac" --ubuntu-cpu-workers "$ubuntu" \
-      --chronos-batch-size "$chronos" --max-in-flight "$maximum" \
-      --output "$candidate" "${baseline_arguments[@]}" || command_status=$?
+    if [[ "$index" -eq 0 ]]; then
+      .tools/uv/uv run --locked shapefm-poc1 --database "$DATABASE" \
+        calibrate-dask --address "$SCHEDULER_ADDRESS" \
+        --expected-workers "$expected" --profile-name "$name" \
+        --mac-cpu-workers "$mac" --ubuntu-cpu-workers "$ubuntu" \
+        --chronos-batch-size "$chronos" --max-in-flight "$maximum" \
+        --output "$candidate" || command_status=$?
+    else
+      .tools/uv/uv run --locked shapefm-poc1 --database "$DATABASE" \
+        calibrate-dask --address "$SCHEDULER_ADDRESS" \
+        --expected-workers "$expected" --profile-name "$name" \
+        --mac-cpu-workers "$mac" --ubuntu-cpu-workers "$ubuntu" \
+        --chronos-batch-size "$chronos" --max-in-flight "$maximum" \
+        --baseline "$baseline_file" --output "$candidate" || command_status=$?
+    fi
     SHAPEFM_MAC_CPU_WORKERS="$mac" SHAPEFM_UBUNTU_CPU_WORKERS="$ubuntu" \
       "$0" stop
     [[ "$command_status" -eq 0 ]] || return "$command_status"
