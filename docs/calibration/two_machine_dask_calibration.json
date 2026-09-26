@@ -391,5 +391,72 @@
       "maximum_in_flight_batches": 12
     },
     "rationale": "The baseline was the only safe candidate tested."
+  },
+  "selected_profile_validation": {
+    "database": "isolated copy containing canonical Stage 1 data only",
+    "canonical_database_sha256_before_and_after": "271d638ef2f9f61cc943a01be5af09c61fe516e90b08558a519bb41a90b2a2c0",
+    "completed_task_counts": {
+      "stage_2": 20,
+      "stage_3": 40,
+      "stage_4": 80,
+      "stage_5": 120,
+      "stage_6": 12,
+      "total": 272
+    },
+    "official_evaluation_count": 12,
+    "evaluation_input_count_minimum": 10,
+    "evaluation_input_count_maximum": 10,
+    "distinct_evaluation_input_fingerprints": 12,
+    "task_contribution_by_host": {
+      "RMMacbookPro.local": 124,
+      "WSUbuntu1": 136,
+      "Mac coordinator/local": 12
+    },
+    "chronos_hosts": [
+      "WSUbuntu1"
+    ],
+    "chronos_resources": [
+      {
+        "GPU": 1.0
+      }
+    ],
+    "failure_count": 0,
+    "forecast_content_fingerprint": "332453ed3916b82a04bbf7e0f963d634c2dabb01fdd126288009a4961374905e",
+    "existing_distributed_smoke_fingerprint": "feb01cf111bb98d32e91102857f23801a715a4c12b2b191692c7dd8a06aaee56",
+    "official_metrics_match_existing_smoke": {
+      "within_rtol_atol_1e_5": true,
+      "maximum_absolute_difference": 0.11053825548151508,
+      "maximum_relative_difference": 2.7801126880630228e-06
+    },
+    "all_skipped_rerun": {
+      "selected_by_stage": {
+        "stage_2": 0,
+        "stage_3": 0,
+        "stage_4": 0,
+        "stage_5": 0,
+        "stage_6": 0
+      },
+      "skipped_by_stage": {
+        "stage_2": 20,
+        "stage_3": 40,
+        "stage_4": 80,
+        "stage_5": 120,
+        "stage_6": 12
+      }
+    },
+    "scope_expansion": {
+      "forecast_instances": 4227,
+      "preserved_completed_stage_2_to_5_counts": [
+        20,
+        40,
+        80,
+        120
+      ],
+      "stage_6_pending": 12,
+      "remaining_smoke_evaluations": 0,
+      "remaining_smoke_exports": 0,
+      "experiment_status": "planned"
+    },
+    "single_writer": "Only the Mac coordinator opened the isolated DuckDB; Dask worker modules contain no DuckDB access."
   }
 }
