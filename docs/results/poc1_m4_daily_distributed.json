@@ -1,0 +1,653 @@
+{
+  "poc1_status": "failed_final_validation",
+  "failure_reason": "Forty Chronos-2 forecasts preserved from the pre-Dask smoke run were executed on Mac MPS. All 16,868 Chronos-2 tasks added by full-scope expansion ran on the dedicated Ubuntu GPU worker, but experiment-wide GPU exclusivity is false.",
+  "execution_code_commit": "89fe73e264a5a1342dcfbd229bb4eb2f7e3f4b31",
+  "completion_tag_created": false,
+  "experiment": {
+    "experiment_id": "experiment/d26399af4b8ebe6c5f6d634c",
+    "scope": "m4_daily",
+    "status": "completed",
+    "forecast_instances": 4227,
+    "forecast_rows": 50724,
+    "updated_at": "2026-09-26 20:42:09.521035+10"
+  },
+  "dataset": {
+    "dataset_id": "gift_eval/m4_daily/cfa20795c714da49ac23b45a",
+    "name": "m4_daily",
+    "source_system": "Salesforce/GiftEval",
+    "source_revision": "30841734ac5cfddbd0c3bad6d09d2b6b32becbb0",
+    "source_file_hashes": {
+      "data-00000-of-00001.arrow": {
+        "bytes": 40202512,
+        "sha256": "bb82fc356772441f3354ba9d74aaa7288db2d7e589d5e62b43b8a87736bc47e2"
+      },
+      "dataset_info.json": {
+        "bytes": 888,
+        "sha256": "ea92f9b9238f54ada08d0d52123e1f07ee5e08a08fdfc0b8658789f312596dbf"
+      },
+      "state.json": {
+        "bytes": 250,
+        "sha256": "cbf09993d018ff75ea8a31fcf9b26a80c4a8499f16aca675c91a0de4d3ec6d2d"
+      }
+    },
+    "import_configuration_hash": "e36f4ece1f8d53333067faff78db820e4331c74b2b6bed69bff0fb719d3d2b45",
+    "benchmark_configuration": "m4_daily/D/short",
+    "gift_eval_revision": "4d5ab3fa0fe7451bbf59bb1ff6dd76e6e414d64a"
+  },
+  "scientific_configuration_hash": "de6e65cd76676a30040dcd9141fd4d8eb46f27fba478f4e7a018585861f39910",
+  "scientific_configuration": {
+    "adjustment": "identity",
+    "benchmark": {
+      "configuration": "m4_daily/D/short",
+      "dataset_name": "m4_daily",
+      "gift_eval_revision": "4d5ab3fa0fe7451bbf59bb1ff6dd76e6e414d64a",
+      "term": "short"
+    },
+    "cleaning": [
+      "identity",
+      "tsclean"
+    ],
+    "combination": {
+      "method": "equal_weight",
+      "weights": {
+        "auto_arima": 0.5,
+        "chronos_2": 0.5
+      }
+    },
+    "contract_version": "poc1-v2-official-seasonality",
+    "models": {
+      "auto_arima": {
+        "package": "forecast",
+        "settings": {
+          "allowdrift": true,
+          "allowmean": true,
+          "approximation": false,
+          "num_cores": 1,
+          "stepwise": true
+        }
+      },
+      "chronos_2": {
+        "chronos_forecasting": "2.2.2",
+        "dtype": "float32",
+        "internal_cpu_threads": 1,
+        "predict_batches_jointly": false,
+        "quantile_levels": [
+          0.1,
+          0.2,
+          0.3,
+          0.4,
+          0.5,
+          0.6,
+          0.7,
+          0.8,
+          0.9
+        ],
+        "repository": "amazon/chronos-2",
+        "revision": "29ec3766d36d6f73f0696f85560a422f50e8498c"
+      }
+    },
+    "transformations": [
+      "identity",
+      "minmax_then_standardize"
+    ]
+  },
+  "execution_profile": {
+    "name": "two_machine_dask",
+    "required_accelerator": null,
+    "expected_accelerator_name": null,
+    "cleaning_workers": 6,
+    "transformation_workers": 6,
+    "autoarima_workers": 6,
+    "chronos_processes": 1,
+    "chronos_inference_batch_size": 16,
+    "combination_workers": 6,
+    "evaluation_workers": 1,
+    "cpu_gpu_overlap": true,
+    "system_memory_min_available_gib": 3.0,
+    "accelerator_memory_min_available_gib": 4.0,
+    "database_writers": 1,
+    "dask_mac_cpu_workers": 2,
+    "dask_ubuntu_cpu_workers": 4,
+    "dask_max_in_flight": 12
+  },
+  "calibration_recommendation": {
+    "selected_profile": "baseline",
+    "settings": {
+      "mac_cpu_workers": 2,
+      "ubuntu_cpu_workers": 4,
+      "gpu_workers": 1,
+      "chronos_batch_size": 16,
+      "maximum_in_flight_batches": 12
+    },
+    "rationale": "The baseline was the only safe candidate tested."
+  },
+  "task_counts": {
+    "by_stage": {
+      "2": 8454,
+      "3": 16908,
+      "4": 33816,
+      "5": 50724,
+      "6": 12
+    },
+    "total": 109914,
+    "final_status": {
+      "completed": 109914
+    }
+  },
+  "task_contribution": {
+    "by_recorded_host": {
+      "Mac coordinator/local": 272,
+      "RMMacbookPro.local": 54258,
+      "WSUbuntu1": 55384
+    },
+    "by_machine": {
+      "Mac": 54530,
+      "Ubuntu": 55384
+    },
+    "by_host_and_backend": [
+      {
+        "host": "Mac coordinator/local",
+        "backend": "legacy local/coordinator",
+        "tasks": 260
+      },
+      {
+        "host": "Mac coordinator/local",
+        "backend": "official GIFT-Eval CPU evaluator",
+        "tasks": 12
+      },
+      {
+        "host": "RMMacbookPro.local",
+        "backend": "Dask Distributed",
+        "tasks": 20522
+      },
+      {
+        "host": "RMMacbookPro.local",
+        "backend": "Mac coordinator pass-through",
+        "tasks": 33736
+      },
+      {
+        "host": "WSUbuntu1",
+        "backend": "Dask Distributed",
+        "tasks": 55384
+      }
+    ]
+  },
+  "runtime_seconds": {
+    "by_stage": {
+      "preprocess": 2435.8645689589994,
+      "transform": 7001.5535495,
+      "forecast": 10032.497209583998,
+      "combine": 1008.1257527910057,
+      "evaluate": 57.51200191700627
+    },
+    "total_stage_runtime": 20535.55308275101,
+    "wall_clock_first_start_to_full_completion": 21260.353738,
+    "wall_clock_note": "Includes diagnosis, code fix, synchronization, and resume between failed Stage 5 and completion."
+  },
+  "retries_and_failures": {
+    "final_pending_running_failed_tasks": 0,
+    "historical_failed_task_attempts": 15908,
+    "stage_5_tasks_resubmitted_after_fix": 15908,
+    "stage_5_tasks_completed_before_failure_and_not_repeated": 34816,
+    "trigger": "One 32-task Stage 5 batch encountered crossed combined quantiles.",
+    "dask_retries_of_triggering_batch": 2,
+    "worker_restarts": 0,
+    "completed_attempt_retry_metadata_total": 0,
+    "correction": "Deterministic monotone rearrangement for the 24 crossed equal-weight forecasts (46 horizon positions)."
+  },
+  "chronos_execution": {
+    "all_new_full_scope_tasks_on_ubuntu_gpu": true,
+    "experiment_wide_ubuntu_gpu_exclusive": false,
+    "breakdown": [
+      {
+        "host": "Mac coordinator/local",
+        "worker": null,
+        "resources": {},
+        "tasks": 40
+      },
+      {
+        "host": "WSUbuntu1",
+        "worker": "ubuntu-gpu",
+        "resources": {
+          "GPU": 1.0
+        },
+        "tasks": 16868
+      }
+    ]
+  },
+  "fingerprints": {
+    "forecast_content_sha256": "a41f97833683136ef88f1f78dbdd5e31945d9bdc6e634b3208b4dfd9e416179d",
+    "official_evaluations_sha256": "1b03dbb005e215c9408dbf09951ff6d6561a85be2a7309fcb2e6200f03cfbf8c"
+  },
+  "official_evaluations": [
+    {
+      "evaluation_id": "evaluation/211535acf16f54d5ac738e2b784641c8",
+      "variant_id": "variant/d9d0dd034eeec0d560ef538a",
+      "cleaning": "identity",
+      "transformation": "identity",
+      "candidate": "auto_arima",
+      "evaluator": "gluonts.model.evaluate_forecasts",
+      "evaluator_revision": "4d5ab3fa0fe7451bbf59bb1ff6dd76e6e414d64a",
+      "options": {
+        "allow_nan_forecast": false,
+        "axis": null,
+        "mask_invalid_label": true,
+        "seasonality": "official get_seasonality(freq)"
+      },
+      "metrics": {
+        "MAE[0.5]": 181.40857865062944,
+        "MAPE[0.5]": 0.04083485797920096,
+        "MASE[0.5]": 3.341941471877879,
+        "MSE[0.5]": 403595.6667571869,
+        "MSE[mean]": 403595.6667571869,
+        "MSIS": 31.224502680581008,
+        "ND[0.5]": 0.02802261209215023,
+        "NRMSE[mean]": 0.09813502598566262,
+        "RMSE[mean]": 635.291796544853,
+        "mean_weighted_sum_quantile_loss": 0.02373384998951719,
+        "sMAPE[0.5]": 0.03154220820103987
+      },
+      "evaluation_input_count": 4227,
+      "forecast_input_fingerprint": "8487716d07fd48b1c95dcdf01e139994706186c19944167d8df73bc3852385ef",
+      "is_complete_manifest": false,
+      "is_submittable": false
+    },
+    {
+      "evaluation_id": "evaluation/3b1f09aea1600a98ef014f64f258d3ef",
+      "variant_id": "variant/d9d0dd034eeec0d560ef538a",
+      "cleaning": "identity",
+      "transformation": "identity",
+      "candidate": "chronos_2",
+      "evaluator": "gluonts.model.evaluate_forecasts",
+      "evaluator_revision": "4d5ab3fa0fe7451bbf59bb1ff6dd76e6e414d64a",
+      "options": {
+        "allow_nan_forecast": false,
+        "axis": null,
+        "mask_invalid_label": true,
+        "seasonality": "official get_seasonality(freq)"
+      },
+      "metrics": {
+        "MAE[0.5]": 184.19081420431738,
+        "MAPE[0.5]": 0.03963299248052965,
+        "MASE[0.5]": 3.381546031882161,
+        "MSE[0.5]": 382296.0427943187,
+        "MSE[mean]": 382296.0427943187,
+        "MSIS": 25.320889920541596,
+        "ND[0.5]": 0.028452390596837913,
+        "NRMSE[mean]": 0.09551040699908435,
+        "RMSE[mean]": 618.3009322282466,
+        "mean_weighted_sum_quantile_loss": 0.02257160221074596,
+        "sMAPE[0.5]": 0.03087283442076042
+      },
+      "evaluation_input_count": 4227,
+      "forecast_input_fingerprint": "95b4836b27e14946ab0d38451994094b8d5c79d5bf7d8868c37b1a28ebbee55e",
+      "is_complete_manifest": false,
+      "is_submittable": false
+    },
+    {
+      "evaluation_id": "evaluation/9e443b915b220ba18487cc451f175a47",
+      "variant_id": "variant/d9d0dd034eeec0d560ef538a",
+      "cleaning": "identity",
+      "transformation": "identity",
+      "candidate": "equal_weight",
+      "evaluator": "gluonts.model.evaluate_forecasts",
+      "evaluator_revision": "4d5ab3fa0fe7451bbf59bb1ff6dd76e6e414d64a",
+      "options": {
+        "allow_nan_forecast": false,
+        "axis": null,
+        "mask_invalid_label": true,
+        "seasonality": "official get_seasonality(freq)"
+      },
+      "metrics": {
+        "MAE[0.5]": 176.9432288373327,
+        "MAPE[0.5]": 0.037243632513586936,
+        "MASE[0.5]": 3.26484058714867,
+        "MSE[0.5]": 380108.42713769095,
+        "MSE[mean]": 380108.42713769095,
+        "MSIS": 26.60376178577628,
+        "ND[0.5]": 0.02733283894798842,
+        "NRMSE[mean]": 0.09523674496570757,
+        "RMSE[mean]": 616.5293400461092,
+        "mean_weighted_sum_quantile_loss": 0.02220594046219033,
+        "sMAPE[0.5]": 0.030396577419306216
+      },
+      "evaluation_input_count": 4227,
+      "forecast_input_fingerprint": "1027c6aaa7e2a0db8abb0612a966532fa23d9c81308a08638d2d97355ba4ac76",
+      "is_complete_manifest": false,
+      "is_submittable": false
+    },
+    {
+      "evaluation_id": "evaluation/6a00d3871a0e9a368fb24b2cd3bba9b7",
+      "variant_id": "variant/e63c31fb1a5beba5c4e49b02",
+      "cleaning": "identity",
+      "transformation": "minmax_then_standardize",
+      "candidate": "auto_arima",
+      "evaluator": "gluonts.model.evaluate_forecasts",
+      "evaluator_revision": "4d5ab3fa0fe7451bbf59bb1ff6dd76e6e414d64a",
+      "options": {
+        "allow_nan_forecast": false,
+        "axis": null,
+        "mask_invalid_label": true,
+        "seasonality": "official get_seasonality(freq)"
+      },
+      "metrics": {
+        "MAE[0.5]": 181.36203459714002,
+        "MAPE[0.5]": 0.04082395310982606,
+        "MASE[0.5]": 3.3411689103018345,
+        "MSE[0.5]": 403479.0321073823,
+        "MSE[mean]": 403479.0321073823,
+        "MSIS": 31.232619580862362,
+        "ND[0.5]": 0.028015422322152407,
+        "NRMSE[mean]": 0.0981208449966316,
+        "RMSE[mean]": 635.1999937872971,
+        "mean_weighted_sum_quantile_loss": 0.023724699500657153,
+        "sMAPE[0.5]": 0.03153061533794951
+      },
+      "evaluation_input_count": 4227,
+      "forecast_input_fingerprint": "0c84a75589f7d479a30cfde372f39491270d323503695e4c97aab3ae21211fd8",
+      "is_complete_manifest": false,
+      "is_submittable": false
+    },
+    {
+      "evaluation_id": "evaluation/a83d6bbcf33a85a6b28631fa6da6d951",
+      "variant_id": "variant/e63c31fb1a5beba5c4e49b02",
+      "cleaning": "identity",
+      "transformation": "minmax_then_standardize",
+      "candidate": "chronos_2",
+      "evaluator": "gluonts.model.evaluate_forecasts",
+      "evaluator_revision": "4d5ab3fa0fe7451bbf59bb1ff6dd76e6e414d64a",
+      "options": {
+        "allow_nan_forecast": false,
+        "axis": null,
+        "mask_invalid_label": true,
+        "seasonality": "official get_seasonality(freq)"
+      },
+      "metrics": {
+        "MAE[0.5]": 184.19081455521837,
+        "MAPE[0.5]": 0.03963299179836631,
+        "MASE[0.5]": 3.3815460865330826,
+        "MSE[0.5]": 382296.0443818433,
+        "MSE[mean]": 382296.0443818433,
+        "MSIS": 25.320890671444552,
+        "ND[0.5]": 0.028452390651042422,
+        "NRMSE[mean]": 0.09551040719739286,
+        "RMSE[mean]": 618.3009335120264,
+        "mean_weighted_sum_quantile_loss": 0.022571602118351467,
+        "sMAPE[0.5]": 0.03087283365229649
+      },
+      "evaluation_input_count": 4227,
+      "forecast_input_fingerprint": "c8e5a2de2fe46a5094652c90ddb2193a0fdcce1cd497874943688e3b2890f8e8",
+      "is_complete_manifest": false,
+      "is_submittable": false
+    },
+    {
+      "evaluation_id": "evaluation/71da56c94bd83fb0a217274d606c1565",
+      "variant_id": "variant/e63c31fb1a5beba5c4e49b02",
+      "cleaning": "identity",
+      "transformation": "minmax_then_standardize",
+      "candidate": "equal_weight",
+      "evaluator": "gluonts.model.evaluate_forecasts",
+      "evaluator_revision": "4d5ab3fa0fe7451bbf59bb1ff6dd76e6e414d64a",
+      "options": {
+        "allow_nan_forecast": false,
+        "axis": null,
+        "mask_invalid_label": true,
+        "seasonality": "official get_seasonality(freq)"
+      },
+      "metrics": {
+        "MAE[0.5]": 176.91511339514625,
+        "MAPE[0.5]": 0.03723748490739294,
+        "MASE[0.5]": 3.2643352526511276,
+        "MSE[0.5]": 380054.70774779824,
+        "MSE[mean]": 380054.70774779824,
+        "MSIS": 26.603917653424876,
+        "ND[0.5]": 0.02732849588915377,
+        "NRMSE[mean]": 0.09523001499046746,
+        "RMSE[mean]": 616.4857725428855,
+        "mean_weighted_sum_quantile_loss": 0.022201463429385726,
+        "sMAPE[0.5]": 0.030390045124962208
+      },
+      "evaluation_input_count": 4227,
+      "forecast_input_fingerprint": "749940aedc9f5115154912215d356bb4f9d459bfe3b07f69668f7159c705def6",
+      "is_complete_manifest": false,
+      "is_submittable": false
+    },
+    {
+      "evaluation_id": "evaluation/c7a660d756ce067ddbe1b06438774e7d",
+      "variant_id": "variant/ea77ee35992d87519221620f",
+      "cleaning": "tsclean",
+      "transformation": "identity",
+      "candidate": "auto_arima",
+      "evaluator": "gluonts.model.evaluate_forecasts",
+      "evaluator_revision": "4d5ab3fa0fe7451bbf59bb1ff6dd76e6e414d64a",
+      "options": {
+        "allow_nan_forecast": false,
+        "axis": null,
+        "mask_invalid_label": true,
+        "seasonality": "official get_seasonality(freq)"
+      },
+      "metrics": {
+        "MAE[0.5]": 245.83336895873163,
+        "MAPE[0.5]": 0.05142877721686513,
+        "MASE[0.5]": 5.2606770100208164,
+        "MSE[0.5]": 1532730.9632656956,
+        "MSE[mean]": 1532730.9632656956,
+        "MSIS": 107.76937950200137,
+        "ND[0.5]": 0.03797446178608863,
+        "NRMSE[mean]": 0.1912422126774235,
+        "RMSE[mean]": 1238.0351219839022,
+        "mean_weighted_sum_quantile_loss": 0.032920604491729163,
+        "sMAPE[0.5]": 0.03895441204726805
+      },
+      "evaluation_input_count": 4227,
+      "forecast_input_fingerprint": "bd76748738ba20d04478402a2f4f7ec77460cf59031858b6f6fbfaf849e7b0a2",
+      "is_complete_manifest": false,
+      "is_submittable": false
+    },
+    {
+      "evaluation_id": "evaluation/bac5a3271a91d995caefd0aaf0731abf",
+      "variant_id": "variant/ea77ee35992d87519221620f",
+      "cleaning": "tsclean",
+      "transformation": "identity",
+      "candidate": "chronos_2",
+      "evaluator": "gluonts.model.evaluate_forecasts",
+      "evaluator_revision": "4d5ab3fa0fe7451bbf59bb1ff6dd76e6e414d64a",
+      "options": {
+        "allow_nan_forecast": false,
+        "axis": null,
+        "mask_invalid_label": true,
+        "seasonality": "official get_seasonality(freq)"
+      },
+      "metrics": {
+        "MAE[0.5]": 248.8667682218521,
+        "MAPE[0.5]": 0.052203795407744474,
+        "MASE[0.5]": 5.299656510645779,
+        "MSE[0.5]": 1530846.7618185224,
+        "MSE[mean]": 1530846.7618185224,
+        "MSIS": 104.52557744162341,
+        "ND[0.5]": 0.0384430381428592,
+        "NRMSE[mean]": 0.19112462855056672,
+        "RMSE[mean]": 1237.2739235183624,
+        "mean_weighted_sum_quantile_loss": 0.03294588688016402,
+        "sMAPE[0.5]": 0.038661932417230004
+      },
+      "evaluation_input_count": 4227,
+      "forecast_input_fingerprint": "ed8cde1397806801efb1b394e3dba35fff8eaf3918aa3370d5c40a362cc2b210",
+      "is_complete_manifest": false,
+      "is_submittable": false
+    },
+    {
+      "evaluation_id": "evaluation/99593543fdd91a71f4bc0166e9398bb5",
+      "variant_id": "variant/ea77ee35992d87519221620f",
+      "cleaning": "tsclean",
+      "transformation": "identity",
+      "candidate": "equal_weight",
+      "evaluator": "gluonts.model.evaluate_forecasts",
+      "evaluator_revision": "4d5ab3fa0fe7451bbf59bb1ff6dd76e6e414d64a",
+      "options": {
+        "allow_nan_forecast": false,
+        "axis": null,
+        "mask_invalid_label": true,
+        "seasonality": "official get_seasonality(freq)"
+      },
+      "metrics": {
+        "MAE[0.5]": 243.28295905995532,
+        "MAPE[0.5]": 0.05039101836096751,
+        "MASE[0.5]": 5.208467280650886,
+        "MSE[0.5]": 1526363.2535963375,
+        "MSE[mean]": 1526363.252400241,
+        "MSIS": 104.89412138721579,
+        "ND[0.5]": 0.037580493938476366,
+        "NRMSE[mean]": 0.190844542575268,
+        "RMSE[mean]": 1235.4607449855464,
+        "mean_weighted_sum_quantile_loss": 0.03232596349158604,
+        "sMAPE[0.5]": 0.03834172609113665
+      },
+      "evaluation_input_count": 4227,
+      "forecast_input_fingerprint": "14bb7366ff3ca6916e91852c31ec393271a94e8053324bd5174b49c42681c76a",
+      "is_complete_manifest": false,
+      "is_submittable": false
+    },
+    {
+      "evaluation_id": "evaluation/0eeea5a2fd0b3284471773b575f715b9",
+      "variant_id": "variant/cdb75becbc15e8516c9f8698",
+      "cleaning": "tsclean",
+      "transformation": "minmax_then_standardize",
+      "candidate": "auto_arima",
+      "evaluator": "gluonts.model.evaluate_forecasts",
+      "evaluator_revision": "4d5ab3fa0fe7451bbf59bb1ff6dd76e6e414d64a",
+      "options": {
+        "allow_nan_forecast": false,
+        "axis": null,
+        "mask_invalid_label": true,
+        "seasonality": "official get_seasonality(freq)"
+      },
+      "metrics": {
+        "MAE[0.5]": 245.76601707558845,
+        "MAPE[0.5]": 0.05142740064430217,
+        "MASE[0.5]": 5.260056188029949,
+        "MSE[0.5]": 1532625.4167217629,
+        "MSE[mean]": 1532625.4167217629,
+        "MSIS": 107.77347742521478,
+        "ND[0.5]": 0.03796405778144323,
+        "NRMSE[mean]": 0.1912356279268734,
+        "RMSE[mean]": 1237.9924946144718,
+        "mean_weighted_sum_quantile_loss": 0.03291242823120204,
+        "sMAPE[0.5]": 0.03895260326073795
+      },
+      "evaluation_input_count": 4227,
+      "forecast_input_fingerprint": "01c7f0e9828317626b502ac0db26c925746e29d3ab2bf87e52b113ba81864a02",
+      "is_complete_manifest": false,
+      "is_submittable": false
+    },
+    {
+      "evaluation_id": "evaluation/bea7adbb2c4298cdcbf7b1fc07be5236",
+      "variant_id": "variant/cdb75becbc15e8516c9f8698",
+      "cleaning": "tsclean",
+      "transformation": "minmax_then_standardize",
+      "candidate": "chronos_2",
+      "evaluator": "gluonts.model.evaluate_forecasts",
+      "evaluator_revision": "4d5ab3fa0fe7451bbf59bb1ff6dd76e6e414d64a",
+      "options": {
+        "allow_nan_forecast": false,
+        "axis": null,
+        "mask_invalid_label": true,
+        "seasonality": "official get_seasonality(freq)"
+      },
+      "metrics": {
+        "MAE[0.5]": 248.86676492569214,
+        "MAPE[0.5]": 0.05220379246441135,
+        "MASE[0.5]": 5.2996564467826,
+        "MSE[0.5]": 1530846.7336274744,
+        "MSE[mean]": 1530846.7336274744,
+        "MSIS": 104.52558065526395,
+        "ND[0.5]": 0.03844303763369358,
+        "NRMSE[mean]": 0.19112462679075515,
+        "RMSE[mean]": 1237.2739121259585,
+        "mean_weighted_sum_quantile_loss": 0.032945886059340804,
+        "sMAPE[0.5]": 0.03866193075934748
+      },
+      "evaluation_input_count": 4227,
+      "forecast_input_fingerprint": "dec873a599dcbc543837c79ec0986c574e392346637d7f8d22f7932580311c19",
+      "is_complete_manifest": false,
+      "is_submittable": false
+    },
+    {
+      "evaluation_id": "evaluation/f7d9c494f6421633b748e086804e33e7",
+      "variant_id": "variant/cdb75becbc15e8516c9f8698",
+      "cleaning": "tsclean",
+      "transformation": "minmax_then_standardize",
+      "candidate": "equal_weight",
+      "evaluator": "gluonts.model.evaluate_forecasts",
+      "evaluator_revision": "4d5ab3fa0fe7451bbf59bb1ff6dd76e6e414d64a",
+      "options": {
+        "allow_nan_forecast": false,
+        "axis": null,
+        "mask_invalid_label": true,
+        "seasonality": "official get_seasonality(freq)"
+      },
+      "metrics": {
+        "MAE[0.5]": 243.24456531757724,
+        "MAPE[0.5]": 0.05038978030651468,
+        "MASE[0.5]": 5.208053965882767,
+        "MSE[0.5]": 1526304.548930191,
+        "MSE[mean]": 1526304.547768625,
+        "MSIS": 104.89516243632553,
+        "ND[0.5]": 0.03757456316630766,
+        "NRMSE[mean]": 0.19084087255560694,
+        "RMSE[mean]": 1235.436986563307,
+        "mean_weighted_sum_quantile_loss": 0.03232169568598778,
+        "sMAPE[0.5]": 0.038340271455929
+      },
+      "evaluation_input_count": 4227,
+      "forecast_input_fingerprint": "b64b35edbf25f0386af0a2414fd22df397bffb99185a853322328b3fd48bb57f",
+      "is_complete_manifest": false,
+      "is_submittable": false
+    }
+  ],
+  "database": {
+    "path": "data/shapefm.duckdb",
+    "sha256_after_completion": "3fb21329a9e5414d368967be9e58e76a8f0e29a9d159ec00d6a84774aff7895e",
+    "pre_run_backup": "data/backups/shapefm-before-m4-daily-20260926T042832Z.duckdb",
+    "pre_run_backup_sha256": "a0a5323bd8368c85e00ca07b8390b44ca2924ed857f17346afabada21e375115",
+    "single_writer": "Mac coordinator only"
+  },
+  "validation": {
+    "all_evaluation_input_counts_are_4227": true,
+    "evaluation_count": 12,
+    "distinct_evaluation_input_fingerprints": 12,
+    "complete_unique_official_positions": true,
+    "conflicting_duplicate_forecasts": 0,
+    "both_machines_contributed": true,
+    "mac_only_duckdb_writer": true,
+    "chronos_exclusively_ubuntu_gpu": false,
+    "repeated_run": {
+      "2": {
+        "selected": 0,
+        "skipped": 8454
+      },
+      "3": {
+        "selected": 0,
+        "skipped": 16908
+      },
+      "4": {
+        "selected": 0,
+        "skipped": 33816
+      },
+      "5": {
+        "selected": 0,
+        "skipped": 50724
+      },
+      "6": {
+        "selected": 0,
+        "skipped": 12
+      }
+    },
+    "repeated_run_selected_zero_tasks": true,
+    "all_skipped_log": ".amp/in/artifacts/full-m4-daily-all-skipped.log"
+  },
+  "remaining_limitations": [
+    "Forty preserved smoke Chronos-2 tasks have Mac MPS rather than Ubuntu GPU provenance.",
+    "Cross-platform AutoARIMA outputs can differ beyond 1e-5 when task placement changes; the calibrated baseline profile avoids changing the tested placement envelope."
+  ]
+}
