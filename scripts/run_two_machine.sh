@@ -97,7 +97,7 @@ start_cluster() {
   start_local_process "$RUNTIME_DIR/mac-cpu.pid" "$RUNTIME_DIR/mac-cpu.log" \
     "$ROOT/.tools/uv/uv" run --locked dask worker "$WORKER_SCHEDULER_ADDRESS" \
       --nworkers "$MAC_CPU_WORKERS" --nthreads 1 --name mac-cpu \
-      --resources CPU=1 --memory-limit 5GiB --no-dashboard
+      --host "$MAC_HOST" --resources CPU=1 --memory-limit 5GiB --no-dashboard
 
   ssh_ubuntu "set -eu
     cd '$UBUNTU_ROOT'
