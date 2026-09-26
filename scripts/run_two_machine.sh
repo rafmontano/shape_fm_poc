@@ -8,6 +8,7 @@ readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly UBUNTU_HOST="${SHAPEFM_UBUNTU_HOST:-rafmontano@WSUbuntu1.local}"
 readonly UBUNTU_ROOT="${SHAPEFM_UBUNTU_ROOT:-/home/rafmontano/Documents/PhD/2026/projects/shape_fm_poc}"
 readonly MAC_HOST="${SHAPEFM_MAC_HOST:-RMMacbookPro.local}"
+readonly MAC_BIND_HOST="${SHAPEFM_MAC_BIND_HOST:-$(ipconfig getifaddr en0 2>/dev/null || true)}"
 readonly SCHEDULER_ADDRESS="${SHAPEFM_DASK_ADDRESS:-tcp://127.0.0.1:8786}"
 readonly WORKER_SCHEDULER_ADDRESS="${SHAPEFM_DASK_WORKER_ADDRESS:-tcp://$MAC_HOST:8786}"
 readonly DASHBOARD_ADDRESS="http://127.0.0.1:8787/status"
@@ -87,6 +88,7 @@ start_local_process() {
 
 start_cluster() {
   trap stop_cluster ERR
+  [[ -n "$MAC_BIND_HOST" ]] || die "Set SHAPEFM_MAC_BIND_HOST to the Mac LAN IPv4 address."
   verify_and_restore
   mkdir -p "$RUNTIME_DIR"
   export DASK_DISTRIBUTED__SCHEDULER__NO_WORKERS_TIMEOUT="120s"
@@ -97,7 +99,7 @@ start_cluster() {
   start_local_process "$RUNTIME_DIR/mac-cpu.pid" "$RUNTIME_DIR/mac-cpu.log" \
     "$ROOT/.tools/uv/uv" run --locked dask worker "$WORKER_SCHEDULER_ADDRESS" \
       --nworkers "$MAC_CPU_WORKERS" --nthreads 1 --name mac-cpu \
-      --host "$MAC_HOST" --resources CPU=1 --memory-limit 5GiB --no-dashboard
+      --host "$MAC_BIND_HOST" --resources CPU=1 --memory-limit 5GiB --no-dashboard
 
   ssh_ubuntu "set -eu
     cd '$UBUNTU_ROOT'
