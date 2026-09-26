@@ -1629,7 +1629,12 @@ class POC1Coordinator:
                         list(QUANTILES),
                         result["quantiles"],
                         canonical_json({"adjustment": "identity", "rule": "corresponding means, medians, and quantiles averaged"}),
-                        json_fingerprint(result),
+                        json_fingerprint(
+                            {
+                                key: result[key]
+                                for key in ("mean", "median", "quantiles")
+                            }
+                        ),
                     ],
                 )
                 for name, component in (("auto_arima", components["left"]), ("chronos_2", components["right"])):
