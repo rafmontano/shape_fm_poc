@@ -1,8 +1,13 @@
 {
-  "poc1_status": "failed_final_validation",
-  "failure_reason": "Forty Chronos-2 forecasts preserved from the pre-Dask smoke run were executed on Mac MPS. All 16,868 Chronos-2 tasks added by full-scope expansion ran on the dedicated Ubuntu GPU worker, but experiment-wide GPU exclusivity is false.",
+  "poc1_status": "complete_with_accepted_hardware_provenance_exception",
+  "accepted_exception": {
+    "accepted": true,
+    "scope": "Forty previously completed Chronos-2 forecasts were produced on Mac MPS; the remaining 16,868 were produced on the Ubuntu RTX 5090.",
+    "disposition": "The 40 Mac MPS forecasts are intentionally retained without recomputation because POC 1 validates research infrastructure rather than final scientific results.",
+    "future_policy": "This exception must not automatically be carried into final research experiments."
+  },
   "execution_code_commit": "89fe73e264a5a1342dcfbd229bb4eb2f7e3f4b31",
-  "completion_tag_created": false,
+  "completion_tag": "v0.4-poc1-complete",
   "experiment": {
     "experiment_id": "experiment/d26399af4b8ebe6c5f6d634c",
     "scope": "m4_daily",
@@ -131,7 +136,10 @@
     },
     "total": 109914,
     "final_status": {
-      "completed": 109914
+      "completed": 109914,
+      "pending": 0,
+      "running": 0,
+      "failed": 0
     }
   },
   "task_contribution": {
@@ -198,6 +206,8 @@
   "chronos_execution": {
     "all_new_full_scope_tasks_on_ubuntu_gpu": true,
     "experiment_wide_ubuntu_gpu_exclusive": false,
+    "mixed_gpu_provenance_exception_accepted_for_poc1": true,
+    "mac_mps_forecasts_intentionally_retained": 40,
     "breakdown": [
       {
         "host": "Mac coordinator/local",
@@ -621,6 +631,7 @@
     "both_machines_contributed": true,
     "mac_only_duckdb_writer": true,
     "chronos_exclusively_ubuntu_gpu": false,
+    "chronos_hardware_provenance_exception_accepted": true,
     "repeated_run": {
       "2": {
         "selected": 0,
@@ -647,7 +658,7 @@
     "all_skipped_log": ".amp/in/artifacts/full-m4-daily-all-skipped.log"
   },
   "remaining_limitations": [
-    "Forty preserved smoke Chronos-2 tasks have Mac MPS rather than Ubuntu GPU provenance.",
+    "The accepted POC 1 exception retains 40 smoke Chronos-2 forecasts with Mac MPS rather than Ubuntu GPU provenance; final research experiments must establish and enforce their own homogeneous hardware-provenance requirement.",
     "Cross-platform AutoARIMA outputs can differ beyond 1e-5 when task placement changes; the calibrated baseline profile avoids changing the tested placement envelope."
   ]
 }
