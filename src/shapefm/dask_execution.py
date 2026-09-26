@@ -39,11 +39,6 @@ def _worker_provenance(
     worker = worker or get_worker()
     state = getattr(worker, "state", None)
     resources = dict(getattr(state, "total_resources", {}) or {})
-    try:
-        task = state.tasks[worker.get_current_task()]
-        retry_count = max(retry_count, task.run_id - 1)
-    except (AttributeError, KeyError, TypeError):
-        pass
     return {
         "execution_backend": "Dask Distributed",
         "hostname": socket.gethostname(),
@@ -402,6 +397,20 @@ def _batch_key(batch: list[dict[str, Any]]) -> str:
     return f"{identifiers[0]}/batch-{len(identifiers)}-{digest}"
 
 
+def _future_error(result: Any) -> BaseException | None:
+    if isinstance(result, BaseException):
+        return result
+    if (
+        isinstance(result, tuple)
+        and len(result) == 3
+        and isinstance(result[0], type)
+        and issubclass(result[0], BaseException)
+        and isinstance(result[1], BaseException)
+    ):
+        return result[1]
+    return None
+
+
 def run_batches(
     client: Client,
     function: Callable[..., dict[str, Any]],
@@ -414,25 +423,29 @@ def run_batches(
 ) -> Iterator[tuple[list[dict[str, Any]], dict[str, Any]]]:
     """Submit a bounded window and release each future after its result is consumed."""
     pending_batches = iter(batches)
-    future_batches: dict[Future, list[dict[str, Any]]] = {}
+    future_batches: dict[Future, tuple[list[dict[str, Any]], int]] = {}
     completed = as_completed(with_results=True, raise_errors=False)
+
+    def submit_batch(batch: list[dict[str, Any]], retry_count: int) -> None:
+        future = client.submit(
+            function,
+            batch,
+            *extra_arguments,
+            retry_count,
+            key=f"{_batch_key(batch)}/dask-attempt-{retry_count}",
+            resources=resources,
+            retries=0,
+            pure=False,
+        )
+        future_batches[future] = (batch, retry_count)
+        completed.add(future)
 
     def submit_one() -> bool:
         try:
             batch = next(pending_batches)
         except StopIteration:
             return False
-        future = client.submit(
-            function,
-            batch,
-            *extra_arguments,
-            key=_batch_key(batch),
-            resources=resources,
-            retries=retries,
-            pure=False,
-        )
-        future_batches[future] = batch
-        completed.add(future)
+        submit_batch(batch, 0)
         return True
 
     for _ in range(max_in_flight):
@@ -441,9 +454,14 @@ def run_batches(
     try:
         while future_batches:
             future, result = next(completed)
-            batch = future_batches.pop(future)
-            if isinstance(result, BaseException):
-                raise result
+            batch, retry_count = future_batches.pop(future)
+            error = _future_error(result)
+            if error is not None:
+                future.release()
+                if retry_count < retries:
+                    submit_batch(batch, retry_count + 1)
+                    continue
+                raise error
             yield batch, result
             future.release()
             submit_one()
@@ -470,26 +488,32 @@ def run_batch_groups(
 ) -> Iterator[tuple[str, list[dict[str, Any]], dict[str, Any] | BaseException]]:
     """Run bounded heterogeneous CPU/GPU queues and report completions incrementally."""
     iterators = {name: iter(specification[1]) for name, specification in groups.items()}
-    future_batches: dict[Future, tuple[str, list[dict[str, Any]]]] = {}
+    future_batches: dict[Future, tuple[str, list[dict[str, Any]], int]] = {}
     completed = as_completed(with_results=True, raise_errors=False)
 
-    def submit_one(name: str) -> bool:
+    def submit_batch(
+        name: str, batch: list[dict[str, Any]], retry_count: int
+    ) -> None:
         function, _, resources, arguments, _ = groups[name]
-        try:
-            batch = next(iterators[name])
-        except StopIteration:
-            return False
         future = client.submit(
             function,
             batch,
             *arguments,
-            key=_batch_key(batch),
+            retry_count,
+            key=f"{_batch_key(batch)}/dask-attempt-{retry_count}",
             resources=resources,
-            retries=retries,
+            retries=0,
             pure=False,
         )
-        future_batches[future] = (name, batch)
+        future_batches[future] = (name, batch, retry_count)
         completed.add(future)
+
+    def submit_one(name: str) -> bool:
+        try:
+            batch = next(iterators[name])
+        except StopIteration:
+            return False
+        submit_batch(name, batch, 0)
         return True
 
     for name, specification in groups.items():
@@ -499,8 +523,13 @@ def run_batch_groups(
     try:
         while future_batches:
             future, result = next(completed)
-            name, batch = future_batches.pop(future)
-            yield name, batch, result
+            name, batch, retry_count = future_batches.pop(future)
+            error = _future_error(result)
+            if error is not None and retry_count < retries:
+                future.release()
+                submit_batch(name, batch, retry_count + 1)
+                continue
+            yield name, batch, error or result
             future.release()
             submit_one(name)
     finally:

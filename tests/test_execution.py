@@ -263,6 +263,39 @@ for line in sys.stdin:
         finally:
             cluster.close()
 
+    def test_dask_batch_retry_count_is_explicit(self) -> None:
+        from distributed import Client, LocalCluster
+
+        from shapefm.dask_execution import run_batches
+
+        def succeed_on_retry(batch, retry_count=0):
+            if retry_count == 0:
+                raise RuntimeError("first attempt fails")
+            return {"ids": [job["id"] for job in batch], "retry_count": retry_count}
+
+        cluster = LocalCluster(
+            n_workers=1,
+            threads_per_worker=1,
+            processes=False,
+            dashboard_address=None,
+            resources={"CPU": 1},
+        )
+        try:
+            with Client(cluster) as client:
+                result = list(
+                    run_batches(
+                        client,
+                        succeed_on_retry,
+                        [[{"id": "task/retry"}]],
+                        resources={"CPU": 1},
+                        max_in_flight=1,
+                        retries=2,
+                    )
+                )
+            self.assertEqual(result[0][1]["retry_count"], 1)
+        finally:
+            cluster.close()
+
 
 class CalibrationSafetyTests(unittest.TestCase):
     def test_ubuntu_candidates_compare_with_independent_batch_one_reference(self) -> None:
