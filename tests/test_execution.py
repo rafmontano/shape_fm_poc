@@ -13,6 +13,7 @@ from shapefm.calibration import (
     _chronos_differences,
     _chronos_reference_forecasts,
     _recommended_setting,
+    _scientific_comparison,
 )
 from shapefm.execution import (
     ExecutionSettings,
@@ -298,6 +299,32 @@ for line in sys.stdin:
 
 
 class CalibrationSafetyTests(unittest.TestCase):
+    def test_distributed_scientific_comparison_uses_requested_tolerances(self) -> None:
+        reference = {
+            "forecast": {
+                "mean": [1.0],
+                "median": [1.0],
+                "quantiles": [[1.0] for _ in range(9)],
+            }
+        }
+        within = {
+            "forecast": {
+                "mean": [1.000009],
+                "median": [1.000009],
+                "quantiles": [[1.000009] for _ in range(9)],
+            }
+        }
+        outside = {
+            "forecast": {
+                "mean": [1.001],
+                "median": [1.001],
+                "quantiles": [[1.001] for _ in range(9)],
+            }
+        }
+        self.assertTrue(_scientific_comparison(within, reference)["equivalent"])
+        self.assertFalse(_scientific_comparison(outside, reference)["equivalent"])
+        self.assertFalse(_scientific_comparison({}, reference)["equivalent"])
+
     def test_ubuntu_candidates_compare_with_independent_batch_one_reference(self) -> None:
         contexts = [
             {"label": label, "context": [float(index)]}

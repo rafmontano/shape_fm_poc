@@ -69,6 +69,11 @@ Schema version 2 preserves all version 1 rows and adds:
   and `forecast_components`;
 - official outputs: `official_evaluations` and `submission_exports`.
 
+Schema version 4 adds the exact evaluation input count and deterministic
+forecast-input fingerprint to each official evaluation. Scope expansion keeps
+upstream scientific rows and task IDs, while invalidating only Stage 6 and
+scope-dependent evaluation/export records.
+
 Arrays stay in DuckDB list columns; model weights and temporary worker data do
 not. POC 2 will address Mantis, MOMENT, and training architecture through later
 explicit migrations, without pre-creating speculative tables here.

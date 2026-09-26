@@ -128,6 +128,28 @@ requests `GPU=1`, while cleaning, transformations, AutoARIMA, and combination
 request `CPU=1`. Stage 6 always executes through the official adapter on the
 Mac. Runtime files and logs are under ignored `data/dask/`.
 
+The bounded combined-load calibration is run from the Mac with:
+
+```sh
+scripts/run_two_machine.sh calibrate-dask
+```
+
+It tests the baseline, moderate, recommended-candidate, and (only after a safe
+recommended candidate) aggressive topologies in order. Each candidate uses 256
+deterministically selected short/medium/long M4 Daily contexts, both cleaning
+methods, both transformations, and concurrent AutoARIMA and Chronos-2 queues.
+The canonical database is opened read-only; measurements are written to a
+temporary DuckDB that is removed after the candidate. Host CPU, available
+memory, swap, Dask spilling and worker identity are sampled throughout, along
+with RTX 5090 utilisation/free VRAM, retries, failures, effective Chronos batch
+sizes, throughput, and scientific equivalence to the baseline. The complete
+report is `docs/calibration/two_machine_dask_calibration.json`. The sweep stops
+after an unsafe candidate, and a larger safe profile is selected only when it
+improves throughput by at least 5%. Environment variables
+`SHAPEFM_MAC_CPU_WORKERS`, `SHAPEFM_UBUNTU_CPU_WORKERS`,
+`SHAPEFM_CHRONOS_BATCH_SIZE`, and `SHAPEFM_DASK_MAX_IN_FLIGHT` remain available
+for explicit troubleshooting overrides.
+
 This POC uses unencrypted Dask TCP on the trusted private LAN. Do not expose
 ports 8786 or worker ports to an untrusted network; production deployment would
 require Dask TLS and network access controls.
@@ -142,7 +164,7 @@ require Dask TLS and network access controls.
 After smoke and restart validation is accepted, the exact later full run is:
 
 ```sh
-scripts/run_two_machine.sh --scope m4_daily --resume
+caffeinate -dimsu scripts/run_two_machine.sh --scope m4_daily --resume
 ```
 
 Do not run that command during POC validation; it performs the full experiment.

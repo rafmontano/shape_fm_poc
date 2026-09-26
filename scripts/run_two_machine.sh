@@ -14,6 +14,8 @@ readonly WORKER_SCHEDULER_ADDRESS="${SHAPEFM_DASK_WORKER_ADDRESS:-tcp://$MAC_HOS
 readonly DASHBOARD_ADDRESS="http://127.0.0.1:8787/status"
 readonly MAC_CPU_WORKERS="${SHAPEFM_MAC_CPU_WORKERS:-2}"
 readonly UBUNTU_CPU_WORKERS="${SHAPEFM_UBUNTU_CPU_WORKERS:-4}"
+readonly CHRONOS_BATCH_SIZE="${SHAPEFM_CHRONOS_BATCH_SIZE:-16}"
+readonly MAX_IN_FLIGHT="${SHAPEFM_DASK_MAX_IN_FLIGHT:-12}"
 readonly EXPECTED_WORKERS="$((MAC_CPU_WORKERS + UBUNTU_CPU_WORKERS + 1))"
 readonly RUNTIME_DIR="$ROOT/data/dask"
 readonly DATABASE="${SHAPEFM_DATABASE:-$ROOT/data/shapefm.duckdb}"
@@ -25,6 +27,7 @@ Usage:
   scripts/run_two_machine.sh start
   scripts/run_two_machine.sh status
   scripts/run_two_machine.sh stop
+  scripts/run_two_machine.sh calibrate-dask
 
 The run form starts the cluster, plans idempotently, executes Gates 2-6, prints
 the execution report, and stops the cluster. The dashboard is available at
@@ -207,10 +210,117 @@ run_experiment() {
   fi
   .tools/uv/uv run --locked shapefm-poc1 --database "$DATABASE" run \
     --profile two_machine_dask --execution dask \
+    --chronos-batch-size "$CHRONOS_BATCH_SIZE" \
     --dask-address "$SCHEDULER_ADDRESS" \
     --dask-timeout 180 --dask-expected-workers "$EXPECTED_WORKERS" \
-    --dask-max-in-flight 12 --dask-retries 2
+    --dask-max-in-flight "$MAX_IN_FLIGHT" --dask-retries 2
   print_report
+}
+
+calibrate_dask() {
+  local scratch="$ROOT/.amp/in/dask-calibration"
+  local report="$ROOT/docs/calibration/two_machine_dask_calibration.json"
+  mkdir -p "$scratch" "$(dirname "$report")"
+  rm -f "$scratch"/*.json
+  local names=(baseline moderate recommended_candidate aggressive_candidate)
+  local mac_workers=(2 2 4 4)
+  local ubuntu_workers=(4 8 12 16)
+  local chronos_batches=(16 32 64 64)
+  local in_flight=(12 16 24 32)
+  local baseline_file="$scratch/baseline.json"
+  local completed=()
+  for index in 0 1 2 3; do
+    local name=${names[$index]}
+    local mac=${mac_workers[$index]}
+    local ubuntu=${ubuntu_workers[$index]}
+    local chronos=${chronos_batches[$index]}
+    local maximum=${in_flight[$index]}
+    local expected=$((mac + ubuntu + 1))
+    local candidate="$scratch/$name.json"
+    printf 'Calibrating %s: Mac=%s Ubuntu=%s Chronos=%s in-flight=%s\n' \
+      "$name" "$mac" "$ubuntu" "$chronos" "$maximum"
+    SHAPEFM_MAC_CPU_WORKERS="$mac" SHAPEFM_UBUNTU_CPU_WORKERS="$ubuntu" \
+      "$0" start
+    local baseline_arguments=()
+    if [[ "$index" -gt 0 ]]; then
+      baseline_arguments=(--baseline "$baseline_file")
+    fi
+    local command_status=0
+    .tools/uv/uv run --locked shapefm-poc1 --database "$DATABASE" \
+      calibrate-dask --address "$SCHEDULER_ADDRESS" \
+      --expected-workers "$expected" --profile-name "$name" \
+      --mac-cpu-workers "$mac" --ubuntu-cpu-workers "$ubuntu" \
+      --chronos-batch-size "$chronos" --max-in-flight "$maximum" \
+      --output "$candidate" "${baseline_arguments[@]}" || command_status=$?
+    SHAPEFM_MAC_CPU_WORKERS="$mac" SHAPEFM_UBUNTU_CPU_WORKERS="$ubuntu" \
+      "$0" stop
+    [[ "$command_status" -eq 0 ]] || return "$command_status"
+    completed+=("$candidate")
+    if [[ "$(.tools/uv/uv run --locked python -c \
+      'import json,sys; print(str(json.load(open(sys.argv[1]))["safe"]).lower())' \
+      "$candidate")" != true ]]; then
+      printf 'Stopping calibration after unsafe profile %s.\n' "$name"
+      break
+    fi
+  done
+  .tools/uv/uv run --locked python - "$report" "${completed[@]}" <<'PY'
+import datetime
+import json
+import pathlib
+import sys
+
+output = pathlib.Path(sys.argv[1])
+candidates = []
+for path in sys.argv[2:]:
+    value = json.loads(pathlib.Path(path).read_text())
+    value.pop("_scientific_outputs", None)
+    candidates.append(value)
+safe = [candidate for candidate in candidates if candidate["safe"]]
+if not safe:
+    selected = None
+    rationale = "No candidate satisfied every safety and scientific-equivalence gate."
+else:
+    selected = safe[0]
+    decisions = []
+    for candidate in safe[1:]:
+        previous = selected["total_throughput_tasks_per_second"]
+        current = candidate["total_throughput_tasks_per_second"]
+        improvement = (current / previous - 1.0) if previous else 0.0
+        if current > previous and improvement >= 0.05:
+            decisions.append(
+                f"{candidate['profile_name']} replaced {selected['profile_name']} "
+                f"with {improvement:.1%} higher throughput"
+            )
+            selected = candidate
+        else:
+            decisions.append(
+                f"{candidate['profile_name']} was not selected: throughput improvement "
+                f"over {selected['profile_name']} was {improvement:.1%}"
+            )
+    rationale = "; ".join(decisions) or "The baseline was the only safe candidate tested."
+report = {
+    "generated_at_utc": datetime.datetime.now(datetime.UTC).isoformat(),
+    "method": "256 deterministic M4 Daily contexts; all cleaning/transformation variants; concurrent AutoARIMA and Chronos-2",
+    "safety_thresholds": {
+        "mac_minimum_available_memory_gib": 3,
+        "ubuntu_minimum_available_memory_gib": 16,
+        "rtx5090_minimum_available_vram_gib": 4,
+        "persistent_dask_spilling_allowed": False,
+        "worker_restarts_allowed": False,
+        "scientific_rtol": 1e-5,
+        "scientific_atol": 1e-5,
+        "minimum_throughput_improvement_for_larger_profile": 0.05,
+    },
+    "candidates": candidates,
+    "recommendation": {
+        "selected_profile": selected["profile_name"] if selected else None,
+        "settings": selected["settings"] if selected else None,
+        "rationale": rationale,
+    },
+}
+output.write_text(json.dumps(report, indent=2) + "\n")
+print(json.dumps(report["recommendation"], indent=2))
+PY
 }
 
 main() {
@@ -219,6 +329,7 @@ main() {
     start) start_cluster; return ;;
     status) cluster_status; return ;;
     stop) stop_cluster; return ;;
+    calibrate-dask) calibrate_dask; return ;;
     -h|--help) usage; return ;;
   esac
   local scope=smoke resume=false

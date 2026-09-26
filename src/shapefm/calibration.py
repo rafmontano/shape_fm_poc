@@ -7,6 +7,7 @@ import math
 import os
 import platform
 import resource
+import socket
 import subprocess
 import tempfile
 import threading
@@ -508,4 +509,507 @@ def calibrate(
         output = output.resolve()
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    return report
+
+
+class _DistributedResourceSampler:
+    def __init__(self, client: Any, interval_seconds: float = 1.0):
+        self.client = client
+        self.interval_seconds = interval_seconds
+        self.samples: list[dict[str, Any]] = []
+        self.failures: list[str] = []
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def _sample(self) -> None:
+        import psutil
+
+        from .dask_execution import worker_resource_snapshot
+
+        started = time.monotonic()
+        workers = self.client.run(worker_resource_snapshot)
+        memory = psutil.virtual_memory()
+        swap = psutil.swap_memory()
+        self.samples.append(
+            {
+                "sample_seconds": time.monotonic() - started,
+                "coordinator": {
+                    "hostname": socket.gethostname(),
+                    "cpu_percent": psutil.cpu_percent(interval=None),
+                    "system_available_memory_bytes": int(memory.available),
+                    "swap_used_bytes": int(swap.used),
+                },
+                "workers": workers,
+            }
+        )
+
+    def _run(self) -> None:
+        while not self._stop.wait(self.interval_seconds):
+            try:
+                self._sample()
+            except BaseException as error:
+                self.failures.append(f"{type(error).__name__}: {error}")
+
+    def __enter__(self) -> "_DistributedResourceSampler":
+        self._sample()
+        self._thread = threading.Thread(
+            target=self._run,
+            name="shapefm-distributed-calibration-telemetry",
+            daemon=True,
+        )
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+        try:
+            self._sample()
+        except BaseException as error:
+            self.failures.append(f"{type(error).__name__}: {error}")
+
+    def summary(self, initial_workers: set[str], final_workers: set[str]) -> dict[str, Any]:
+        hosts: dict[str, dict[str, list[float]]] = {}
+        observed_workers: set[str] = set()
+        gpu_samples: list[dict[str, Any]] = []
+        spill_peak = 0
+        final_spill = 0
+        for sample_index, sample in enumerate(self.samples):
+            values = [sample["coordinator"], *sample["workers"].values()]
+            for item in values:
+                host = hosts.setdefault(
+                    item["hostname"],
+                    {"cpu": [], "available": [], "swap": []},
+                )
+                host["cpu"].append(float(item["cpu_percent"]))
+                host["available"].append(
+                    float(item["system_available_memory_bytes"])
+                )
+                host["swap"].append(float(item["swap_used_bytes"]))
+                if item.get("worker"):
+                    observed_workers.add(item["worker"])
+                    spilled = item["dask_spilled_memory_bytes"] + item[
+                        "dask_spilled_disk_bytes"
+                    ]
+                    spill_peak = max(spill_peak, spilled)
+                    if sample_index == len(self.samples) - 1:
+                        final_spill += spilled
+                if item.get("gpu"):
+                    gpu_samples.append(item["gpu"])
+        return {
+            "sample_count": len(self.samples),
+            "sample_failures": self.failures,
+            "maximum_sample_seconds": max(
+                (item["sample_seconds"] for item in self.samples), default=None
+            ),
+            "hosts": {
+                hostname: {
+                    "mean_cpu_utilisation_percent": sum(values["cpu"])
+                    / len(values["cpu"]),
+                    "maximum_cpu_utilisation_percent": max(values["cpu"]),
+                    "minimum_system_available_memory_bytes": int(
+                        min(values["available"])
+                    ),
+                    "maximum_swap_used_bytes": int(max(values["swap"])),
+                }
+                for hostname, values in sorted(hosts.items())
+            },
+            "gpu": {
+                "mean_utilisation_percent": (
+                    sum(item["utilization_percent"] for item in gpu_samples)
+                    / len(gpu_samples)
+                    if gpu_samples
+                    else None
+                ),
+                "maximum_utilisation_percent": max(
+                    (item["utilization_percent"] for item in gpu_samples),
+                    default=None,
+                ),
+                "minimum_available_memory_bytes": min(
+                    (item["available_memory_bytes"] for item in gpu_samples),
+                    default=None,
+                ),
+                "name": gpu_samples[0]["name"] if gpu_samples else None,
+            },
+            "dask_spilling": {
+                "peak_bytes_per_worker": spill_peak,
+                "final_total_bytes": final_spill,
+                "persistent": final_spill > 0,
+            },
+            "initial_workers": sorted(initial_workers),
+            "final_workers": sorted(final_workers),
+            "observed_workers": sorted(observed_workers),
+            "worker_restarts": len(observed_workers - initial_workers)
+            + len(initial_workers - final_workers),
+        }
+
+
+def _distributed_contexts(database_path: Path, count: int = 256) -> list[dict[str, Any]]:
+    connection = duckdb.connect(str(database_path.resolve()), read_only=True)
+    try:
+        rows = connection.execute(
+            """SELECT s.series_id, s.target[:w.test_start], w.test_start
+               FROM series s JOIN evaluation_windows w USING (dataset_id, series_id)
+               JOIN datasets d USING (dataset_id)
+               WHERE d.dataset_name='m4_daily'
+               ORDER BY s.observation_count, s.series_id"""
+        ).fetchall()
+    finally:
+        connection.close()
+    if len(rows) < count:
+        raise RuntimeError(
+            f"distributed calibration requires {count} M4 Daily contexts; found {len(rows)}"
+        )
+    positions = [round(index * (len(rows) - 1) / (count - 1)) for index in range(count)]
+    selected = [rows[position] for position in positions]
+    third = count // 3
+    return [
+        {
+            "series_id": row[0],
+            "context": row[1],
+            "length": int(row[2]),
+            "length_group": "short"
+            if index < third
+            else "medium"
+            if index < 2 * third
+            else "long",
+        }
+        for index, row in enumerate(selected)
+    ]
+
+
+def _calibration_batches(
+    jobs: list[dict[str, Any]], batch_size: int
+) -> list[list[dict[str, Any]]]:
+    grouped: dict[int, list[dict[str, Any]]] = {}
+    for job in sorted(jobs, key=lambda item: (len(item["context"]), item["id"])):
+        grouped.setdefault(max(1, len(job["context"])).bit_length(), []).append(job)
+    return [
+        batch
+        for bucket in sorted(grouped)
+        for offset in range(0, len(grouped[bucket]), batch_size)
+        for batch in [grouped[bucket][offset : offset + batch_size]]
+    ]
+
+
+def _scientific_comparison(
+    outputs: dict[str, dict[str, Any]], references: dict[str, dict[str, Any]]
+) -> dict[str, Any]:
+    missing = sorted(set(references) - set(outputs))
+    unexpected = sorted(set(outputs) - set(references))
+    differences = [
+        _forecast_comparison(references[key], outputs[key])
+        for key in sorted(set(outputs) & set(references))
+    ]
+    return {
+        "equivalent": not missing
+        and not unexpected
+        and all(item["equivalent"] for item in differences),
+        "missing_output_count": len(missing),
+        "unexpected_output_count": len(unexpected),
+        "max_abs_difference": max(
+            (item["max_abs"] for item in differences), default=0.0
+        ),
+        "max_relative_difference": max(
+            (item["max_relative"] for item in differences), default=0.0
+        ),
+        "relative_tolerance": 1e-5,
+        "absolute_tolerance": 1e-5,
+    }
+
+
+def calibrate_dask_profile(
+    *,
+    database_path: Path,
+    scheduler_address: str,
+    expected_workers: int,
+    profile_name: str,
+    mac_cpu_workers: int,
+    ubuntu_cpu_workers: int,
+    chronos_batch_size: int,
+    max_in_flight: int,
+    output: Path,
+    baseline: Path | None = None,
+) -> dict[str, Any]:
+    """Exercise one two-machine profile without writing the canonical database."""
+    from distributed import Client
+
+    from .dask_execution import (
+        autoarima_batch,
+        chronos_batch,
+        clean_batch,
+        run_batch_groups,
+        run_batches,
+        transform_batch,
+    )
+
+    root = repository_root()
+    config = json.loads(
+        (root / "config/experiments/poc1.json").read_text(encoding="utf-8")
+    )
+    contexts = _distributed_contexts(database_path)
+    client = Client(scheduler_address, timeout="180s")
+    client.wait_for_workers(expected_workers, timeout=180)
+    initial_workers = set(client.scheduler_info()["workers"])
+    started = time.monotonic()
+    outputs: dict[str, dict[str, Any]] = {}
+    model_counts = {"auto_arima": 0, "chronos_2": 0}
+    host_contribution: dict[str, int] = {}
+    retry_count = 0
+    effective_batches: list[int] = []
+    failure = None
+    completed_tasks = 0
+    model_elapsed = 0.0
+    with tempfile.TemporaryDirectory(prefix="shapefm-dask-calibration-") as directory:
+        isolated_database = Path(directory) / "calibration.duckdb"
+        measurement_db = duckdb.connect(str(isolated_database))
+        measurement_db.execute(
+            "CREATE TABLE measurements (profile VARCHAR, measurement JSON)"
+        )
+        with _DistributedResourceSampler(client) as sampler:
+            try:
+                clean_jobs = [
+                    {
+                        "id": f"clean/{method}/{item['series_id']}",
+                        "context": item["context"],
+                        "method": method,
+                        "seasonality": 1,
+                        "series_id": item["series_id"],
+                    }
+                    for item in contexts
+                    for method in config["cleaning"]
+                ]
+                cleaned: dict[str, dict[str, Any]] = {}
+                for batch, response in run_batches(
+                    client,
+                    clean_batch,
+                    [clean_jobs[offset : offset + 8] for offset in range(0, len(clean_jobs), 8)],
+                    resources={"CPU": 1},
+                    max_in_flight=max_in_flight,
+                    retries=2,
+                ):
+                    expected = {job["id"] for job in batch}
+                    results = {result["id"]: result for result in response["results"]}
+                    if set(results) != expected or len(results) != len(response["results"]):
+                        raise RuntimeError("calibration cleaning returned invalid task IDs")
+                    for job in batch:
+                        cleaned[job["id"]] = {
+                            **job,
+                            "values": results[job["id"]]["values"],
+                        }
+                    worker = response["worker"]
+                    host_contribution[worker["hostname"]] = host_contribution.get(
+                        worker["hostname"], 0
+                    ) + len(batch)
+                    retry_count += int(worker.get("retry_count", 0))
+                    completed_tasks += len(batch)
+
+                transform_jobs = [
+                    {
+                        "id": f"transform/{cleaned_job['method']}/{method}/{cleaned_job['series_id']}",
+                        "values": cleaned_job["values"],
+                        "method": method,
+                        "series_id": cleaned_job["series_id"],
+                        "cleaning": cleaned_job["method"],
+                    }
+                    for cleaned_job in cleaned.values()
+                    for method in config["transformations"]
+                ]
+                transformed: dict[str, dict[str, Any]] = {}
+                for batch, response in run_batches(
+                    client,
+                    transform_batch,
+                    [
+                        transform_jobs[offset : offset + 32]
+                        for offset in range(0, len(transform_jobs), 32)
+                    ],
+                    resources={"CPU": 1},
+                    max_in_flight=max_in_flight,
+                    retries=2,
+                ):
+                    expected = {job["id"] for job in batch}
+                    results = {result["id"]: result for result in response["results"]}
+                    if set(results) != expected or len(results) != len(response["results"]):
+                        raise RuntimeError("calibration transformation returned invalid task IDs")
+                    for job in batch:
+                        transformed[job["id"]] = {
+                            **job,
+                            "context": results[job["id"]]["values"],
+                        }
+                    worker = response["worker"]
+                    host_contribution[worker["hostname"]] = host_contribution.get(
+                        worker["hostname"], 0
+                    ) + len(batch)
+                    retry_count += int(worker.get("retry_count", 0))
+                    completed_tasks += len(batch)
+
+                auto_jobs = [
+                    {
+                        "id": f"model/auto_arima/{item['id']}",
+                        "context": item["context"],
+                        "horizon": 14,
+                        "seasonality": 1,
+                    }
+                    for item in transformed.values()
+                ]
+                chronos_jobs = [
+                    {
+                        "id": f"model/chronos_2/{item['id']}",
+                        "context": item["context"],
+                        "horizon": 14,
+                    }
+                    for item in transformed.values()
+                ]
+                chronos = config["models"]["chronos_2"]
+                groups = {
+                    "auto_arima": (
+                        autoarima_batch,
+                        [[job] for job in auto_jobs],
+                        {"CPU": 1},
+                        (config["models"]["auto_arima"]["settings"],),
+                        max_in_flight,
+                    ),
+                    "chronos_2": (
+                        chronos_batch,
+                        _calibration_batches(chronos_jobs, chronos_batch_size),
+                        {"GPU": 1},
+                        (
+                            chronos["repository"],
+                            chronos["revision"],
+                            list(QUANTILES),
+                            "cuda",
+                        ),
+                        1,
+                    ),
+                }
+                model_started = time.monotonic()
+                for model, batch, response in run_batch_groups(
+                    client, groups, retries=2
+                ):
+                    if isinstance(response, BaseException):
+                        raise response
+                    expected = {job["id"] for job in batch}
+                    results = {result["id"]: result for result in response["results"]}
+                    if set(results) != expected or len(results) != len(response["results"]):
+                        raise RuntimeError(f"calibration {model} returned invalid task IDs")
+                    outputs.update(results)
+                    worker = response["worker"]
+                    host_contribution[worker["hostname"]] = host_contribution.get(
+                        worker["hostname"], 0
+                    ) + len(batch)
+                    retry_count += int(worker.get("retry_count", 0))
+                    model_counts[model] += len(batch)
+                    completed_tasks += len(batch)
+                    if model == "chronos_2":
+                        effective_batches.append(int(worker["effective_batch_size"]))
+                model_elapsed = time.monotonic() - model_started
+            except BaseException as error:
+                failure = f"{type(error).__name__}: {error}"
+        elapsed = time.monotonic() - started
+        final_workers = set(client.scheduler_info()["workers"])
+        telemetry = sampler.summary(initial_workers, final_workers)
+        references = None
+        if baseline is not None:
+            references = json.loads(baseline.read_text(encoding="utf-8"))[
+                "_scientific_outputs"
+            ]
+        comparison = (
+            _scientific_comparison(outputs, references)
+            if references is not None
+            else {
+                "equivalent": failure is None,
+                "missing_output_count": 0,
+                "unexpected_output_count": 0,
+                "max_abs_difference": 0.0,
+                "max_relative_difference": 0.0,
+                "relative_tolerance": 1e-5,
+                "absolute_tolerance": 1e-5,
+            }
+        )
+        safety_reasons = []
+        for hostname, values in telemetry["hosts"].items():
+            minimum_gib = values["minimum_system_available_memory_bytes"] / GIB
+            required = 16.0 if hostname == "WSUbuntu1" else 3.0
+            if minimum_gib < required:
+                safety_reasons.append(
+                    f"{hostname} available memory {minimum_gib:.2f} GiB below {required:.0f} GiB"
+                )
+        gpu_available = telemetry["gpu"]["minimum_available_memory_bytes"]
+        if gpu_available is None or gpu_available < 4 * GIB:
+            safety_reasons.append("RTX 5090 available VRAM fell below 4 GiB or was unavailable")
+        if telemetry["worker_restarts"]:
+            safety_reasons.append("one or more Dask worker addresses changed")
+        if telemetry["dask_spilling"]["persistent"]:
+            safety_reasons.append("Dask spilling remained at the end of the candidate")
+        if telemetry["sample_failures"]:
+            safety_reasons.append("resource telemetry failed while the candidate was running")
+        if (telemetry["maximum_sample_seconds"] or 0) > 5:
+            safety_reasons.append("Mac coordinator telemetry response exceeded five seconds")
+        if failure:
+            safety_reasons.append(failure)
+        if not comparison["equivalent"]:
+            safety_reasons.append("scientific outputs differ from the baseline")
+        report = {
+            "profile_name": profile_name,
+            "settings": {
+                "mac_cpu_workers": mac_cpu_workers,
+                "ubuntu_cpu_workers": ubuntu_cpu_workers,
+                "gpu_workers": 1,
+                "chronos_batch_size": chronos_batch_size,
+                "maximum_in_flight_batches": max_in_flight,
+            },
+            "context_selection": {
+                "count": len(contexts),
+                "method": "256 equally spaced ranks ordered by context length then series ID",
+                "length_groups": {
+                    group: {
+                        "count": sum(item["length_group"] == group for item in contexts),
+                        "minimum": min(
+                            item["length"]
+                            for item in contexts
+                            if item["length_group"] == group
+                        ),
+                        "maximum": max(
+                            item["length"]
+                            for item in contexts
+                            if item["length_group"] == group
+                        ),
+                    }
+                    for group in ("short", "medium", "long")
+                },
+            },
+            "task_count": completed_tasks,
+            "model_task_counts": model_counts,
+            "elapsed_seconds": elapsed,
+            "model_phase_elapsed_seconds": model_elapsed,
+            "total_throughput_tasks_per_second": completed_tasks / elapsed,
+            "per_model_throughput_tasks_per_second": {
+                model: count / model_elapsed if model_elapsed else 0.0
+                for model, count in model_counts.items()
+            },
+            "host_task_contribution": dict(sorted(host_contribution.items())),
+            "telemetry": telemetry,
+            "retry_count": retry_count,
+            "failed_task_count": 0 if failure is None else 1,
+            "failure": failure,
+            "chronos_effective_batch_sizes": effective_batches,
+            "scientific_equivalence": comparison,
+            "safe": not safety_reasons,
+            "safety_rejection_reasons": safety_reasons,
+            "isolated_database": {
+                "canonical_database_opened_read_only": True,
+                "temporary_database_removed_after_run": True,
+            },
+            "_scientific_outputs": outputs,
+        }
+        measurement_db.execute(
+            "INSERT INTO measurements VALUES (?, ?)",
+            [profile_name, json.dumps({key: value for key, value in report.items() if key != "_scientific_outputs"})],
+        )
+        measurement_db.close()
+    client.close()
+    output = output.resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     return report

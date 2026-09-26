@@ -442,5 +442,150 @@ class TransactionTests(unittest.TestCase):
         self.assertTrue(all(value["effective_batch_size"] == 1 for value in metadata))
 
 
+class ScopeExpansionTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = Path(tempfile.mkdtemp())
+        self.coordinator = POC1Coordinator(self.directory / "poc1.duckdb")
+        self.coordinator.connection.execute(
+            """INSERT INTO datasets
+            (dataset_id, dataset_name, source_system, source_revision,
+             source_file_hashes, import_configuration,
+             import_configuration_hash, frequency)
+            VALUES ('dataset', 'm4_daily', 'test', 'revision', '{}', '{}',
+                    'configuration', 'D')"""
+        )
+
+    def tearDown(self):
+        self.coordinator.close()
+        shutil.rmtree(self.directory)
+
+    @staticmethod
+    def _description(limit: int) -> dict:
+        return {
+            "configuration_name": "m4_daily/D/short",
+            "dataset_name": "m4_daily",
+            "frequency": "D",
+            "term": "short",
+            "prediction_length": 14,
+            "window_count": 1,
+            "seasonality": 1,
+            "domain": "Econ/Fin",
+            "num_variates": 1,
+            "available_instances": 4_227,
+            "instances": [
+                {
+                    "official_position": index,
+                    "item_id": str(index),
+                    "variate_id": "0",
+                    "window_id": "short/000",
+                    "start": "2000-01-01",
+                    "forecast_start": "2000-01-04",
+                    "context": [1.0, 2.0, 3.0],
+                    "actual": [4.0] * 14,
+                }
+                for index in range(limit)
+            ],
+        }
+
+    def _gift_bridge(self, *arguments, **_kwargs):
+        limit = int(arguments[arguments.index("--limit") + 1])
+        return self._description(limit)
+
+    def test_smoke_to_full_preserves_upstream_and_invalidates_evaluation(self):
+        self.coordinator._gift_bridge = self._gift_bridge
+        smoke = self.coordinator.plan("smoke")
+        connection = self.coordinator.connection
+        connection.execute(
+            "UPDATE experiment_tasks SET status='completed', completed_at=current_timestamp WHERE experiment_id=?",
+            [smoke.experiment_id],
+        )
+        connection.execute(
+            "UPDATE experiments SET status='completed' WHERE experiment_id=?",
+            [smoke.experiment_id],
+        )
+        stage6 = connection.execute(
+            """SELECT variant_id, candidate FROM experiment_tasks
+               WHERE experiment_id=? AND stage=6 ORDER BY task_id""",
+            [smoke.experiment_id],
+        ).fetchall()
+        benchmark_id = connection.execute(
+            "SELECT benchmark_configuration_id FROM experiments WHERE experiment_id=?",
+            [smoke.experiment_id],
+        ).fetchone()[0]
+        for index, (variant_id, candidate) in enumerate(stage6):
+            connection.execute(
+                """INSERT INTO official_evaluations
+                (evaluation_id, experiment_id, variant_id, candidate,
+                 benchmark_configuration_id, evaluator, evaluator_revision,
+                 options, metrics, evaluation_input_count,
+                 forecast_input_fingerprint, is_complete_manifest,
+                 is_submittable)
+                VALUES (?, ?, ?, ?, ?, 'test', 'test', '{}', '{}', 10,
+                        'smoke-fingerprint', false, false)""",
+                [
+                    f"evaluation-{index}",
+                    smoke.experiment_id,
+                    variant_id,
+                    candidate,
+                    benchmark_id,
+                ],
+            )
+        connection.execute(
+            """INSERT INTO submission_exports
+            (export_id, experiment_id, model_name, output_directory,
+             manifest_revision, validation, is_submittable)
+            VALUES ('smoke-export', ?, 'test', 'results/test', 'test', '{}', false)""",
+            [smoke.experiment_id],
+        )
+
+        full = self.coordinator.plan("m4_daily")
+
+        self.assertEqual(full.experiment_id, smoke.experiment_id)
+        self.assertEqual(full.instance_count, 4_227)
+        self.assertEqual(
+            full.task_counts,
+            {2: 8_454, 3: 16_908, 4: 33_816, 5: 50_724, 6: 12},
+        )
+        for stage, expected in ((2, 20), (3, 40), (4, 80), (5, 120)):
+            completed = connection.execute(
+                """SELECT count(*) FROM experiment_tasks
+                   WHERE experiment_id=? AND stage=? AND status='completed'""",
+                [full.experiment_id, stage],
+            ).fetchone()[0]
+            self.assertEqual(completed, expected)
+        self.assertEqual(
+            connection.execute(
+                """SELECT status, count(*) FROM experiment_tasks
+                   WHERE experiment_id=? AND stage=6 GROUP BY status""",
+                [full.experiment_id],
+            ).fetchall(),
+            [("pending", 12)],
+        )
+        self.assertEqual(
+            connection.execute(
+                "SELECT count(*) FROM official_evaluations WHERE experiment_id=?",
+                [full.experiment_id],
+            ).fetchone()[0],
+            0,
+        )
+        self.assertEqual(
+            connection.execute(
+                "SELECT count(*) FROM submission_exports WHERE experiment_id=?",
+                [full.experiment_id],
+            ).fetchone()[0],
+            0,
+        )
+        self.assertEqual(
+            connection.execute(
+                "SELECT scope, status FROM experiments WHERE experiment_id=?",
+                [full.experiment_id],
+            ).fetchone(),
+            ("m4_daily", "planned"),
+        )
+        row = self.coordinator._pending(full.experiment_id, 6)[0]
+        with self.assertRaisesRegex(RuntimeError, "exactly 4227 unique forecasts"):
+            self.coordinator._stage6(full.experiment_id, [row], {row[0]: 1}, 1)
+
+
 if __name__ == "__main__":
     unittest.main()

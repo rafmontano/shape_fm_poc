@@ -8,7 +8,7 @@ import tempfile
 from dataclasses import asdict
 from pathlib import Path
 
-from .calibration import calibrate
+from .calibration import calibrate, calibrate_dask_profile
 from .database import DEFAULT_DATABASE
 from .execution import ExecutionSettings, resolve_execution_profile
 from .poc1 import (
@@ -71,6 +71,16 @@ def main() -> None:
     calibration_parser = subparsers.add_parser("calibrate")
     calibration_parser.add_argument("--profile", required=True)
     calibration_parser.add_argument("--output", type=Path, required=True)
+    dask_calibration_parser = subparsers.add_parser("calibrate-dask")
+    dask_calibration_parser.add_argument("--address", required=True)
+    dask_calibration_parser.add_argument("--expected-workers", type=int, required=True)
+    dask_calibration_parser.add_argument("--profile-name", required=True)
+    dask_calibration_parser.add_argument("--mac-cpu-workers", type=int, required=True)
+    dask_calibration_parser.add_argument("--ubuntu-cpu-workers", type=int, required=True)
+    dask_calibration_parser.add_argument("--chronos-batch-size", type=int, required=True)
+    dask_calibration_parser.add_argument("--max-in-flight", type=int, required=True)
+    dask_calibration_parser.add_argument("--baseline", type=Path)
+    dask_calibration_parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if args.command == "get-forecast":
         print(json.dumps(asdict(get_forecast(args.database, args.experiment_id, args.variant_id, args.series_id, args.candidate))))
@@ -99,6 +109,26 @@ def main() -> None:
                 )["hardware"]
         result = calibrate(profile, hardware, args.database, args.output)
         print(json.dumps(result, default=str))
+        return
+    if args.command == "calibrate-dask":
+        result = calibrate_dask_profile(
+            database_path=args.database,
+            scheduler_address=args.address,
+            expected_workers=args.expected_workers,
+            profile_name=args.profile_name,
+            mac_cpu_workers=args.mac_cpu_workers,
+            ubuntu_cpu_workers=args.ubuntu_cpu_workers,
+            chronos_batch_size=args.chronos_batch_size,
+            max_in_flight=args.max_in_flight,
+            output=args.output,
+            baseline=args.baseline,
+        )
+        print(
+            json.dumps(
+                {key: value for key, value in result.items() if key != "_scientific_outputs"},
+                default=str,
+            )
+        )
         return
     selected_experiment = getattr(args, "experiment_id", None)
     if args.command in {"run", "export"} and selected_experiment is None:

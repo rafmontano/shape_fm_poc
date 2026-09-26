@@ -40,6 +40,14 @@ The development grid is:
 For ten forecast instances, deterministic task counts are Stage 2: 20,
 Stage 3: 40, Stage 4: 80, Stage 5: 120, Stage 6: 12. Gates are strict and run in
 order. Completed IDs skip on restart; failures retain attempts and retry alone.
+Expanding that experiment from smoke to full M4 Daily preserves completed
+Stages 2–5, but transactionally resets Stage 6, removes smoke-only official
+evaluations and registered subset exports, and returns the experiment to
+`planned`. Full Stage 6 refuses to run unless each variant/candidate has exactly
+4,227 unique forecasts at unique contiguous official positions. Every official
+evaluation records that input count and a deterministic forecast-input
+fingerprint; recomputation replaces an invalidated metric rather than silently
+retaining it.
 `sequential_safe` is the default execution profile. Profiles and manual
 overrides are invocation controls: they are recorded but never enter experiment
 or task identity. Larger profile values use bounded local workers for pure
@@ -80,8 +88,9 @@ completed variant can be frozen later without recomputing upstream results.
 # Validate/export the provisional development subset
 .tools/uv/uv run --locked shapefm-poc1 export
 
-# Dry-run plans only
+# Materialise the full plan, or inspect it without writes
 .tools/uv/uv run --locked shapefm-poc1 plan --scope m4_daily
+.tools/uv/uv run --locked shapefm-poc1 plan --scope m4_daily --dry-run
 .tools/uv/uv run --locked shapefm-poc1 plan --scope manifest
 ```
 

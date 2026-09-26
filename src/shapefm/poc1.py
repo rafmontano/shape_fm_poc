@@ -334,8 +334,10 @@ class POC1Coordinator:
                     existing_counts,
                     summary["configuration_name"],
                 )
+            expanding_scope = 0 < existing_counts.get(2, 0) < expected_counts[2]
             limit = instances
         else:
+            expanding_scope = False
             limit = 10
         official = self._gift_bridge(
             "describe", "--source-root", str(source_root), "--limit", str(limit)
@@ -527,6 +529,26 @@ class POC1Coordinator:
                 ON CONFLICT (task_id) DO NOTHING""",
                 evaluation_tasks,
             )
+            if expanding_scope:
+                self.connection.execute(
+                    "DELETE FROM official_evaluations WHERE experiment_id=?",
+                    [experiment_id],
+                )
+                self.connection.execute(
+                    "DELETE FROM submission_exports WHERE experiment_id=?",
+                    [experiment_id],
+                )
+                self.connection.execute(
+                    """UPDATE experiment_tasks SET status='pending', started_at=NULL,
+                       completed_at=NULL, updated_at=current_timestamp, last_error=NULL
+                       WHERE experiment_id=? AND stage=6""",
+                    [experiment_id],
+                )
+                self.connection.execute(
+                    """UPDATE experiments SET scope='m4_daily', status='planned',
+                       updated_at=current_timestamp WHERE experiment_id=?""",
+                    [experiment_id],
+                )
             self.connection.execute("COMMIT")
         except BaseException:
             self.connection.execute("ROLLBACK")
@@ -1720,22 +1742,55 @@ class POC1Coordinator:
             "SELECT benchmark_configuration_id FROM experiments WHERE experiment_id=?",
             [experiment_id],
         ).fetchone()[0]
+        scope = self.connection.execute(
+            "SELECT scope FROM experiments WHERE experiment_id=?",
+            [experiment_id],
+        ).fetchone()[0]
+        expected_count = 4_227 if scope == "m4_daily" else 10
         prepared = []
         for task_id, _, variant_id, candidate in rows:
             records = self.connection.execute(
-                """SELECT f.mean, f.quantiles FROM forecasts f JOIN forecast_instances i USING (forecast_instance_id)
+                """SELECT f.forecast_instance_id, i.official_position, f.mean,
+                          f.quantiles, f.content_hash
+                   FROM forecasts f JOIN forecast_instances i USING (forecast_instance_id)
                 WHERE f.experiment_id=? AND f.variant_id=? AND f.candidate=?
                 ORDER BY i.official_position""",
                 [experiment_id, variant_id, candidate],
             ).fetchall()
+            instance_ids = [record[0] for record in records]
+            positions = [int(record[1]) for record in records]
+            if (
+                len(records) != expected_count
+                or len(set(instance_ids)) != expected_count
+                or positions != list(range(expected_count))
+            ):
+                raise RuntimeError(
+                    f"Stage 6 requires exactly {expected_count} unique forecasts at "
+                    f"official positions 0..{expected_count - 1} for "
+                    f"variant={variant_id}, candidate={candidate}; found "
+                    f"{len(records)} rows, {len(set(instance_ids))} unique instances, "
+                    f"and {len(set(positions))} unique positions"
+                )
+            input_fingerprint = json_fingerprint(
+                [
+                    {
+                        "forecast_instance_id": record[0],
+                        "official_position": record[1],
+                        "content_hash": record[4],
+                    }
+                    for record in records
+                ]
+            )
             prepared.append(
                 {
                     "task_id": task_id,
                     "variant_id": variant_id,
                     "candidate": candidate,
+                    "evaluation_input_count": len(records),
+                    "forecast_input_fingerprint": input_fingerprint,
                     "payload": {
                         "forecasts": [
-                            {"mean": row[0], "quantiles": row[1]} for row in records
+                            {"mean": row[2], "quantiles": row[3]} for row in records
                         ]
                     },
                 }
@@ -1760,13 +1815,30 @@ class POC1Coordinator:
             task_id = item["task_id"]
             variant_id = item["variant_id"]
             candidate = item["candidate"]
+            evaluation_input_count = item["evaluation_input_count"]
+            forecast_input_fingerprint = item["forecast_input_fingerprint"]
             evaluation_id = f"evaluation/{json_fingerprint({'experiment': experiment_id, 'variant': variant_id, 'candidate': candidate})[:32]}"
 
             def insert():
                 self.connection.execute(
-                    """INSERT INTO official_evaluations VALUES
-                    (?, ?, ?, ?, ?, 'gluonts.model.evaluate_forecasts', ?, ?, ?, false, false, current_timestamp)
-                    ON CONFLICT (evaluation_id) DO NOTHING""",
+                    """INSERT INTO official_evaluations
+                    (evaluation_id, experiment_id, variant_id, candidate,
+                     benchmark_configuration_id, evaluator, evaluator_revision,
+                     options, metrics, evaluation_input_count,
+                     forecast_input_fingerprint, is_complete_manifest,
+                     is_submittable, created_at)
+                    VALUES (?, ?, ?, ?, ?, 'gluonts.model.evaluate_forecasts',
+                            ?, ?, ?, ?, ?, false, false, current_timestamp)
+                    ON CONFLICT (evaluation_id) DO UPDATE SET
+                        evaluator=excluded.evaluator,
+                        evaluator_revision=excluded.evaluator_revision,
+                        options=excluded.options,
+                        metrics=excluded.metrics,
+                        evaluation_input_count=excluded.evaluation_input_count,
+                        forecast_input_fingerprint=excluded.forecast_input_fingerprint,
+                        is_complete_manifest=excluded.is_complete_manifest,
+                        is_submittable=excluded.is_submittable,
+                        created_at=excluded.created_at""",
                     [
                         evaluation_id,
                         experiment_id,
@@ -1778,6 +1850,8 @@ class POC1Coordinator:
                             {"axis": None, "mask_invalid_label": True, "allow_nan_forecast": False, "seasonality": "official get_seasonality(freq)"}
                         ),
                         canonical_json(official),
+                        evaluation_input_count,
+                        forecast_input_fingerprint,
                     ],
                 )
 

@@ -49,6 +49,47 @@ def _worker_provenance(
     }
 
 
+def worker_resource_snapshot(dask_worker: Any = None) -> dict[str, Any]:
+    """Return host and Dask-process telemetry without accessing experiment storage."""
+    import psutil
+
+    worker = dask_worker or get_worker()
+    state = getattr(worker, "state", None)
+    resources = dict(getattr(state, "total_resources", {}) or {})
+    memory = psutil.virtual_memory()
+    swap = psutil.swap_memory()
+    spilled = getattr(getattr(worker, "data", None), "spilled_total", None)
+    snapshot: dict[str, Any] = {
+        "hostname": socket.gethostname(),
+        "worker": worker.address,
+        "resources": resources,
+        "cpu_percent": psutil.cpu_percent(interval=None),
+        "system_available_memory_bytes": int(memory.available),
+        "swap_used_bytes": int(swap.used),
+        "dask_spilled_memory_bytes": int(getattr(spilled, "memory", 0)),
+        "dask_spilled_disk_bytes": int(getattr(spilled, "disk", 0)),
+    }
+    if resources.get("GPU", 0) >= 1:
+        query = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=utilization.gpu,memory.free,memory.total,name",
+                "--format=csv,noheader,nounits",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        ).stdout.strip().split(", ")
+        snapshot["gpu"] = {
+            "utilization_percent": float(query[0]),
+            "available_memory_bytes": int(float(query[1]) * 1024 * 1024),
+            "total_memory_bytes": int(float(query[2]) * 1024 * 1024),
+            "name": query[3],
+        }
+    return snapshot
+
+
 def _run_r(payload: dict[str, Any], timeout: float = 1800.0) -> dict[str, Any]:
     completed = subprocess.run(
         ["Rscript", str(ROOT / "R/poc1_worker.R")],

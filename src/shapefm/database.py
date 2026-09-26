@@ -9,7 +9,7 @@ from typing import Any
 import duckdb
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 DEFAULT_DATABASE = Path("data/shapefm.duckdb")
 
 
@@ -306,6 +306,8 @@ CREATE TABLE IF NOT EXISTS official_evaluations (
     evaluator_revision VARCHAR NOT NULL,
     options JSON NOT NULL,
     metrics JSON NOT NULL,
+    evaluation_input_count INTEGER NOT NULL,
+    forecast_input_fingerprint VARCHAR NOT NULL,
     is_complete_manifest BOOLEAN NOT NULL,
     is_submittable BOOLEAN NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
@@ -387,6 +389,12 @@ def migrate_database(path: Path = DEFAULT_DATABASE) -> Path:
             "ALTER TABLE experiment_invocations ADD COLUMN IF NOT EXISTS hardware JSON"
         )
         connection.execute(
+            "ALTER TABLE official_evaluations ADD COLUMN IF NOT EXISTS evaluation_input_count INTEGER"
+        )
+        connection.execute(
+            "ALTER TABLE official_evaluations ADD COLUMN IF NOT EXISTS forecast_input_fingerprint VARCHAR"
+        )
+        connection.execute(
             "INSERT INTO schema_versions (version, description) VALUES (?, ?) "
             "ON CONFLICT (version) DO NOTHING",
             [1, "Foundation Stage 1 canonical GIFT-Eval import"],
@@ -399,7 +407,12 @@ def migrate_database(path: Path = DEFAULT_DATABASE) -> Path:
         connection.execute(
             "INSERT INTO schema_versions (version, description) VALUES (?, ?) "
             "ON CONFLICT (version) DO NOTHING",
-            [SCHEMA_VERSION, "POC 1.1 hardware-aware local execution"],
+            [3, "POC 1.1 hardware-aware local execution"],
+        )
+        connection.execute(
+            "INSERT INTO schema_versions (version, description) VALUES (?, ?) "
+            "ON CONFLICT (version) DO NOTHING",
+            [SCHEMA_VERSION, "POC 1 full-scope evaluation provenance"],
         )
         connection.execute("COMMIT")
     except BaseException:
