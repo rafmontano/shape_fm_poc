@@ -33,8 +33,10 @@ EXPECTED_CHRONOS_REVISION = "29ec3766d36d6f73f0696f85560a422f50e8498c"
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def _worker_provenance(retry_count: int = 0) -> dict[str, Any]:
-    worker = get_worker()
+def _worker_provenance(
+    retry_count: int = 0, worker: Any = None
+) -> dict[str, Any]:
+    worker = worker or get_worker()
     state = getattr(worker, "state", None)
     resources = dict(getattr(state, "total_resources", {}) or {})
     try:
@@ -273,7 +275,7 @@ def _command(*arguments: str, timeout: float = 30.0) -> str:
     ).stdout.strip()
 
 
-def worker_preflight() -> dict[str, Any]:
+def worker_preflight(dask_worker: Any = None) -> dict[str, Any]:
     """Return exact environment identity from inside one Dask worker."""
     config = json.loads((ROOT / "config/experiments/poc1.json").read_text())
     scientific = {
@@ -316,7 +318,7 @@ print(json.dumps({
         )
     )
     return {
-        **_worker_provenance(),
+        **_worker_provenance(worker=dask_worker),
         "git_commit": _command("git", "rev-parse", "HEAD"),
         "git_dirty": bool(_command("git", "status", "--porcelain", "--untracked-files=all")),
         "python_version": platform.python_version(),
