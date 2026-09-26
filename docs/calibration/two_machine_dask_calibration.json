@@ -1,0 +1,395 @@
+{
+  "generated_at_utc": "2026-09-26T04:03:35.969015+00:00",
+  "method": "256 deterministic M4 Daily contexts; all cleaning/transformation variants; concurrent AutoARIMA and Chronos-2",
+  "safety_thresholds": {
+    "mac_minimum_available_memory_gib": 3,
+    "ubuntu_minimum_available_memory_gib": 16,
+    "rtx5090_minimum_available_vram_gib": 4,
+    "persistent_dask_spilling_allowed": false,
+    "worker_restarts_allowed": false,
+    "scientific_rtol": 1e-05,
+    "scientific_atol": 1e-05,
+    "minimum_throughput_improvement_for_larger_profile": 0.05
+  },
+  "candidates": [
+    {
+      "profile_name": "baseline",
+      "settings": {
+        "mac_cpu_workers": 2,
+        "ubuntu_cpu_workers": 4,
+        "gpu_workers": 1,
+        "chronos_batch_size": 16,
+        "maximum_in_flight_batches": 12
+      },
+      "context_selection": {
+        "count": 256,
+        "method": "256 equally spaced ranks ordered by context length then series ID",
+        "length_groups": {
+          "short": {
+            "count": 85,
+            "minimum": 93,
+            "maximum": 673
+          },
+          "medium": {
+            "count": 85,
+            "minimum": 676,
+            "maximum": 4196
+          },
+          "long": {
+            "count": 86,
+            "minimum": 4196,
+            "maximum": 9919
+          }
+        }
+      },
+      "task_count": 3584,
+      "model_task_counts": {
+        "auto_arima": 1024,
+        "chronos_2": 1024
+      },
+      "elapsed_seconds": 622.6003139999993,
+      "model_phase_elapsed_seconds": 588.8952799590006,
+      "total_throughput_tasks_per_second": 5.756502075904837,
+      "per_model_throughput_tasks_per_second": {
+        "auto_arima": 1.7388490532158651,
+        "chronos_2": 1.7388490532158651
+      },
+      "host_task_contribution": {
+        "RMMacbookPro.local": 1014,
+        "WSUbuntu1": 2570
+      },
+      "telemetry": {
+        "sample_count": 592,
+        "sample_failures": [],
+        "maximum_sample_seconds": 0.2692784999999276,
+        "hosts": {
+          "RMMacbookPro.local": {
+            "mean_cpu_utilisation_percent": 39.40625,
+            "maximum_cpu_utilisation_percent": 52.3,
+            "minimum_system_available_memory_bytes": 5520932864,
+            "maximum_swap_used_bytes": 0
+          },
+          "WSUbuntu1": {
+            "mean_cpu_utilisation_percent": 13.114966216216217,
+            "maximum_cpu_utilisation_percent": 16.4,
+            "minimum_system_available_memory_bytes": 125229113344,
+            "maximum_swap_used_bytes": 0
+          }
+        },
+        "gpu": {
+          "mean_utilisation_percent": 1.339527027027027,
+          "maximum_utilisation_percent": 29.0,
+          "minimum_available_memory_bytes": 30315380736,
+          "name": "NVIDIA GeForce RTX 5090"
+        },
+        "dask_spilling": {
+          "peak_bytes_per_worker": 0,
+          "final_total_bytes": 0,
+          "persistent": false
+        },
+        "initial_workers": [
+          "tcp://192.168.1.23:52287",
+          "tcp://192.168.1.23:52288",
+          "tcp://192.168.1.44:33029",
+          "tcp://192.168.1.44:35817",
+          "tcp://192.168.1.44:36633",
+          "tcp://192.168.1.44:39171",
+          "tcp://192.168.1.44:40501"
+        ],
+        "final_workers": [
+          "tcp://192.168.1.23:52287",
+          "tcp://192.168.1.23:52288",
+          "tcp://192.168.1.44:33029",
+          "tcp://192.168.1.44:35817",
+          "tcp://192.168.1.44:36633",
+          "tcp://192.168.1.44:39171",
+          "tcp://192.168.1.44:40501"
+        ],
+        "observed_workers": [
+          "tcp://192.168.1.23:52287",
+          "tcp://192.168.1.23:52288",
+          "tcp://192.168.1.44:33029",
+          "tcp://192.168.1.44:35817",
+          "tcp://192.168.1.44:36633",
+          "tcp://192.168.1.44:39171",
+          "tcp://192.168.1.44:40501"
+        ],
+        "worker_restarts": 0
+      },
+      "retry_count": 0,
+      "failed_task_count": 0,
+      "failure": null,
+      "chronos_effective_batch_sizes": [
+        16,
+        8,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        8,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        8,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        4,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        12,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        4,
+        4
+      ],
+      "scientific_equivalence": {
+        "equivalent": true,
+        "missing_output_count": 0,
+        "unexpected_output_count": 0,
+        "max_abs_difference": 0.0,
+        "max_relative_difference": 0.0,
+        "relative_tolerance": 1e-05,
+        "absolute_tolerance": 1e-05
+      },
+      "safe": true,
+      "safety_rejection_reasons": [],
+      "isolated_database": {
+        "canonical_database_opened_read_only": true,
+        "temporary_database_removed_after_run": true
+      }
+    },
+    {
+      "profile_name": "moderate",
+      "settings": {
+        "mac_cpu_workers": 2,
+        "ubuntu_cpu_workers": 8,
+        "gpu_workers": 1,
+        "chronos_batch_size": 32,
+        "maximum_in_flight_batches": 16
+      },
+      "context_selection": {
+        "count": 256,
+        "method": "256 equally spaced ranks ordered by context length then series ID",
+        "length_groups": {
+          "short": {
+            "count": 85,
+            "minimum": 93,
+            "maximum": 673
+          },
+          "medium": {
+            "count": 85,
+            "minimum": 676,
+            "maximum": 4196
+          },
+          "long": {
+            "count": 86,
+            "minimum": 4196,
+            "maximum": 9919
+          }
+        }
+      },
+      "task_count": 3584,
+      "model_task_counts": {
+        "auto_arima": 1024,
+        "chronos_2": 1024
+      },
+      "elapsed_seconds": 409.0353304170003,
+      "model_phase_elapsed_seconds": 384.55621641700054,
+      "total_throughput_tasks_per_second": 8.762079296050565,
+      "per_model_throughput_tasks_per_second": {
+        "auto_arima": 2.6628096394874214,
+        "chronos_2": 2.6628096394874214
+      },
+      "host_task_contribution": {
+        "RMMacbookPro.local": 615,
+        "WSUbuntu1": 2969
+      },
+      "telemetry": {
+        "sample_count": 380,
+        "sample_failures": [],
+        "maximum_sample_seconds": 0.15610395899966534,
+        "hosts": {
+          "RMMacbookPro.local": {
+            "mean_cpu_utilisation_percent": 34.750614035087715,
+            "maximum_cpu_utilisation_percent": 43.0,
+            "minimum_system_available_memory_bytes": 5536022528,
+            "maximum_swap_used_bytes": 0
+          },
+          "WSUbuntu1": {
+            "mean_cpu_utilisation_percent": 25.768888888888892,
+            "maximum_cpu_utilisation_percent": 29.5,
+            "minimum_system_available_memory_bytes": 123688960000,
+            "maximum_swap_used_bytes": 0
+          }
+        },
+        "gpu": {
+          "mean_utilisation_percent": 1.3394736842105264,
+          "maximum_utilisation_percent": 51.0,
+          "minimum_available_memory_bytes": 29572988928,
+          "name": "NVIDIA GeForce RTX 5090"
+        },
+        "dask_spilling": {
+          "peak_bytes_per_worker": 0,
+          "final_total_bytes": 0,
+          "persistent": false
+        },
+        "initial_workers": [
+          "tcp://192.168.1.23:54151",
+          "tcp://192.168.1.23:54153",
+          "tcp://192.168.1.44:35055",
+          "tcp://192.168.1.44:35141",
+          "tcp://192.168.1.44:35985",
+          "tcp://192.168.1.44:36787",
+          "tcp://192.168.1.44:40841",
+          "tcp://192.168.1.44:43225",
+          "tcp://192.168.1.44:44957",
+          "tcp://192.168.1.44:45549",
+          "tcp://192.168.1.44:45919"
+        ],
+        "final_workers": [
+          "tcp://192.168.1.23:54151",
+          "tcp://192.168.1.23:54153",
+          "tcp://192.168.1.44:35055",
+          "tcp://192.168.1.44:35141",
+          "tcp://192.168.1.44:35985",
+          "tcp://192.168.1.44:36787",
+          "tcp://192.168.1.44:40841",
+          "tcp://192.168.1.44:43225",
+          "tcp://192.168.1.44:44957",
+          "tcp://192.168.1.44:45549",
+          "tcp://192.168.1.44:45919"
+        ],
+        "observed_workers": [
+          "tcp://192.168.1.23:54151",
+          "tcp://192.168.1.23:54153",
+          "tcp://192.168.1.44:35055",
+          "tcp://192.168.1.44:35141",
+          "tcp://192.168.1.44:35985",
+          "tcp://192.168.1.44:36787",
+          "tcp://192.168.1.44:40841",
+          "tcp://192.168.1.44:43225",
+          "tcp://192.168.1.44:44957",
+          "tcp://192.168.1.44:45549",
+          "tcp://192.168.1.44:45919"
+        ],
+        "worker_restarts": 0
+      },
+      "retry_count": 0,
+      "failed_task_count": 0,
+      "failure": null,
+      "chronos_effective_batch_sizes": [
+        24,
+        32,
+        32,
+        32,
+        32,
+        8,
+        32,
+        32,
+        32,
+        32,
+        24,
+        32,
+        32,
+        16,
+        32,
+        32,
+        4,
+        32,
+        32,
+        32,
+        32,
+        32,
+        28,
+        32,
+        32,
+        32,
+        32,
+        32,
+        32,
+        32,
+        32,
+        32,
+        32,
+        32,
+        20,
+        4
+      ],
+      "scientific_equivalence": {
+        "equivalent": false,
+        "missing_output_count": 0,
+        "unexpected_output_count": 0,
+        "max_abs_difference": 36.26835585020308,
+        "max_relative_difference": 0.1336351752774996,
+        "relative_tolerance": 1e-05,
+        "absolute_tolerance": 1e-05
+      },
+      "safe": false,
+      "safety_rejection_reasons": [
+        "scientific outputs differ from the baseline"
+      ],
+      "isolated_database": {
+        "canonical_database_opened_read_only": true,
+        "temporary_database_removed_after_run": true
+      }
+    }
+  ],
+  "recommendation": {
+    "selected_profile": "baseline",
+    "settings": {
+      "mac_cpu_workers": 2,
+      "ubuntu_cpu_workers": 4,
+      "gpu_workers": 1,
+      "chronos_batch_size": 16,
+      "maximum_in_flight_batches": 12
+    },
+    "rationale": "The baseline was the only safe candidate tested."
+  }
+}

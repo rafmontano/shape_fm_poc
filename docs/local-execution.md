@@ -11,6 +11,7 @@ only DuckDB writer.
 | `sequential_safe` | 1 | 1 | 1 | 1 / 1 | 1 | 1 | no |
 | `mac_m1pro_10core_16gb` | 2 | 4 | 2 | 1 / 8 | 4 | 1 | no |
 | `ubuntu_3950x_16core_128gb_rtx5090` | 8 | 16 | 12 | 1 / 16 | 16 | 1 | yes |
+| `two_machine_dask` | 6 | 6 | 6 | 1 / 16 | 6 | 1 | yes |
 
 The Mac profile serialises heavy AutoARIMA and Chronos work because CPU and GPU
 share 16 GB unified memory. The Ubuntu profile may overlap bounded CPU
@@ -149,6 +150,19 @@ improves throughput by at least 5%. Environment variables
 `SHAPEFM_MAC_CPU_WORKERS`, `SHAPEFM_UBUNTU_CPU_WORKERS`,
 `SHAPEFM_CHRONOS_BATCH_SIZE`, and `SHAPEFM_DASK_MAX_IN_FLIGHT` remain available
 for explicit troubleshooting overrides.
+
+The September 2026 combined-load calibration selected the baseline topology:
+2 Mac CPU workers, 4 Ubuntu CPU workers, Chronos batch 16, and 12 maximum
+in-flight CPU batches. It completed 3,584 calibration computations in 622.60 s
+(5.76 tasks/s), with no retry, failure, worker restart, swap, or Dask spill;
+minimum available memory was 5.14 GiB on the Mac and 116.63 GiB on Ubuntu, and
+minimum free RTX 5090 memory was 28.23 GiB. The moderate topology reached 8.76
+tasks/s and remained resource-safe, but was rejected because 28 of 1,024
+AutoARIMA forecasts changed beyond `atol=rtol=1e-5` when work placement changed
+between arm64 macOS and x86_64 Linux. Chronos remained within tolerance. The
+sweep therefore stopped before the larger candidates, as required. This POC
+keeps cross-platform CPU scheduling as an explicit limitation rather than
+weakening the scientific tolerance.
 
 This POC uses unencrypted Dask TCP on the trusted private LAN. Do not expose
 ports 8786 or worker ports to an untrusted network; production deployment would

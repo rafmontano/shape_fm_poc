@@ -44,6 +44,9 @@ class ExecutionProfile:
     system_memory_min_available_gib: float
     accelerator_memory_min_available_gib: float
     database_writers: int
+    dask_mac_cpu_workers: int | None = None
+    dask_ubuntu_cpu_workers: int | None = None
+    dask_max_in_flight: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -114,6 +117,14 @@ def resolve_execution_profile(
         raise ValueError("MPS and CUDA profiles permit exactly one Chronos process")
     if profile.system_memory_min_available_gib < 0 or profile.accelerator_memory_min_available_gib < 0:
         raise ValueError("memory safety thresholds cannot be negative")
+    for field in (
+        "dask_mac_cpu_workers",
+        "dask_ubuntu_cpu_workers",
+        "dask_max_in_flight",
+    ):
+        value = getattr(profile, field)
+        if value is not None and value < 1:
+            raise ValueError(f"{field} must be positive when configured")
     return profile, clean_overrides
 
 

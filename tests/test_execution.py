@@ -70,6 +70,16 @@ class ExecutionProfileTests(unittest.TestCase):
         )
         self.assertTrue(all(p.database_writers == 1 for p in (sequential, mac, ubuntu)))
         self.assertTrue(all(p.chronos_processes == 1 for p in (mac, ubuntu)))
+        distributed, _ = resolve_execution_profile("two_machine_dask")
+        self.assertEqual(
+            (
+                distributed.dask_mac_cpu_workers,
+                distributed.dask_ubuntu_cpu_workers,
+                distributed.chronos_inference_batch_size,
+                distributed.dask_max_in_flight,
+            ),
+            (2, 4, 16, 12),
+        )
 
     def test_hardware_provenance_records_cpu_model(self) -> None:
         with patch("shapefm.execution.cpu_model", return_value="Test CPU"):
