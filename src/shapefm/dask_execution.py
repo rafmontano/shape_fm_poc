@@ -24,6 +24,7 @@ import distributed
 from distributed import Client, Future, as_completed, get_worker
 
 from .config import json_fingerprint
+from .forecasting import combine_equal_weight
 from .transformations import transform
 
 
@@ -177,26 +178,11 @@ def combine_batch(batch: list[dict[str, Any]], retry_count: int = 0) -> dict[str
     started = time.monotonic()
     results = []
     for job in batch:
-        left, right = job["left"], job["right"]
-
-        def average(a: list[float], b: list[float]) -> list[float]:
-            return [(x + y) / 2.0 for x, y in zip(a, b, strict=True)]
-
-        quantiles = [
-            average(left_values, right_values)
-            for left_values, right_values in zip(
-                left["quantiles"], right["quantiles"], strict=True
-            )
-        ]
-        for point in zip(*quantiles, strict=True):
-            if tuple(point) != tuple(sorted(point)):
-                raise ValueError("combined quantiles are not ordered")
+        combination = combine_equal_weight(job["left"], job["right"])
         results.append(
             {
                 "id": job["id"],
-                "mean": average(left["mean"], right["mean"]),
-                "median": average(left["median"], right["median"]),
-                "quantiles": quantiles,
+                **combination,
             }
         )
     return {

@@ -30,6 +30,7 @@ from .execution import (
     system_hardware,
     validate_system_memory,
 )
+from .forecasting import combine_equal_weight
 from .orchestration import repository_root
 from .transformations import TransformationResult, inverse, transform
 from .utils import utc_now
@@ -189,22 +190,7 @@ def _transform_job(job: tuple[list[float], str]) -> TransformationResult:
 
 
 def _combine_job(job: dict[str, Any]) -> dict[str, Any]:
-    left, right = job["left"], job["right"]
-    average = lambda a, b: [(x + y) / 2.0 for x, y in zip(a, b, strict=True)]
-    quantiles = [
-        average(left_values, right_values)
-        for left_values, right_values in zip(
-            left["quantiles"], right["quantiles"], strict=True
-        )
-    ]
-    for point in zip(*quantiles, strict=True):
-        if tuple(point) != tuple(sorted(point)):
-            raise ValueError("combined quantiles are not ordered")
-    return {
-        "mean": average(left["mean"], right["mean"]),
-        "median": average(left["median"], right["median"]),
-        "quantiles": quantiles,
-    }
+    return combine_equal_weight(job["left"], job["right"])
 
 
 class POC1Coordinator:
@@ -1650,7 +1636,16 @@ class POC1Coordinator:
                         result["median"],
                         list(QUANTILES),
                         result["quantiles"],
-                        canonical_json({"adjustment": "identity", "rule": "corresponding means, medians, and quantiles averaged"}),
+                        canonical_json(
+                            {
+                                "adjustment": (
+                                    "monotone_rearrangement"
+                                    if result["quantiles_rearranged"]
+                                    else "identity"
+                                ),
+                                "rule": "corresponding means, medians, and quantiles averaged",
+                            }
+                        ),
                         json_fingerprint(
                             {
                                 key: result[key]

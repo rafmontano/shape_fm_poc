@@ -36,6 +36,10 @@ The development grid is:
 - model: AutoARIMA and pinned Chronos-2;
 - adjustment: `identity`;
 - candidates: AutoARIMA, Chronos-2, and corresponding-quantile 50/50 average.
+  If that average contains quantile crossing, deterministic monotone
+  rearrangement sorts the nine quantiles at that horizon position; already
+  ordered averages are unchanged, and the adjustment is recorded with the
+  forecast.
 
 For ten forecast instances, deterministic task counts are Stage 2: 20,
 Stage 3: 40, Stage 4: 80, Stage 5: 120, Stage 6: 12. Gates are strict and run in

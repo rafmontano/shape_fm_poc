@@ -10,6 +10,7 @@ from shapefm.execution import resolve_execution_profile
 from shapefm.poc1 import (
     POC1Coordinator,
     _batches,
+    _combine_job,
     _run_external_batches,
     _run_parallel,
     _transform_job,
@@ -65,6 +66,44 @@ class TransformationTests(unittest.TestCase):
 
 
 class ExternalBatchTests(unittest.TestCase):
+    def test_equal_weight_combination_rearranges_crossed_quantiles(self):
+        result = _combine_job(
+            {
+                "left": {
+                    "mean": [4.0],
+                    "median": [4.0],
+                    "quantiles": [[1.0], [3.0], [5.0]],
+                },
+                "right": {
+                    "mean": [8.0],
+                    "median": [8.0],
+                    "quantiles": [[9.0], [3.0], [7.0]],
+                },
+            }
+        )
+        self.assertEqual(result["mean"], [6.0])
+        self.assertEqual(result["median"], [6.0])
+        self.assertEqual(result["quantiles"], [[3.0], [5.0], [6.0]])
+        self.assertTrue(result["quantiles_rearranged"])
+
+    def test_equal_weight_combination_preserves_ordered_quantiles(self):
+        result = _combine_job(
+            {
+                "left": {
+                    "mean": [2.0],
+                    "median": [2.0],
+                    "quantiles": [[1.0], [2.0], [3.0]],
+                },
+                "right": {
+                    "mean": [4.0],
+                    "median": [4.0],
+                    "quantiles": [[3.0], [4.0], [5.0]],
+                },
+            }
+        )
+        self.assertEqual(result["quantiles"], [[2.0], [3.0], [4.0]])
+        self.assertFalse(result["quantiles_rearranged"])
+
     def test_batches_are_bounded_and_completed_batches_survive_later_failure(self):
         batches = _batches(list(range(7)), 3)
         self.assertEqual([len(batch) for batch in batches], [3, 3, 1])
