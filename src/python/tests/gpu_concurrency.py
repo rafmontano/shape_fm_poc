@@ -1080,11 +1080,21 @@ def run_experiment(database: Path, acceptance_report: Path, output: Path) -> dic
             "faster_than_control": faster,
             "recommended_for_adoption": recommended,
         }
-        report["conclusion"] = (
-            "The 15-logical-worker theory was supported."
-            if recommended and utilisation_increased
-            else "The 15-logical-worker theory was not supported for adoption."
-        )
+        if recommended and utilisation_increased:
+            report["conclusion"] = (
+                "The 15-logical-worker theory was supported for utilisation, "
+                "throughput, scientific equivalence, and resource safety."
+            )
+        elif recommended:
+            report["conclusion"] = (
+                "The 15-logical-worker theory was supported for throughput, "
+                "scientific equivalence, and resource safety, but sampled GPU "
+                "utilisation did not increase."
+            )
+        else:
+            report["conclusion"] = (
+                "The 15-logical-worker theory was not supported for adoption."
+            )
     report["report_sha256_without_this_field"] = hashlib.sha256(
         json.dumps(report, sort_keys=True, default=str).encode("utf-8")
     ).hexdigest()
