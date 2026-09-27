@@ -891,8 +891,13 @@ class POC1Coordinator:
             raise
 
     def _r_worker(self, payload: dict[str, Any], timeout: float = 1800.0) -> dict[str, Any]:
+        script = (
+            "src/r/04_forecast_auto_arima.R"
+            if payload.get("action") == "forecast"
+            else "src/r/02_preprocess_series.R"
+        )
         completed = subprocess.run(
-            ["Rscript", str(self.root / "R/poc1_worker.R")],
+            ["Rscript", str(self.root / script)],
             cwd=self.root,
             input=json.dumps(payload),
             check=True,

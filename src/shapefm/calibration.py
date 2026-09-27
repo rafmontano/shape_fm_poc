@@ -239,7 +239,7 @@ def representative_contexts(database_path: Path) -> list[dict[str, Any]]:
 
 def _r_forecast(root: Path, job: dict[str, Any]) -> dict[str, Any]:
     completed = subprocess.run(
-        ["Rscript", str(root / "R/poc1_worker.R")],
+        ["Rscript", str(root / "src/r/04_forecast_auto_arima.R")],
         cwd=root,
         input=json.dumps({"action": "forecast", "jobs": [job]}),
         check=True,

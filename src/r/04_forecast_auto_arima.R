@@ -5,26 +5,14 @@ suppressPackageStartupMessages({
   library(jsonlite)
 })
 
+source("src/r/util/time_series_input.R")
+
 payload <- jsonlite::fromJSON(file("stdin"), simplifyVector = FALSE)
 
-clean_one <- function(job) {
-  values <- as.numeric(unlist(job$context))
-  series <- stats::ts(values, frequency = as.integer(job$seasonality))
-  if (identical(job$method, "identity")) {
-    cleaned <- values
-  } else if (identical(job$method, "tsclean")) {
-    cleaned <- as.numeric(forecast::tsclean(series))
-  } else {
-    stop("Unsupported cleaning method: ", job$method)
-  }
-  list(id = job$id, values = cleaned)
-}
-
 forecast_one <- function(job) {
-  values <- as.numeric(unlist(job$context))
-  series <- stats::ts(values, frequency = as.integer(job$seasonality))
+  input <- time_series_input(job)
   fit <- forecast::auto.arima(
-    series,
+    input$series,
     stepwise = TRUE,
     approximation = FALSE,
     allowdrift = TRUE,
@@ -47,9 +35,7 @@ forecast_one <- function(job) {
   list(id = job$id, mean = mean, median = mean, quantiles = quantiles)
 }
 
-if (identical(payload$action, "clean")) {
-  results <- lapply(payload$jobs, clean_one)
-} else if (identical(payload$action, "forecast")) {
+if (identical(payload$action, "forecast")) {
   results <- lapply(payload$jobs, forecast_one)
 } else {
   stop("Unsupported POC 1 worker action")

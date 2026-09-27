@@ -92,8 +92,13 @@ def worker_resource_snapshot(dask_worker: Any = None) -> dict[str, Any]:
 
 
 def _run_r(payload: dict[str, Any], timeout: float = 1800.0) -> dict[str, Any]:
+    script = (
+        "src/r/04_forecast_auto_arima.R"
+        if payload.get("action") == "forecast"
+        else "src/r/02_preprocess_series.R"
+    )
     completed = subprocess.run(
-        ["Rscript", str(ROOT / "R/poc1_worker.R")],
+        ["Rscript", str(ROOT / script)],
         cwd=ROOT,
         input=json.dumps(payload),
         check=True,

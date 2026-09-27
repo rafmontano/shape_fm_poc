@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import ast
+import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -138,6 +140,69 @@ class ExecutionProfileTests(unittest.TestCase):
 
 
 class PersistentWorkerTests(unittest.TestCase):
+    def test_relocated_r_workers_preserve_json_contracts(self) -> None:
+        root = Path(__file__).parents[3]
+        clean_payload = {
+            "action": "clean",
+            "jobs": [
+                {
+                    "id": "identity",
+                    "context": [1, None, 3, 4],
+                    "method": "identity",
+                    "seasonality": 1,
+                },
+                {
+                    "id": "tsclean",
+                    "context": [1, 2, 100, 4, 5, 6, 7, 8],
+                    "method": "tsclean",
+                    "seasonality": 1,
+                },
+            ],
+        }
+        forecast_payload = {
+            "action": "forecast",
+            "jobs": [
+                {
+                    "id": "forecast",
+                    "context": list(range(1, 13)),
+                    "horizon": 3,
+                    "seasonality": 1,
+                }
+            ],
+        }
+
+        responses = []
+        for script, payload in (
+            ("src/r/02_preprocess_series.R", clean_payload),
+            ("src/r/04_forecast_auto_arima.R", forecast_payload),
+        ):
+            completed = subprocess.run(
+                ["Rscript", script],
+                cwd=root,
+                input=json.dumps(payload),
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            responses.append(json.loads(completed.stdout))
+
+        clean, forecast = responses
+        self.assertEqual(
+            clean["results"],
+            [
+                {"id": "identity", "values": [1, 3, 4]},
+                {"id": "tsclean", "values": list(range(1, 9))},
+            ],
+        )
+        expected = [13, 14, 15]
+        self.assertEqual(forecast["results"][0]["mean"], expected)
+        self.assertEqual(forecast["results"][0]["median"], expected)
+        self.assertEqual(forecast["results"][0]["quantiles"], [expected] * 9)
+        for response in responses:
+            self.assertEqual(set(response), {"results", "packages"})
+            self.assertEqual(set(response["packages"]), {"R", "forecast", "jsonlite"})
+
     def test_multiple_batches_use_exactly_one_model_load(self) -> None:
         script = """\
 import json, sys
