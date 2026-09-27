@@ -1018,6 +1018,7 @@ class POC1Coordinator:
                     ),
                     require_gpu=stage == 4,
                     expected_gpu_name=expected_gpu_name,
+                    expected_gpu_workers=settings.dask_expected_gpu_workers,
                 )
             except BaseException:
                 dask_client.close()

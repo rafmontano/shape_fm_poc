@@ -378,6 +378,8 @@ class AcceptanceReadinessTests(unittest.TestCase):
             },
         )
         budget = _memory_budget()
+        self.assertEqual(UBUNTU_CPU_MEMORY_GIB, 2)
+        self.assertEqual(UBUNTU_GPU_MEMORY_GIB, 4)
         self.assertEqual(
             budget["ubuntu"]["configured_worker_memory_ceiling_bytes"],
             90 * GIB,

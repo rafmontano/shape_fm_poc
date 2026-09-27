@@ -60,6 +60,7 @@ class ExecutionSettings:
     dask_scheduler_address: str | None = None
     dask_timeout_seconds: float = 60.0
     dask_expected_workers: int = 1
+    dask_expected_gpu_workers: int = 1
     dask_max_in_flight: int = 8
     dask_retries: int = 2
 
@@ -68,8 +69,12 @@ class ExecutionSettings:
             raise ValueError("execution mode must be sequential, local, or dask")
         if self.dask_timeout_seconds <= 0:
             raise ValueError("Dask timeout must be positive")
-        if self.dask_expected_workers < 1 or self.dask_max_in_flight < 1:
-            raise ValueError("Dask worker and in-flight limits must be positive")
+        if (
+            self.dask_expected_workers < 1
+            or self.dask_expected_gpu_workers < 1
+            or self.dask_max_in_flight < 1
+        ):
+            raise ValueError("Dask worker, GPU-worker, and in-flight limits must be positive")
         if self.dask_retries < 0:
             raise ValueError("Dask retries cannot be negative")
 

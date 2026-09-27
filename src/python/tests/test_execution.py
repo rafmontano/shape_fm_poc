@@ -8,7 +8,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from util.execution_calibration import (
     CALIBRATION_CANDIDATES,
@@ -24,7 +24,11 @@ from util.execution_profiles import (
     resolve_execution_profile,
     system_hardware,
 )
-from util.experiment_execution import _length_aware_batches, expected_task_counts
+from util.experiment_execution import (
+    POC1Coordinator,
+    _length_aware_batches,
+    expected_task_counts,
+)
 
 
 class ExecutionProfileTests(unittest.TestCase):
@@ -93,13 +97,52 @@ class ExecutionProfileTests(unittest.TestCase):
             mode="dask",
             dask_scheduler_address="tcp://scheduler:8786",
             dask_expected_workers=7,
+            dask_expected_gpu_workers=3,
             dask_max_in_flight=12,
             dask_retries=2,
         )
         self.assertEqual(settings.mode, "dask")
         self.assertEqual(settings.dask_expected_workers, 7)
+        self.assertEqual(settings.dask_expected_gpu_workers, 3)
+        self.assertEqual(settings.to_dict()["dask_expected_gpu_workers"], 3)
         with self.assertRaisesRegex(ValueError, "execution mode"):
             ExecutionSettings(mode="remote")
+        with self.assertRaisesRegex(ValueError, "GPU-worker"):
+            ExecutionSettings(dask_expected_gpu_workers=0)
+
+    def test_run_gate_propagates_expected_gpu_worker_count_to_validation(self) -> None:
+        coordinator = object.__new__(POC1Coordinator)
+        coordinator.root = Path(__file__).resolve().parents[3]
+        coordinator.config = {}
+        coordinator.execution_hardware = MagicMock(return_value={})
+        profile = resolve_execution_profile("sequential_safe")
+        settings = ExecutionSettings(
+            mode="dask",
+            dask_scheduler_address="tcp://scheduler:8786",
+            dask_expected_workers=35,
+            dask_expected_gpu_workers=15,
+        )
+        client = MagicMock()
+        with (
+            patch("distributed.Client", return_value=client),
+            patch(
+                "util.distributed_execution.validate_cluster",
+                side_effect=RuntimeError("validation sentinel"),
+            ) as validate,
+            patch(
+                "util.experiment_execution.subprocess.run",
+                return_value=MagicMock(stdout="revision\n"),
+            ),
+            self.assertRaisesRegex(RuntimeError, "validation sentinel"),
+        ):
+            coordinator.run_gate(
+                "experiment",
+                4,
+                execution=profile,
+                execution_settings=settings,
+            )
+        self.assertEqual(validate.call_args.kwargs["expected_gpu_workers"], 15)
+        client.close.assert_called_once()
 
     def test_full_m4_daily_task_counts(self) -> None:
         counts = expected_task_counts(4_227)

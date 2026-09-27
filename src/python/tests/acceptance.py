@@ -44,8 +44,8 @@ MAC_MEMORY_HEADROOM_BYTES = 3 * GIB
 UBUNTU_MEMORY_HEADROOM_BYTES = 16 * GIB
 GPU_MEMORY_HEADROOM_BYTES = 4 * GIB
 MAC_CPU_MEMORY_GIB = 2
-UBUNTU_CPU_MEMORY_GIB = 4
-UBUNTU_GPU_MEMORY_GIB = 2
+UBUNTU_CPU_MEMORY_GIB = 2
+UBUNTU_GPU_MEMORY_GIB = 4
 PERSISTENT_UNSAFE_SAMPLES = 3
 
 
@@ -1290,6 +1290,7 @@ def run_acceptance(
             dask_scheduler_address=cluster.scheduler_address,
             dask_timeout_seconds=180,
             dask_expected_workers=EXPECTED_WORKERS,
+            dask_expected_gpu_workers=UBUNTU_GPU_WORKERS,
             dask_max_in_flight=profile.dask_max_in_flight or MAX_IN_FLIGHT,
             dask_retries=2,
         )
