@@ -44,8 +44,8 @@ The target cluster contains 35 Dask workers:
 
 At least 15 Chronos batches may be in flight. Scientific batches are not pinned
 to transient Dask addresses; acceptance instead requires all 15 logical GPU
-workers to contribute. The configured Ubuntu worker ceilings are 60 GiB for
-CPU workers (15 × 4 GiB) plus 30 GiB for logical GPU workers (15 × 2 GiB), or
+workers to contribute. The configured Ubuntu worker ceilings are 30 GiB for
+CPU workers (15 × 2 GiB) plus 60 GiB for logical GPU workers (15 × 4 GiB), or
 90 GiB combined. Runtime gates preserve at least 16 GiB host headroom and 4 GiB
 GPU-memory headroom and reject swap growth, spilling, worker replacement,
 failed tasks, or retries.

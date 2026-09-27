@@ -1,3 +1,12 @@
+# ==============================================================================
+# execution_profiles.py
+#
+# Purpose: Hardware-aware local execution profiles and resource provenance.
+# Inputs: Named profile JSON, per-run overrides, host metrics, and Chronos bridge requests.
+# Outputs: Validated profiles/settings, hardware snapshots, and managed Chronos subprocess responses.
+# Run from: Imported; not run directly.
+# ==============================================================================
+
 """Hardware-aware local execution profiles and resource provenance."""
 
 from __future__ import annotations
@@ -16,7 +25,9 @@ from typing import Any, Literal
 from .import_execution import repository_root
 
 
+# GIB: number of bytes in one gibibyte, used for binary memory limits.
 GIB = 1024**3
+# WORKER_FIELDS: execution-setting names accepted as worker-count overrides.
 WORKER_FIELDS = (
     "cleaning_workers",
     "transformation_workers",
@@ -30,6 +41,7 @@ WORKER_FIELDS = (
 
 @dataclass(frozen=True)
 class ExecutionProfile:
+    """Hardware profile: stage/process counts, overlap policy, GiB safety floors, and optional Dask limits."""
     name: str
     required_accelerator: str | None
     expected_accelerator_name: str | None
@@ -49,12 +61,13 @@ class ExecutionProfile:
     dask_max_in_flight: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
+        """Return this object's dict representation for serialization and provenance comparison."""
         return asdict(self)
 
 
 @dataclass(frozen=True)
 class ExecutionSettings:
-    """Invocation-only execution routing, excluded from scientific identity."""
+    """Non-scientific run controls for sequential, local, or Dask routing and positive worker/in-flight limits."""
 
     mode: Literal["sequential", "local", "dask"] = "local"
     dask_scheduler_address: str | None = None
@@ -65,6 +78,7 @@ class ExecutionSettings:
     dask_retries: int = 2
 
     def __post_init__(self) -> None:
+        """Reject unsupported modes, nonpositive Dask limits, and negative retry counts at construction."""
         if self.mode not in {"sequential", "local", "dask"}:
             raise ValueError("execution mode must be sequential, local, or dask")
         if self.dask_timeout_seconds <= 0:
@@ -79,10 +93,12 @@ class ExecutionSettings:
             raise ValueError("Dask retries cannot be negative")
 
     def to_dict(self) -> dict[str, Any]:
+        """Return this object's dict representation for serialization and provenance comparison."""
         return asdict(self)
 
 
 def load_execution_profiles(path: Path | None = None) -> dict[str, ExecutionProfile]:
+    """Parse profile JSON at `path`, or the repository default, keyed by profile name."""
     path = path or repository_root() / "config/execution_profiles.json"
     raw = json.loads(path.read_text(encoding="utf-8"))
     return {name: ExecutionProfile(name=name, **values) for name, values in raw.items()}
@@ -91,6 +107,7 @@ def load_execution_profiles(path: Path | None = None) -> dict[str, ExecutionProf
 def resolve_execution_profile(
     name: str, overrides: dict[str, Any] | None = None
 ) -> tuple[ExecutionProfile, dict[str, Any]]:
+    """Apply validated runtime overrides to a named profile and return it with the applied override map."""
     profiles = load_execution_profiles()
     if name not in profiles:
         raise ValueError(
@@ -134,6 +151,7 @@ def resolve_execution_profile(
 
 
 def _sysctl_int(name: str) -> int | None:
+    """Read an integer macOS sysctl, returning `None` when unavailable or malformed."""
     try:
         return int(
             subprocess.run(
@@ -149,6 +167,7 @@ def _sysctl_int(name: str) -> int | None:
 
 
 def _linux_memory() -> dict[str, int]:
+    """Read Linux memory and swap counters from `/proc/meminfo`, converted to bytes."""
     values: dict[str, int] = {}
     try:
         for line in Path("/proc/meminfo").read_text(encoding="utf-8").splitlines():
@@ -165,6 +184,7 @@ def _linux_memory() -> dict[str, int]:
 
 
 def _mac_memory() -> dict[str, int]:
+    """Combine macOS sysctl, vm_stat, and swapusage data into byte-valued memory counters."""
     total = _sysctl_int("hw.memsize") or 0
     available = 0
     try:
@@ -213,6 +233,7 @@ def _mac_memory() -> dict[str, int]:
 
 
 def physical_cpu_count() -> int | None:
+    """Return the detected physical core count, or `None` when platform probes fail."""
     if platform.system() == "Darwin":
         return _sysctl_int("hw.physicalcpu")
     if platform.system() == "Linux":
@@ -236,6 +257,7 @@ def physical_cpu_count() -> int | None:
 
 
 def cpu_model() -> str | None:
+    """Return the platform-specific CPU model string, or `None` when detection fails."""
     if platform.system() == "Linux":
         try:
             for line in Path("/proc/cpuinfo").read_text(encoding="utf-8").splitlines():
@@ -258,6 +280,7 @@ def cpu_model() -> str | None:
 
 
 def system_hardware() -> dict[str, Any]:
+    """Snapshot OS, architecture, CPU identity/counts, and current host memory counters."""
     return {
         "operating_system": platform.system(),
         "operating_system_release": platform.release(),
@@ -271,10 +294,12 @@ def system_hardware() -> dict[str, Any]:
 
 
 def system_memory() -> dict[str, int]:
+    """Return current Linux or macOS memory counters in bytes; unsupported systems yield an empty mapping."""
     return _mac_memory() if platform.system() == "Darwin" else _linux_memory()
 
 
 def validate_system_memory(profile: ExecutionProfile, hardware: dict[str, Any]) -> None:
+    """Raise when measured available memory is below the profile's GiB safety floor."""
     available = hardware["system_memory"].get("available_bytes", 0)
     threshold = int(profile.system_memory_min_available_gib * GIB)
     if available and available < threshold:
@@ -285,7 +310,7 @@ def validate_system_memory(profile: ExecutionProfile, hardware: dict[str, Any]) 
 
 
 class PersistentChronosWorker:
-    """Coordinator-owned client for one model-loaded accelerator subprocess."""
+    """Coordinator-owned Chronos bridge client retaining process/readiness state, bounded stderr diagnostics, and its capture thread for repeated forecast requests."""
 
     def __init__(
         self,
@@ -293,6 +318,7 @@ class PersistentChronosWorker:
         startup_timeout: float = 300.0,
         stderr_tail_bytes: int = 32 * 1024,
     ):
+        """Configure the bridge command, startup timeout, and maximum retained stderr bytes."""
         self.command = command
         self.startup_timeout = startup_timeout
         self.stderr_tail_bytes = stderr_tail_bytes
@@ -304,10 +330,12 @@ class PersistentChronosWorker:
 
     @property
     def stderr_tail(self) -> str:
+        """Return the most recent captured worker stderr lines for failure diagnostics."""
         with self._stderr_lock:
             return self._stderr_tail.decode(errors="replace")
 
     def _drain_stderr(self, stream: Any) -> None:
+        """Continuously capture subprocess stderr into the bounded diagnostic buffer."""
         try:
             while True:
                 chunk = stream.buffer.read1(4096)
@@ -321,6 +349,7 @@ class PersistentChronosWorker:
             return
 
     def _diagnostic(self, message: str, wait_for_stderr: bool = False) -> str:
+        """Attach process status and captured stderr to a worker protocol error."""
         thread = self._stderr_thread
         if wait_for_stderr and thread is not None:
             thread.join(timeout=1)
@@ -328,6 +357,7 @@ class PersistentChronosWorker:
         return f"{message}\nstderr tail:\n{tail}" if tail else message
 
     def start(self) -> dict[str, Any]:
+        """Launch the Chronos bridge once, verify its ready message, and return worker metadata."""
         if self.process is not None:
             raise RuntimeError("Chronos worker is already running")
         self.process = subprocess.Popen(
@@ -362,6 +392,7 @@ class PersistentChronosWorker:
         return message
 
     def _read(self, timeout: float) -> dict[str, Any]:
+        """Read and decode one JSON response before `timeout`, failing on EOF or protocol errors."""
         if self.process is None or self.process.stdout is None:
             raise RuntimeError("Chronos worker is not running")
         selector = selectors.DefaultSelector()
@@ -385,6 +416,7 @@ class PersistentChronosWorker:
         return json.loads(line)
 
     def request(self, payload: dict[str, Any], timeout: float = 1800.0) -> dict[str, Any]:
+        """Send one forecast payload to the persistent worker and return its response."""
         if self.process is None or self.process.stdin is None:
             raise RuntimeError("Chronos worker is not running")
         self.process.stdin.write(json.dumps(payload, separators=(",", ":")) + "\n")
@@ -395,6 +427,7 @@ class PersistentChronosWorker:
         return response
 
     def close(self, force: bool = False) -> None:
+        """Request bridge shutdown, terminate if necessary, and join stderr capture; safe after prior closure."""
         process, self.process = self.process, None
         if process is None:
             return
@@ -420,8 +453,10 @@ class PersistentChronosWorker:
                 stream.close()
 
     def __enter__(self) -> "PersistentChronosWorker":
+        """Start the bridge and return this context-managed client."""
         self.start()
         return self
 
     def __exit__(self, *_: object) -> None:
+        """Close the bridge when leaving its coordinator-owned context."""
         self.close()

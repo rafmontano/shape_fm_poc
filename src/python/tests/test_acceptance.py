@@ -1,3 +1,14 @@
+# ==============================================================================
+# test_acceptance.py
+#
+# Purpose: Verify acceptance orchestration, memory budgets, evidence validation, and restart-report decisions without running the two-machine workload.
+# Inputs: unittest fixtures, temporary databases/files, deterministic synthetic records, and mocked process or cluster boundaries.
+# Outputs: unittest pass/fail assertions and captured diagnostics; no production artifacts or external services.
+# Run from: PYTHONPATH=src/python .tools/uv/uv run --locked --no-sync python -m unittest tests.test_acceptance
+# ==============================================================================
+
+"""Verify acceptance orchestration, memory budgets, evidence validation, and restart-report decisions without running the two-machine workload."""
+
 import json
 import tempfile
 import unittest
@@ -26,7 +37,9 @@ from util.distributed_execution import CHRONOS_GPU_RESOURCE
 
 
 class AcceptanceReadinessTests(unittest.TestCase):
+    """Verify acceptance evidence, resource safety, resumability, and report decisions."""
     def setUp(self):
+        """Build a Mac/Ubuntu topology with the required logical GPU workers."""
         gpu_workers = [f"gpu-worker-{index}" for index in range(UBUNTU_GPU_WORKERS)]
         self.topology = {
             "topology": {
@@ -51,6 +64,7 @@ class AcceptanceReadinessTests(unittest.TestCase):
         }
 
     def _evidence(self, ubuntu_resource="CPU"):
+        """Build host and GPU-worker task contributions, optionally changing Ubuntu's resource."""
         return {
             "task_contribution_by_host_and_resource": [
                 {
@@ -78,6 +92,7 @@ class AcceptanceReadinessTests(unittest.TestCase):
         }
 
     def _sample(self, *, mac_available=4 * GIB, spill=0, swap=0):
+        """Build a resource sample with configurable Mac headroom, spill, and swap usage."""
         return {
             "workers": {
                 "mac-worker": {
@@ -119,6 +134,7 @@ class AcceptanceReadinessTests(unittest.TestCase):
         }
 
     def test_requires_mac_and_ubuntu_cpu_contribution(self):
+        """Contribution checks require both CPU hosts and the exact GPU task distribution."""
         result = _contribution_checks(self._evidence(), self.topology)
         self.assertTrue(result["passed"])
         self.assertEqual(result["mac_cpu_completed_tasks"], 10)
@@ -134,6 +150,7 @@ class AcceptanceReadinessTests(unittest.TestCase):
         self.assertFalse(_contribution_checks(wrong_worker, self.topology)["passed"])
 
     def test_rejects_gpu_only_ubuntu_contribution(self):
+        """GPU work on Ubuntu does not satisfy its required CPU contribution."""
         result = _contribution_checks(
             self._evidence(CHRONOS_GPU_RESOURCE), self.topology
         )
@@ -141,6 +158,7 @@ class AcceptanceReadinessTests(unittest.TestCase):
         self.assertEqual(result["ubuntu_cpu_completed_tasks"], 0)
 
     def test_rejects_zero_samples_and_unsafe_resources(self):
+        """Resource validation fails without samples or with pressure, spill, swap, or worker loss."""
         empty = _summarize_resources([], [], self.topology)
         self.assertFalse(empty["passed"])
         self.assertEqual(empty["valid_sample_count"], 0)
@@ -164,6 +182,7 @@ class AcceptanceReadinessTests(unittest.TestCase):
         self.assertEqual(replacement["worker_replacements_or_removals"], 1)
 
     def test_writes_failure_report(self):
+        """Failure reports preserve phase diagnostics and mark pre-scientific databases reusable."""
         with tempfile.TemporaryDirectory() as directory:
             report_path = Path(directory) / "report.json"
             report = {"initial_run": None, "restart_run": None, "failure_history": []}
@@ -184,6 +203,7 @@ class AcceptanceReadinessTests(unittest.TestCase):
             self.assertEqual(written["initial_run"]["resources"]["sample_count"], 1)
 
     def test_run_writes_failure_report_after_database_work_starts(self):
+        """Import failures are recorded after preflight and before cluster startup."""
         root = Path(__file__).resolve().parents[3]
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "acceptance.duckdb"
@@ -215,6 +235,7 @@ class AcceptanceReadinessTests(unittest.TestCase):
             cluster.start.assert_not_called()
 
     def test_unsafe_scientific_failure_cannot_reuse_database(self):
+        """A resource-validation failure makes the scientific database ineligible for resume."""
         root = Path(__file__).resolve().parents[3]
         with tempfile.TemporaryDirectory() as directory:
             database = (Path(directory) / "acceptance.duckdb").resolve()
@@ -247,6 +268,7 @@ class AcceptanceReadinessTests(unittest.TestCase):
                 )
 
     def test_pre_scientific_failure_can_resume_matching_database(self):
+        """A matching database can resume after failure before scientific execution."""
         root = Path(__file__).resolve().parents[3]
         with tempfile.TemporaryDirectory() as directory:
             database = (Path(directory) / "acceptance.duckdb").resolve()
@@ -288,6 +310,7 @@ class AcceptanceReadinessTests(unittest.TestCase):
             cluster.preflight.assert_called_once()
 
     def test_nonmatching_report_is_never_overwritten(self):
+        """A report owned by another database or revision remains unchanged."""
         root = Path(__file__).resolve().parents[3]
         with tempfile.TemporaryDirectory() as directory:
             database = (Path(directory) / "fresh.duckdb").resolve()
@@ -309,6 +332,7 @@ class AcceptanceReadinessTests(unittest.TestCase):
             self.assertEqual(report_path.read_bytes(), before)
 
     def test_preserves_initial_evidence_when_recording_restart(self):
+        """Recording restart success retains initial evidence and finalizes acceptance."""
         report = _report_document(
             None,
             database=Path("acceptance.duckdb").resolve(),
@@ -341,6 +365,7 @@ class AcceptanceReadinessTests(unittest.TestCase):
         self.assertFalse(report["database_reusable"])
 
     def test_restart_uses_retained_initial_gpu_worker_topology(self):
+        """Restart contribution is checked against the initial GPU worker identities."""
         initial_topology = self.topology
         current_topology = {
             **self.topology,
@@ -364,6 +389,7 @@ class AcceptanceReadinessTests(unittest.TestCase):
         )
 
     def test_profile_records_actual_topology_overrides(self):
+        """The acceptance profile records worker overrides within both hosts' memory budgets."""
         profile, overrides = _resolve_acceptance_profile()
         self.assertEqual(profile.dask_mac_cpu_workers, 5)
         self.assertEqual(profile.dask_ubuntu_cpu_workers, 15)

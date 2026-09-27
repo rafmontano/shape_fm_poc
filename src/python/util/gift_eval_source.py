@@ -1,3 +1,12 @@
+# ==============================================================================
+# gift_eval_source.py
+#
+# Purpose: Bounded, read-only streaming adapter for GIFT-Eval Arrow source data.
+# Inputs: A pinned GIFT-Eval Arrow snapshot directory, expected frequency, and optional row limit.
+# Outputs: Source file provenance/metadata and validated finite univariate series streamed in source order.
+# Run from: Imported; not run directly.
+# ==============================================================================
+
 """Bounded, read-only streaming adapter for GIFT-Eval Arrow source data."""
 
 from __future__ import annotations
@@ -15,12 +24,15 @@ from .configuration import ImportValidationError, json_fingerprint
 from .provenance import sha256_file
 
 
+# SOURCE_ARROW_NAME: pinned Arrow stream filename required from the source snapshot.
 SOURCE_ARROW_NAME = "data-00000-of-00001.arrow"
+# SOURCE_METADATA_NAMES: complete tuple of Arrow and metadata files required from the source snapshot.
 SOURCE_METADATA_NAMES = (SOURCE_ARROW_NAME, "dataset_info.json", "state.json")
 
 
 @dataclass(frozen=True)
 class SourceSeries:
+    """One validated Arrow row for import: zero-based source row, source item ID, first-observation timestamp, source frequency code, and finite target observations."""
     source_row: int
     source_series_id: str
     start_timestamp: Any
@@ -29,6 +41,7 @@ class SourceSeries:
 
 
 def source_fingerprint(source_dir: Path) -> dict[str, Any]:
+    """Return byte sizes and SHA-256 digests for every required source file plus their aggregate digest."""
     files: dict[str, Any] = {}
     for name in SOURCE_METADATA_NAMES:
         path = source_dir / name
@@ -39,6 +52,7 @@ def source_fingerprint(source_dir: Path) -> dict[str, Any]:
 
 
 def source_metadata(source_dir: Path) -> dict[str, Any]:
+    """Load and return the snapshot's dataset-info and state JSON keyed by filename."""
     metadata: dict[str, Any] = {}
     for name in ("dataset_info.json", "state.json"):
         with (source_dir / name).open("r", encoding="utf-8") as stream:
@@ -47,6 +61,7 @@ def source_metadata(source_dir: Path) -> dict[str, Any]:
 
 
 def _validate_schema(schema: pa.Schema) -> None:
+    """Require the exact item ID, second timestamp, frequency, and float32-list Arrow schema."""
     expected_names = ["item_id", "start", "freq", "target"]
     if schema.names != expected_names:
         raise ImportValidationError(

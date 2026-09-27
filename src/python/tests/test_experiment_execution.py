@@ -1,3 +1,14 @@
+# ==============================================================================
+# test_experiment_execution.py
+#
+# Purpose: Verify experiment planning, stage gates, restart semantics, task accounting, and forecast retrieval against temporary DuckDB state.
+# Inputs: unittest fixtures, temporary databases/files, deterministic synthetic records, and mocked process or cluster boundaries.
+# Outputs: unittest pass/fail assertions and captured diagnostics; no production artifacts or external services.
+# Run from: PYTHONPATH=src/python .tools/uv/uv run --locked --no-sync python -m unittest tests.test_experiment_execution
+# ==============================================================================
+
+"""Verify experiment planning, stage gates, restart semantics, task accounting, and forecast retrieval against temporary DuckDB state."""
+
 import json
 import shutil
 import tempfile
@@ -20,11 +31,14 @@ from util.experiment_execution import (
 from util.transformations import inverse, transform
 
 
+# Expected task rows per stage for 100 series across preprocessing and model variants.
 EXPECTED_100_TASK_COUNTS = {2: 200, 3: 400, 4: 800, 5: 1_200, 6: 12}
 
 
 class TransformationTests(unittest.TestCase):
+    """Verify scientific identity and reversible deterministic transformations."""
     def test_provisional_selection_does_not_change_scientific_identity(self):
+        """Provisional candidate selection is excluded from the scientific fingerprint."""
         first = {"models": {"a": {"revision": "1"}}, "provisional_candidate": "a"}
         second = {"models": {"a": {"revision": "1"}}, "provisional_candidate": "b"}
         self.assertEqual(
@@ -33,11 +47,13 @@ class TransformationTests(unittest.TestCase):
         )
 
     def test_submission_metadata_does_not_change_scientific_identity(self):
+        """Submission metadata is excluded from scientific configuration."""
         first = {"contract_version": "1", "submission_metadata": {"org": "first"}}
         second = {"contract_version": "1", "submission_metadata": {"org": "second"}}
         self.assertEqual(scientific_configuration(first), scientific_configuration(second))
 
     def test_minmax_standardize_round_trip_is_ordered_and_exact_within_tolerance(self):
+        """Min-max standardization restores each input in order within numeric tolerance."""
         source = (-7.5, 2.0, 11.25, 4.5)
         result = transform(source, "minmax_then_standardize")
         restored = inverse(result.values, "minmax_then_standardize", result.parameters)
@@ -45,6 +61,7 @@ class TransformationTests(unittest.TestCase):
             self.assertAlmostEqual(expected, actual, places=12)
 
     def test_constant_series_has_deterministic_round_trip(self):
+        """A constant series maps to zeros and every inverse value maps to its constant."""
         result = transform([3.25] * 5, "minmax_then_standardize")
         self.assertEqual(result.values, (0.0,) * 5)
         self.assertEqual(
@@ -53,6 +70,7 @@ class TransformationTests(unittest.TestCase):
         )
 
     def test_future_actuals_cannot_change_fitted_parameters(self):
+        """Transformation parameters depend only on context and are deterministic."""
         context = [1.0, 4.0, 9.0]
         first = transform(context, "minmax_then_standardize")
         second = transform(context, "minmax_then_standardize")
@@ -61,6 +79,7 @@ class TransformationTests(unittest.TestCase):
         self.assertEqual(first, second)
 
     def test_sequential_and_two_worker_transform_paths_are_equal(self):
+        """Sequential and two-process transformation return identical ordered results."""
         jobs = [([float(i), float(i + 2), float(i - 3)], "minmax_then_standardize") for i in range(8)]
         self.assertEqual(
             _run_parallel(_transform_job, jobs, 1),
@@ -69,7 +88,9 @@ class TransformationTests(unittest.TestCase):
 
 
 class ExternalBatchTests(unittest.TestCase):
+    """Verify forecast combination and external batch execution contracts."""
     def test_equal_weight_combination_rearranges_crossed_quantiles(self):
+        """Equal-weight combination sorts crossed averaged quantiles and flags the repair."""
         result = _combine_job(
             {
                 "left": {
@@ -90,6 +111,7 @@ class ExternalBatchTests(unittest.TestCase):
         self.assertTrue(result["quantiles_rearranged"])
 
     def test_equal_weight_combination_preserves_ordered_quantiles(self):
+        """Already ordered averaged quantiles remain unflagged."""
         result = _combine_job(
             {
                 "left": {
@@ -108,10 +130,12 @@ class ExternalBatchTests(unittest.TestCase):
         self.assertFalse(result["quantiles_rearranged"])
 
     def test_batches_are_bounded_and_completed_batches_survive_later_failure(self):
+        """Batching respects capacity and yields completed work before a later failure."""
         batches = _batches(list(range(7)), 3)
         self.assertEqual([len(batch) for batch in batches], [3, 3, 1])
 
         def fail_second(batch):
+            """Raise on the batch beginning at three and echo all other batches."""
             if batch[0] == 3:
                 raise RuntimeError("worker failed")
             return batch
@@ -123,6 +147,7 @@ class ExternalBatchTests(unittest.TestCase):
         self.assertEqual(completed, [[0, 1, 2]])
 
     def test_external_batches_have_identical_sequential_and_parallel_results(self):
+        """Sequential and two-worker external execution produce the same batch sums."""
         batches = _batches(list(range(10)), 2)
         self.assertEqual(
             list(_run_external_batches(sum, batches, workers=1)),
@@ -131,7 +156,9 @@ class ExternalBatchTests(unittest.TestCase):
 
 
 class ContractValidationTests(unittest.TestCase):
+    """Verify official benchmark and submission metadata contracts."""
     def test_multi_window_configuration_is_rejected(self):
+        """Official execution accepts exactly one evaluation window."""
         coordinator = object.__new__(POC1Coordinator)
         coordinator.config = {"benchmark": {"configuration": "m4_daily/D/short"}}
         with self.assertRaisesRegex(RuntimeError, "exactly one"):
@@ -140,6 +167,7 @@ class ContractValidationTests(unittest.TestCase):
             )
 
     def test_submission_metadata_is_required_and_validated(self):
+        """Submission metadata is mandatory and supports valid draft and approved forms."""
         with self.assertRaisesRegex(ValueError, "missing submission metadata"):
             validated_submission_metadata({})
         metadata = {
@@ -178,15 +206,19 @@ class ContractValidationTests(unittest.TestCase):
 
 
 class TransactionTests(unittest.TestCase):
+    """Exercise task transactions and retries against a temporary coordinator database."""
     def setUp(self):
+        """Create a coordinator backed by a test-owned temporary database."""
         self.directory = Path(tempfile.mkdtemp())
         self.coordinator = POC1Coordinator(self.directory / "poc1.duckdb")
 
     def tearDown(self):
+        """Close the coordinator and remove its temporary directory."""
         self.coordinator.close()
         shutil.rmtree(self.directory)
 
     def _insert_benchmark_and_instances(self):
+        """Seed one benchmark and two forecast instances for stage tests."""
         connection = self.coordinator.connection
         connection.execute(
             """INSERT INTO benchmark_configurations
@@ -210,6 +242,7 @@ class TransactionTests(unittest.TestCase):
             )
 
     def test_failed_result_transaction_does_not_complete_task(self):
+        """A failed result callback rolls back writes and permits a second successful attempt."""
         connection = self.coordinator.connection
         connection.execute(
             """INSERT INTO experiment_tasks
@@ -219,6 +252,7 @@ class TransactionTests(unittest.TestCase):
         attempt = self.coordinator._start_tasks([("task", None, None, None)], invocation)["task"]
 
         def invalid_insert():
+            """Insert an export, then fail so the surrounding transaction must roll back."""
             connection.execute(
                 "INSERT INTO submission_exports VALUES ('export', 'experiment', 'model', 'path', 'revision', '{}', false, current_timestamp)"
             )
@@ -253,6 +287,7 @@ class TransactionTests(unittest.TestCase):
         )
 
     def test_stage2_batched_failure_preserves_completed_batch_and_retries_rest(self):
+        """Stage 2 retains its first batch and retries only the failed preprocessing task."""
         self._insert_benchmark_and_instances()
         connection = self.coordinator.connection
         for index in range(2):
@@ -265,6 +300,7 @@ class TransactionTests(unittest.TestCase):
         calls = 0
 
         def failing_worker(payload):
+            """Echo cleaned contexts except for a simulated second-batch failure."""
             nonlocal calls
             calls += 1
             if calls == 2:
@@ -323,6 +359,7 @@ class TransactionTests(unittest.TestCase):
         )
 
     def test_stage4_batched_failure_preserves_forecast_and_retries_rest(self):
+        """Stage 4 retains its first forecast and retries only the failed forecast task."""
         self._insert_benchmark_and_instances()
         connection = self.coordinator.connection
         connection.execute(
@@ -352,6 +389,7 @@ class TransactionTests(unittest.TestCase):
         calls = 0
 
         def worker(payload):
+            """Return a constant forecast except for a simulated second-batch failure."""
             nonlocal calls
             calls += 1
             if calls == 2:
@@ -392,6 +430,7 @@ class TransactionTests(unittest.TestCase):
         )
 
     def test_chronos_oom_restarts_splits_and_preserves_successes(self):
+        """Chronos restarts after OOM, splits the batch, and records retry metadata."""
         self._insert_benchmark_and_instances()
         connection = self.coordinator.connection
         connection.execute(
@@ -420,13 +459,16 @@ class TransactionTests(unittest.TestCase):
             )
 
         class OOMThenSuccessWorker:
+            """Simulate one OOM followed by successful constant forecasts; track calls."""
             starts = 0
             requests = 0
 
             def __init__(self, command):
+                """Retain the worker command supplied by the coordinator."""
                 self.command = command
 
             def start(self):
+                """Count a start and report deterministic accelerator readiness metadata."""
                 type(self).starts += 1
                 return {
                     "type": "ready",
@@ -437,6 +479,7 @@ class TransactionTests(unittest.TestCase):
                 }
 
             def request(self, payload):
+                """Return OOM once, then one constant forecast for every requested job."""
                 type(self).requests += 1
                 if type(self).requests == 1:
                     return {
@@ -465,6 +508,7 @@ class TransactionTests(unittest.TestCase):
                 }
 
             def close(self, force=False):
+                """Accept coordinator cleanup without owning external resources."""
                 return None
 
         self.coordinator.execution_hardware = lambda profile: {"accelerator_backend": "test"}
@@ -487,7 +531,9 @@ class TransactionTests(unittest.TestCase):
 
 
 class ScopeExpansionTests(unittest.TestCase):
+    """Exercise smoke, limited, and full planning against seeded dataset state."""
     def setUp(self):
+        """Create a coordinator and seed the dataset referenced by generated descriptions."""
         self.directory = Path(tempfile.mkdtemp())
         self.coordinator = POC1Coordinator(self.directory / "poc1.duckdb")
         self.coordinator.connection.execute(
@@ -500,11 +546,13 @@ class ScopeExpansionTests(unittest.TestCase):
         )
 
     def tearDown(self):
+        """Close the coordinator and remove its temporary directory."""
         self.coordinator.close()
         shutil.rmtree(self.directory)
 
     @staticmethod
     def _description(limit: int) -> dict:
+        """Build a GiftEval-style M4 Daily description for the official prefix."""
         return {
             "configuration_name": "m4_daily/D/short",
             "dataset_name": "m4_daily",
@@ -532,10 +580,12 @@ class ScopeExpansionTests(unittest.TestCase):
         }
 
     def _gift_bridge(self, *arguments, **_kwargs):
+        """Emulate the GiftEval bridge by honoring its --limit argument."""
         limit = int(arguments[arguments.index("--limit") + 1])
         return self._description(limit)
 
     def test_series_limit_dry_plan_selects_exact_official_prefix(self):
+        """A 100-series dry plan reports the exact prefix and derived task counts."""
         self.coordinator._gift_bridge = self._gift_bridge
 
         plan = self.coordinator.plan(
@@ -553,6 +603,7 @@ class ScopeExpansionTests(unittest.TestCase):
         )
 
     def test_series_limit_rejects_invalid_unavailable_and_inconsistent_values(self):
+        """Planning rejects invalid limits, unavailable rows, and duplicate prefix series."""
         self.coordinator._gift_bridge = self._gift_bridge
         for value in (0, -1, True, 1.5):
             with self.subTest(value=value):
@@ -562,6 +613,7 @@ class ScopeExpansionTests(unittest.TestCase):
             self.coordinator.plan("m4_daily", series_limit=4_228)
 
         def duplicate_bridge(*arguments, **_kwargs):
+            """Duplicate the final item in the 100-series bridge response."""
             result = self._gift_bridge(*arguments, **_kwargs)
             if int(arguments[arguments.index("--limit") + 1]) == 100:
                 result["instances"][-1]["item_id"] = "0"
@@ -572,6 +624,7 @@ class ScopeExpansionTests(unittest.TestCase):
             self.coordinator.plan("m4_daily", dry_run=True, series_limit=100)
 
     def test_series_limit_expands_smoke_and_replans_without_duplicate_tasks(self):
+        """Limited replanning reuses smoke work, adds tasks once, and records selection."""
         self.coordinator._gift_bridge = self._gift_bridge
         smoke = self.coordinator.plan("smoke")
         self.coordinator.connection.execute(
@@ -639,6 +692,7 @@ class ScopeExpansionTests(unittest.TestCase):
         )
 
     def test_smoke_to_full_preserves_upstream_and_invalidates_evaluation(self):
+        """Full expansion preserves upstream completions but invalidates partial evaluations."""
         self.coordinator._gift_bridge = self._gift_bridge
         smoke = self.coordinator.plan("smoke")
         connection = self.coordinator.connection

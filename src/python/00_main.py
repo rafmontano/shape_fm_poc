@@ -1,4 +1,13 @@
 #!/usr/bin/env python3
+# ==============================================================================
+# 00_main.py
+#
+# Purpose: Single researcher entry point for ShapeFM.
+# Inputs: A plan, status, results, or test subcommand and its database, report, experiment, forecast, or series selectors.
+# Outputs: JSON plan/status/result/acceptance records on stdout; test also persists its DuckDB database and JSON report.
+# Run from: .tools/uv/uv run --locked --no-sync python src/python/00_main.py <plan|status|results|test> [options]
+# ==============================================================================
+
 """Single researcher entry point for ShapeFM."""
 
 from __future__ import annotations
@@ -13,6 +22,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 
+# ROOT: repository root resolved from this source file.
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src/python"))
 
@@ -26,12 +36,16 @@ from util.experiment_execution import (
 from tests.acceptance import SERIES_LIMIT, run_acceptance
 
 
+# DEFAULT_DATABASE: repository-relative default path used when the caller supplies no override.
 DEFAULT_DATABASE = ROOT / "results/poc2_acceptance.duckdb"
+# DEFAULT_PLAN_DATABASE: repository-relative default path used when the caller supplies no override.
 DEFAULT_PLAN_DATABASE = ROOT / "results/poc2_local_plan.duckdb"
+# DEFAULT_REPORT: repository-relative default path used when the caller supplies no override.
 DEFAULT_REPORT = ROOT / "results/poc2_acceptance_report.json"
 
 
 def positive_integer(value: str) -> int:
+    """Parse an argparse value and reject zero, negative, and non-integer series limits."""
     try:
         parsed = int(value)
     except ValueError as exc:
@@ -42,6 +56,7 @@ def positive_integer(value: str) -> int:
 
 
 def _git(*arguments: str) -> str:
+    """Return stripped stdout from a checked, repository-root Git command."""
     return subprocess.run(
         ["git", *arguments],
         cwd=ROOT,
@@ -53,6 +68,7 @@ def _git(*arguments: str) -> str:
 
 
 def invocation_record(action: str, args: argparse.Namespace, database: Path) -> dict[str, Any]:
+    """Capture CLI arguments, Git state, host identity, and the resolved database for result provenance."""
     return {
         "action": action,
         "arguments": {
@@ -76,6 +92,7 @@ def invocation_record(action: str, args: argparse.Namespace, database: Path) -> 
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Define the researcher-facing plan, status, results, and acceptance-test CLI."""
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="action")
 
@@ -103,6 +120,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Dispatch one CLI action, print its JSON record, and return zero on success or one on an expected failure."""
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.action is None:

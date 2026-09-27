@@ -1,4 +1,13 @@
-"""Dependency-heavy checks against the pinned official GIFT-Eval package."""
+# ==============================================================================
+# test_gift_eval_semantics.py
+#
+# Purpose: Verify pinned GIFT-Eval dataset metadata, split, metric, and quantile semantics used by experiment planning.
+# Inputs: unittest fixtures, temporary databases/files, deterministic synthetic records, and mocked process or cluster boundaries.
+# Outputs: unittest pass/fail assertions and captured diagnostics; no production artifacts or external services.
+# Run from: PYTHONPATH=src/python .tools/uv/uv run --locked --no-sync python -m unittest tests.integration.test_gift_eval_semantics
+# ==============================================================================
+
+"""Verify pinned GIFT-Eval dataset metadata, split, metric, and quantile semantics used by experiment planning."""
 
 import json
 import os
@@ -9,7 +18,9 @@ from gift_eval.data import Dataset
 
 
 class GiftEvalSemanticsTests(unittest.TestCase):
+    """Verify pinned GIFT-Eval metadata and temporal split semantics."""
     def test_m4_daily_contract_matches_official_package(self):
+        """M4 Daily configuration and train, validation, and test boundaries match GIFT-Eval."""
         root = Path(__file__).resolve().parents[4]
         source_root = Path(
             os.environ.get("SHAPEFM_GIFT_EVAL_ROOT", root / "data/source/gift_eval")

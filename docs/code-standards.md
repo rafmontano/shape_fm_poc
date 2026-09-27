@@ -238,6 +238,53 @@ preserves their history, so no archive copy is created.
 
 ## Configuration and documentation
 
+### Source documentation
+
+Source documentation is mandatory for every tracked Python and R source or
+test file under `src/python` and `src/r`.
+
+Each file uses the appropriate Python or R comment syntax for this header:
+
+```text
+==============================================================================
+filename
+
+Purpose: One or two short lines explaining why the file exists.
+Inputs:  Files, objects, arguments, environment or standard input consumed.
+Outputs: Files, database changes, returned objects or standard output produced.
+Run from: Exact repository-root command, or “Imported; not run directly.”
+==============================================================================
+```
+
+- Each file begins with a concise comment header naming the filename and its
+  **Purpose**, **Inputs**, **Outputs**, and **Run from** context. Preserve useful
+  Python module docstrings. Utility, package, and test-support modules state
+  `Imported; not run directly.`; only `src/python/00_main.py` is
+  researcher-facing. Executable headers give an exact repository-root command.
+  Executable tests give their exact `unittest` module command using
+  `.tools/uv/uv run --locked --no-sync` and the established `PYTHONPATH` where
+  applicable. R workers describe their stdin execution context accurately.
+- Every named function or method, including private helpers and test methods,
+  has a concise Python docstring or immediately preceding R contract comment.
+  It states purpose, inputs, outputs or side effects, and caller/context where
+  that context is not obvious.
+- Every class, dataclass, or research object documents its purpose,
+  fields/constructor, state produced, and use.
+- Important scientific fields, identifiers, units, and allowed values are
+  explicit.
+- Every important module global has an adjacent concise comment explaining its
+  purpose/source or unit/use. Related constants may share a block only when
+  every name is explicit.
+- Do not document imports or every local variable.
+- Keep documentation simple, concise, and technical. Prefer one short line per
+  field. Explain contracts rather than restating names; do not use descriptions
+  such as “helper function” or “process data.”
+- Do not add essays, history, generic generated text, or speculative
+  explanations inside source files. Documentation must match the implementation.
+- All **Run from** commands assume the repository root. Utility modules state
+  that they are imported and are not direct entry points. Only
+  `src/python/00_main.py` is researcher-facing.
+
 Configuration describes scientific choices and execution controls; it does not
 hide orchestration logic. Documentation describes the single entry point and
 the current accepted experiment.

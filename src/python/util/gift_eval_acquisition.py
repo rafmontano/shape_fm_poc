@@ -1,3 +1,12 @@
+# ==============================================================================
+# gift_eval_acquisition.py
+#
+# Purpose: Acquire and verify the immutable, revision-pinned GIFT-Eval source data.
+# Inputs: Dependency-lock metadata, acquisition scope, and a GIFT-Eval source directory.
+# Outputs: Verified source files and `source-manifest.json`; validation details on stdout.
+# Run from: Developer utility: `.venv/bin/python -m src.python.util.gift_eval_acquisition <m4_daily|complete|verify>` from repository root.
+# ==============================================================================
+
 """Acquire and verify the immutable, revision-pinned GIFT-Eval source data."""
 
 from __future__ import annotations
@@ -17,19 +26,23 @@ from .configuration import ImportValidationError
 from .provenance import atomic_write_json, sha256_file, utc_now
 
 
+# Manifest written below the source root to bind repository revision, scope, and file hashes.
 MANIFEST_NAME = "source-manifest.json"
 
 
 def repository_root() -> Path:
+    """Return the repository root containing this utility module."""
     return Path(__file__).resolve().parents[3]
 
 
 def load_dependency(path: Path) -> dict[str, Any]:
+    """Decode the dependency-lock JSON file at `path`."""
     with path.open("r", encoding="utf-8") as stream:
         return json.load(stream)
 
 
 def verify_code(dependency: dict[str, Any]) -> dict[str, str]:
+    """Verify the local GIFT-Eval checkout is at the locked commit and return its identity."""
     code = dependency["code"]
     checkout = repository_root() / code["path"]
     try:
@@ -56,7 +69,7 @@ def required_fingerprints(
     dataset_names: Sequence[str],
     required_names: Sequence[str],
 ) -> dict[str, dict[str, Any]]:
-    """Validate dataset metadata and Arrow streams, then hash required files."""
+    """Validate required JSON/Arrow files for each dataset and return byte sizes and SHA-256 hashes."""
     files: dict[str, dict[str, Any]] = {}
     for dataset_name in dataset_names:
         dataset_dir = source_root / dataset_name
@@ -87,6 +100,7 @@ def required_fingerprints(
 
 
 def expected_phase_files(dependency: dict[str, Any]) -> dict[str, str]:
+    """Expand the locked phase-0/1 subset hashes into source-root-relative file names."""
     subset = dependency["dataset"]["phase_0_1_subset"]
     return {
         f"{subset}/{name}": digest
@@ -95,6 +109,7 @@ def expected_phase_files(dependency: dict[str, Any]) -> dict[str, str]:
 
 
 def hashes_match(files: dict[str, dict[str, Any]], expected: dict[str, str]) -> bool:
+    """Return whether the observed file set and every SHA-256 exactly match the lock."""
     return set(files) == set(expected) and all(
         files[name]["sha256"] == digest for name, digest in expected.items()
     )
@@ -107,6 +122,7 @@ def manifest_matches(
     scope: str,
     files: dict[str, dict[str, Any]],
 ) -> bool:
+    """Return whether an existing manifest exactly identifies repository, revision, scope, and files."""
     try:
         with manifest_path.open("r", encoding="utf-8") as stream:
             manifest = json.load(stream)
@@ -121,6 +137,7 @@ def manifest_matches(
 
 
 def remote_dataset_names(repository: str, revision: str) -> list[str]:
+    """List top-level dataset directories in the pinned Hugging Face snapshot."""
     files = HfApi().list_repo_files(
         repository, repo_type="dataset", revision=revision
     )
@@ -137,6 +154,7 @@ def remote_dataset_names(repository: str, revision: str) -> list[str]:
 def verify_source(
     source_root: Path, dependency: dict[str, Any], scope: str
 ) -> dict[str, Any]:
+    """Validate the requested local snapshot and return manifest content; reject lock mismatches."""
     dataset = dependency["dataset"]
     names = (
         [dataset["phase_0_1_subset"]]
@@ -203,6 +221,7 @@ def acquire(source_root: Path, dependency: dict[str, Any], scope: str) -> dict[s
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Define acquisition scope, source-root, and dependency-lock CLI arguments."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("scope", choices=("m4_daily", "complete", "verify"))
     parser.add_argument("--source-root", type=Path)
@@ -215,6 +234,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Acquire or verify the selected snapshot, print its manifest, and return a shell status code."""
     args = build_parser().parse_args(argv)
     try:
         dependency = load_dependency(args.dependency)

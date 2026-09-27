@@ -1,4 +1,13 @@
-"""Dependency-heavy integration with the pinned official GIFT-Eval interfaces."""
+# ==============================================================================
+# test_gift_eval_evaluation.py
+#
+# Purpose: Verify the bridge agrees with pinned official GIFT-Eval metrics and rejects malformed forecast payloads.
+# Inputs: unittest fixtures, temporary databases/files, deterministic synthetic records, and mocked process or cluster boundaries.
+# Outputs: unittest pass/fail assertions and captured diagnostics; no production artifacts or external services.
+# Run from: PYTHONPATH=src/python .tools/uv/uv run --locked --no-sync python -m unittest tests.integration.test_gift_eval_evaluation
+# ==============================================================================
+
+"""Verify the bridge agrees with pinned official GIFT-Eval metrics and rejects malformed forecast payloads."""
 
 import json
 import subprocess
@@ -8,14 +17,18 @@ from pathlib import Path
 
 
 class OfficialAdapterTests(unittest.TestCase):
+    """Verify the pinned adapter's dataset description, evaluation, and manifest contracts."""
+
     @classmethod
     def setUpClass(cls):
+        """Resolve the repository, pinned interpreter, bridge, and fixture dataset paths."""
         cls.root = Path(__file__).resolve().parents[4]
         cls.python = cls.root / "environments/gift-eval/.venv/bin/python"
         cls.bridge = cls.root / "src/python/06_evaluate_gift_eval.py"
         cls.source = cls.root / "data/source/gift_eval"
 
     def bridge_call(self, *arguments):
+        """Run a bridge command and decode its successful JSON response."""
         completed = subprocess.run(
             [str(self.python), str(self.bridge), *arguments],
             cwd=self.root,
@@ -27,6 +40,7 @@ class OfficialAdapterTests(unittest.TestCase):
         return json.loads(completed.stdout)
 
     def test_official_instances_are_context_only_and_evaluate_officially(self):
+        """Described instances support official evaluation of horizon-length forecasts."""
         description = self.bridge_call(
             "describe", "--source-root", str(self.source), "--limit", "2"
         )
@@ -56,6 +70,7 @@ class OfficialAdapterTests(unittest.TestCase):
         self.assertIn("mean_weighted_sum_quantile_loss", metrics)
 
     def test_manifest_is_complete_qualified_and_validated(self):
+        """The manifest contains the validated 97-configuration consensus and full metadata."""
         manifest = self.bridge_call("manifest", "--root", str(self.root))
         self.assertTrue(manifest["validated"])
         self.assertEqual(manifest["manifest_role"], "pinned_consensus_manifest")

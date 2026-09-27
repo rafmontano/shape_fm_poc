@@ -1,3 +1,12 @@
+# ==============================================================================
+# forecast_combination.py
+#
+# Purpose: Shared deterministic forecast calculations for coordinator and workers.
+# Inputs: Two forecast mappings with equally shaped mean, median, and quantile arrays.
+# Outputs: Elementwise equal-weight forecast with noncrossing quantiles and a rearrangement flag.
+# Run from: Imported; not run directly.
+# ==============================================================================
+
 """Shared deterministic forecast calculations for coordinator and workers."""
 
 from __future__ import annotations
@@ -11,6 +20,7 @@ def combine_equal_weight(
     """Average corresponding forecasts and rearrange crossed output quantiles."""
 
     def average(a: list[float], b: list[float]) -> list[float]:
+        """Return strict pairwise arithmetic means, rejecting unequal lengths."""
         return [(x + y) / 2.0 for x, y in zip(a, b, strict=True)]
 
     quantiles = [

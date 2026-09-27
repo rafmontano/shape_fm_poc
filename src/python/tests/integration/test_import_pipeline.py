@@ -1,4 +1,13 @@
-"""Stage 1 integration checks using the pinned project-local M4 Daily source."""
+# ==============================================================================
+# test_import_pipeline.py
+#
+# Purpose: Verify Stage 1 imports the pinned local M4 Daily sample into the expected schema, identities, windows, and counts.
+# Inputs: unittest fixtures, temporary databases/files, deterministic synthetic records, and mocked process or cluster boundaries.
+# Outputs: unittest pass/fail assertions and captured diagnostics; no production artifacts or external services.
+# Run from: PYTHONPATH=src/python .tools/uv/uv run --locked --no-sync python -m unittest tests.integration.test_import_pipeline
+# ==============================================================================
+
+"""Verify Stage 1 imports the pinned local M4 Daily sample into the expected schema, identities, windows, and counts."""
 
 import tempfile
 import unittest
@@ -13,8 +22,11 @@ from util.import_execution import ImportCoordinator
 
 
 class Stage1ImportTests(unittest.TestCase):
+    """Verify deterministic Stage 1 import, restart, parallelism, and source fidelity."""
+
     @classmethod
     def setUpClass(cls):
+        """Load the pinned ten-series source configuration and source revision."""
         cls.root = Path(__file__).resolve().parents[4]
         cls.source = cls.root / "data/source/gift_eval/m4_daily"
         cls.config = load_config(cls.root / "config/imports/m4_daily.json", 10)
@@ -22,6 +34,7 @@ class Stage1ImportTests(unittest.TestCase):
 
     @staticmethod
     def snapshot(path: Path):
+        """Read ordered series/window rows and import counts from a completed database."""
         connection = duckdb.connect(str(path), read_only=True)
         rows = connection.execute(
             """
@@ -41,6 +54,7 @@ class Stage1ImportTests(unittest.TestCase):
         return rows, counts
 
     def test_sequential_restart_parallel_and_source_equality(self):
+        """Sequential and parallel imports agree, restarts skip work, and targets remain exact."""
         with tempfile.TemporaryDirectory() as directory:
             sequential = Path(directory) / "sequential.duckdb"
             parallel = Path(directory) / "parallel.duckdb"

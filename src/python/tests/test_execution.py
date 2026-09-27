@@ -1,3 +1,14 @@
+# ==============================================================================
+# test_execution.py
+#
+# Purpose: Verify execution-profile constraints, worker protocols, cluster validation, and source-level single-writer safeguards.
+# Inputs: unittest fixtures, temporary databases/files, deterministic synthetic records, and mocked process or cluster boundaries.
+# Outputs: unittest pass/fail assertions and captured diagnostics; no production artifacts or external services.
+# Run from: PYTHONPATH=src/python .tools/uv/uv run --locked --no-sync python -m unittest tests.test_execution
+# ==============================================================================
+
+"""Verify execution-profile constraints, worker protocols, cluster validation, and source-level single-writer safeguards."""
+
 from __future__ import annotations
 
 import ast
@@ -32,7 +43,9 @@ from util.experiment_execution import (
 
 
 class ExecutionProfileTests(unittest.TestCase):
+    """Verify profile defaults, validation, task sizing, and coordinator settings."""
     def test_committed_profile_values_and_single_writer(self) -> None:
+        """Profiles retain their tuned concurrency and exactly one database writer."""
         sequential, _ = resolve_execution_profile("sequential_safe")
         mac, _ = resolve_execution_profile("mac_m1pro_10core_16gb")
         ubuntu, _ = resolve_execution_profile("ubuntu_3950x_16core_128gb_rtx5090")
@@ -89,10 +102,12 @@ class ExecutionProfileTests(unittest.TestCase):
         )
 
     def test_hardware_provenance_records_cpu_model(self) -> None:
+        """Hardware provenance includes the CPU model reported by the platform helper."""
         with patch("util.execution_profiles.cpu_model", return_value="Test CPU"):
             self.assertEqual(system_hardware()["cpu_model"], "Test CPU")
 
     def test_execution_settings_are_invocation_only_and_validated(self) -> None:
+        """Invocation settings serialize Dask options and reject invalid modes or counts."""
         settings = ExecutionSettings(
             mode="dask",
             dask_scheduler_address="tcp://scheduler:8786",
@@ -111,6 +126,7 @@ class ExecutionProfileTests(unittest.TestCase):
             ExecutionSettings(dask_expected_gpu_workers=0)
 
     def test_run_gate_propagates_expected_gpu_worker_count_to_validation(self) -> None:
+        """The Dask run gate passes its expected GPU count to cluster validation."""
         coordinator = object.__new__(POC1Coordinator)
         coordinator.root = Path(__file__).resolve().parents[3]
         coordinator.config = {}
@@ -145,6 +161,7 @@ class ExecutionProfileTests(unittest.TestCase):
         client.close.assert_called_once()
 
     def test_full_m4_daily_task_counts(self) -> None:
+        """A 4,227-series M4 Daily run expands to the expected tasks per stage."""
         counts = expected_task_counts(4_227)
         self.assertEqual(
             counts,
@@ -153,6 +170,7 @@ class ExecutionProfileTests(unittest.TestCase):
         self.assertEqual(sum(counts.values()), 109_914)
 
     def test_unknown_and_invalid_overrides_fail(self) -> None:
+        """Profile resolution rejects unknown names and unsafe concurrency overrides."""
         with self.assertRaisesRegex(ValueError, "unknown execution profile"):
             resolve_execution_profile("not-a-profile")
         with self.assertRaisesRegex(ValueError, "exactly one database writer"):
@@ -167,6 +185,7 @@ class ExecutionProfileTests(unittest.TestCase):
             )
 
     def test_length_aware_batches_are_bounded_and_do_not_mix_ranges(self) -> None:
+        """Length-aware batches are size-bounded, ordered, and homogeneous by length band."""
         jobs = [
             {"id": "long", "context": [0] * 1025},
             {"id": "short-b", "context": [0] * 12},
@@ -184,7 +203,9 @@ class ExecutionProfileTests(unittest.TestCase):
 
 
 class PersistentWorkerTests(unittest.TestCase):
+    """Verify persistent worker protocols, isolation, batching, and Dask retries."""
     def test_relocated_r_workers_preserve_json_contracts(self) -> None:
+        """R cleaning and forecasting entry points preserve their JSON response schemas."""
         root = Path(__file__).parents[3]
         clean_payload = {
             "action": "clean",
@@ -249,6 +270,7 @@ class PersistentWorkerTests(unittest.TestCase):
             self.assertEqual(set(response["packages"]), {"R", "forecast", "jsonlite"})
 
     def test_multiple_batches_use_exactly_one_model_load(self) -> None:
+        """One persistent process serves multiple batches without reloading its model."""
         script = """\
 import json, sys
 loads = 1
@@ -272,6 +294,7 @@ for line in sys.stdin:
                 self.assertEqual(second["load_count"], 1)
 
     def test_large_stderr_is_continuously_drained_and_bounded(self) -> None:
+        """Worker stderr is drained without deadlock and retained only to the byte limit."""
         script = """\
 import json, sys
 sys.stderr.write('startup-' + ('x' * 131072) + '-startup-tail\\n')
@@ -310,6 +333,7 @@ for line in sys.stdin:
             self.assertIn("batch-tail", worker.stderr_tail)
 
     def test_worker_source_has_no_duckdb_access(self) -> None:
+        """Chronos and distributed worker modules do not import DuckDB."""
         source = (Path(__file__).parents[3] / "src/python/04_forecast_chronos.py").read_text(
             encoding="utf-8"
         )
@@ -341,6 +365,7 @@ for line in sys.stdin:
         self.assertNotIn("duckdb", dask_imports)
 
     def test_local_dask_batch_matches_sequential_transform(self) -> None:
+        """Dask transformation batches match direct transforms and report CPU resources."""
         from distributed import Client, LocalCluster
 
         from util.distributed_execution import run_batches, transform_batch
@@ -385,11 +410,13 @@ for line in sys.stdin:
             cluster.close()
 
     def test_dask_batch_retry_count_is_explicit(self) -> None:
+        """A retried Dask batch receives the incremented retry count."""
         from distributed import Client, LocalCluster
 
         from util.distributed_execution import run_batches
 
         def succeed_on_retry(batch, retry_count=0):
+            """Fail the initial attempt and identify jobs on the first retry."""
             if retry_count == 0:
                 raise RuntimeError("first attempt fails")
             return {"ids": [job["id"] for job in batch], "retry_count": retry_count}
@@ -419,7 +446,9 @@ for line in sys.stdin:
 
 
 class CalibrationSafetyTests(unittest.TestCase):
+    """Verify calibration equivalence baselines and safe-setting selection."""
     def test_distributed_scientific_comparison_uses_requested_tolerances(self) -> None:
+        """Scientific comparison accepts small drift and rejects larger or missing output."""
         reference = {
             "forecast": {
                 "mean": [1.0],
@@ -446,16 +475,20 @@ class CalibrationSafetyTests(unittest.TestCase):
         self.assertFalse(_scientific_comparison({}, reference)["equivalent"])
 
     def test_ubuntu_candidates_compare_with_independent_batch_one_reference(self) -> None:
+        """Each Ubuntu batch candidate is compared with per-context batch-one output."""
         contexts = [
             {"label": label, "context": [float(index)]}
             for index, label in enumerate(("short", "median", "long"))
         ]
 
         class FakeWorker:
+            """Record requested batch sizes and return forecasts equal to that size."""
             def __init__(self) -> None:
+                """Initialize the ordered record of requested batch sizes."""
                 self.batch_sizes = []
 
             def request(self, message):
+                """Record one request and return one constant forecast per job."""
                 batch_size = message["inference_batch_size"]
                 self.batch_sizes.append(batch_size)
                 value = float(batch_size)
@@ -490,6 +523,7 @@ class CalibrationSafetyTests(unittest.TestCase):
         self.assertFalse(comparisons[8][0]["equivalent"])
 
     def test_faster_unsafe_candidate_is_not_recommended(self) -> None:
+        """Recommendation favors the fastest safe equivalent candidate over unsafe speed."""
         measurements = [
             {
                 "kind": "chronos_2",

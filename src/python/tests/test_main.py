@@ -1,3 +1,14 @@
+# ==============================================================================
+# test_main.py
+#
+# Purpose: Verify researcher CLI parsing, plan/status/results rendering, dispatch, and failure exit codes with mocked coordinators.
+# Inputs: unittest fixtures, temporary databases/files, deterministic synthetic records, and mocked process or cluster boundaries.
+# Outputs: unittest pass/fail assertions and captured diagnostics; no production artifacts or external services.
+# Run from: PYTHONPATH=src/python .tools/uv/uv run --locked --no-sync python -m unittest tests.test_main
+# ==============================================================================
+
+"""Verify researcher CLI parsing, plan/status/results rendering, dispatch, and failure exit codes with mocked coordinators."""
+
 import importlib.util
 import io
 import json
@@ -9,22 +20,28 @@ from pathlib import Path
 from unittest.mock import patch
 
 
+# ROOT: repository root resolved from this source file.
 ROOT = Path(__file__).resolve().parents[3]
+# SPEC: loaded researcher-entry-point module fixture used by these tests.
 SPEC = importlib.util.spec_from_file_location("shapefm_main", ROOT / "src/python/00_main.py")
 assert SPEC is not None and SPEC.loader is not None
+# MAIN: loaded researcher-entry-point module fixture used by these tests.
 MAIN = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MAIN)
 
 
 @dataclass(frozen=True)
 class StoredForecast:
+    """Minimal stored forecast returned by mocks, with identity, candidate, and mean values."""
     forecast_id: str
     candidate: str
     mean: tuple[float, ...]
 
 
 class MainResultsTests(unittest.TestCase):
+    """Verify CLI result selection, JSON rendering, and read-only failure handling."""
     def run_main(self, arguments):
+        """Invoke the CLI with a fixed invocation record and capture status and output streams."""
         stdout = io.StringIO()
         stderr = io.StringIO()
         with (
@@ -36,6 +53,7 @@ class MainResultsTests(unittest.TestCase):
         return status, stdout.getvalue(), stderr.getvalue()
 
     def test_results_parser_and_existing_actions_are_unchanged(self):
+        """The results command and existing commands retain their documented defaults."""
         parser = MAIN.build_parser()
         results = parser.parse_args(["results"])
         self.assertEqual(results.action, "results")
@@ -56,6 +74,7 @@ class MainResultsTests(unittest.TestCase):
         self.assertEqual(acceptance.report, MAIN.DEFAULT_REPORT)
 
     def test_default_results_use_latest_experiment_and_official_results(self):
+        """Unqualified results report official evaluations for the latest experiment."""
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "results.duckdb"
             database.touch()
@@ -84,6 +103,7 @@ class MainResultsTests(unittest.TestCase):
             coordinator.assert_not_called()
 
     def test_explicit_experiment_skips_latest_resolution(self):
+        """An explicit experiment ID bypasses latest-experiment lookup."""
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "results.duckdb"
             database.touch()
@@ -110,6 +130,7 @@ class MainResultsTests(unittest.TestCase):
             official.assert_called_once_with(database.resolve(), "experiment/explicit")
 
     def test_complete_forecast_selectors_return_stored_forecast(self):
+        """A complete selector tuple returns the matching forecast as JSON."""
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "results.duckdb"
             database.touch()
@@ -149,6 +170,7 @@ class MainResultsTests(unittest.TestCase):
             coordinator.assert_not_called()
 
     def test_incomplete_forecast_selectors_fail_before_database_access(self):
+        """Partial forecast selectors fail before querying or creating a database."""
         selectors = {
             "--variant-id": "variant/1",
             "--series-id": "0",
@@ -185,6 +207,7 @@ class MainResultsTests(unittest.TestCase):
                     self.assertFalse(database.exists())
 
     def test_missing_database_fails_without_creating_it(self):
+        """Results fail clearly when the database is absent and leave no new file."""
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "missing.duckdb"
             with (
@@ -203,6 +226,7 @@ class MainResultsTests(unittest.TestCase):
             coordinator.assert_not_called()
 
     def test_missing_experiment_fails_clearly(self):
+        """Latest-experiment lookup errors are reported with a failing status."""
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "results.duckdb"
             database.touch()
@@ -218,6 +242,7 @@ class MainResultsTests(unittest.TestCase):
             self.assertIn("no experiment is planned", stderr)
 
     def test_missing_official_evaluations_fail_clearly(self):
+        """An experiment without official evaluations produces a clear failure."""
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "results.duckdb"
             database.touch()
@@ -235,6 +260,7 @@ class MainResultsTests(unittest.TestCase):
             self.assertIn("no official evaluations", stderr)
 
     def test_missing_forecast_fails_clearly(self):
+        """A missing selected forecast produces a clear failure."""
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "results.duckdb"
             database.touch()

@@ -1,3 +1,12 @@
+# ==============================================================================
+# distributed_cluster.py
+#
+# Purpose: Inspect and validate the ShapeFM Dask cluster without opening DuckDB.
+# Inputs: Reference experiment JSON, repository HEAD, and a connected Dask client.
+# Outputs: Expected identity values and scheduler/worker metadata for cluster diagnostics.
+# Run from: Imported; not run directly.
+# ==============================================================================
+
 """Inspect and validate the ShapeFM Dask cluster without opening DuckDB."""
 
 from __future__ import annotations
@@ -12,6 +21,7 @@ from .distributed_execution import ROOT, validate_cluster
 
 
 def _configuration_hash() -> str:
+    """Return the reference experiment's scientific configuration SHA-256 digest."""
     config = json.loads(
         (ROOT / "config/experiments/m4_daily_reference.json").read_text()
     )
@@ -25,6 +35,7 @@ def _configuration_hash() -> str:
 
 
 def _commit() -> str:
+    """Return the repository's current Git commit from ``rev-parse HEAD``."""
     return subprocess.run(
         ["git", "rev-parse", "HEAD"],
         cwd=ROOT,
@@ -35,6 +46,7 @@ def _commit() -> str:
 
 
 def _worker_summary(client: Client) -> dict:
+    """Return scheduler address and sorted worker resources for diagnostic output."""
     info = client.scheduler_info()
     workers = []
     for address, worker in sorted(info["workers"].items()):

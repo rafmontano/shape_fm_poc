@@ -1,3 +1,12 @@
+# ==============================================================================
+# 06_evaluate_gift_eval.py
+#
+# Purpose: Bridge to the isolated, pinned official GIFT-Eval environment.
+# Inputs: An internal describe/evaluate/manifest command, pinned source paths, and a forecast-payload path for metric scoring.
+# Outputs: One compact JSON dataset description, official metric record, or validated manifest on stdout.
+# Run from: Internal bridge command: `.tools/uv/uv run --project environments/gift-eval --locked --no-sync python src/python/06_evaluate_gift_eval.py <describe|evaluate|manifest> [options]`.
+# ==============================================================================
+
 """Bridge to the isolated, pinned official GIFT-Eval environment."""
 
 from __future__ import annotations
@@ -31,7 +40,9 @@ from gluonts.model.forecast import QuantileForecast
 from gluonts.time_feature import get_seasonality
 
 
+# QUANTILES: allowed forecast probability levels, ordered from 0.1 through 0.9.
 QUANTILES = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+# REQUIRED_RESULT_COLUMNS: official evaluation columns required in exported result order.
 REQUIRED_RESULT_COLUMNS = [
     "dataset",
     "model",
@@ -52,12 +63,14 @@ REQUIRED_RESULT_COLUMNS = [
 
 
 class ShapeFMPredictor:
-    """GluonTS-compatible predictor over forecasts computed by ShapeFM."""
+    """GluonTS adapter used by ``evaluate``; ``records`` retains ordered ShapeFM mean/quantile forecasts for conversion to ``QuantileForecast`` objects."""
 
     def __init__(self, records: list[dict]):
+        """Retain ShapeFM mean and quantile records in official dataset order."""
         self.records = records
 
     def predict(self, test_data_input):
+        """Yield GluonTS forecasts aligned to each context's item identity and forecast start."""
         for item, context in zip(self.records, test_data_input, strict=True):
             arrays = np.asarray([item["mean"], *item["quantiles"]], dtype=np.float64)
             yield QuantileForecast(
@@ -69,7 +82,7 @@ class ShapeFMPredictor:
 
 
 def metrics():
-    """Return the exact metric objects used by the pinned official notebook."""
+    """Return the eleven official GIFT-Eval point, scaled, interval, and quantile metrics."""
     return [
         MSE(forecast_type="mean"),
         MSE(forecast_type=0.5),
@@ -86,6 +99,7 @@ def metrics():
 
 
 def official_dataset(source_root: str) -> Dataset:
+    """Point GIFT-Eval at the pinned source and open its M4 Daily short-term dataset."""
     os.environ["GIFT_EVAL"] = source_root
     return Dataset("m4_daily", term="short", to_univariate=False)
 
@@ -100,6 +114,7 @@ def require_single_window(dataset: Dataset) -> None:
 
 
 def describe(source_root: str, limit: int) -> dict:
+    """Return metadata and the requested official prefix of context/label forecast instances."""
     dataset = official_dataset(source_root)
     require_single_window(dataset)
     entries = []
@@ -133,6 +148,7 @@ def describe(source_root: str, limit: int) -> dict:
 
 
 def evaluate(source_root: str, payload_path: Path) -> dict:
+    """Score persisted ShapeFM forecasts with the official one-window GIFT-Eval procedure."""
     payload = json.loads(payload_path.read_text(encoding="utf-8"))
     dataset = official_dataset(source_root)
     require_single_window(dataset)
@@ -272,6 +288,7 @@ def manifest(root: Path) -> dict:
 
 
 def main() -> None:
+    """Dispatch the internal dataset-description, evaluation, or manifest bridge command."""
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", required=True)
     describe_parser = subparsers.add_parser("describe")

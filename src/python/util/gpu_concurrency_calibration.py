@@ -1,4 +1,13 @@
 #!/usr/bin/env python3
+# ==============================================================================
+# gpu_concurrency_calibration.py
+#
+# Purpose: Isolated one-versus-fifteen logical GPU-worker calibration.
+# Inputs: Accepted POC2 DuckDB/report, pinned Ubuntu GPU host, and one- versus fifteen-worker settings.
+# Outputs: Incremental JSON report with throughput, equivalence, telemetry, safety, and adoption decision.
+# Run from: Developer-only: `.venv/bin/python src/python/util/gpu_concurrency_calibration.py` from repository root.
+# ==============================================================================
+
 """Isolated one-versus-fifteen logical GPU-worker calibration."""
 
 from __future__ import annotations
@@ -21,6 +30,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 
+# Repository root used as the subprocess working directory and import base.
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "src/python"))
 
@@ -42,18 +52,27 @@ from util.experiment_execution import (
 from util.transformations import inverse
 
 
+# Repository revision required by the accepted POC2 baseline report.
 ACCEPTED_REVISION = "597232a2b9e0ad67550480607b44ec4cbe542f43"
+# Chronos tasks loaded from the completed 100-series acceptance run.
 EXPECTED_TASKS = 400
+# Timed repetitions after model warm-up used for latency and throughput quantiles.
 WARM_REPETITIONS = 3
+# Bytes per gibibyte for worker and safety-memory limits.
 GIB = 1024**3
+# Minimum Ubuntu system memory that must remain available during a trial.
 UBUNTU_MEMORY_HEADROOM_BYTES = 16 * GIB
+# Accepted POC2 database from which the fixed Chronos workload is read.
 DEFAULT_DATABASE = ROOT / "results/poc2_acceptance.duckdb"
+# Report that identifies and validates the accepted POC2 baseline.
 DEFAULT_ACCEPTANCE_REPORT = ROOT / "results/poc2_acceptance_report.json"
+# Incrementally rewritten calibration report path.
 DEFAULT_OUTPUT = ROOT / "results/poc2_gpu_concurrency_1_vs_15.json"
 
 
 @dataclass(frozen=True)
 class GpuCalibrationSettings:
+    """GPU trial topology, in-flight/batch counts, GiB safety budgets, and telemetry interval in seconds."""
     physical_gpu_count: int = 1
     gpu_worker_processes: int = 1
     gpu_max_in_flight_batches: int = 1
@@ -63,6 +82,7 @@ class GpuCalibrationSettings:
     chronos_batch_size: int = 16
 
     def validate(self) -> None:
+        """Reject invalid counts, telemetry cadence, GPU headroom, or aggregate RAM ceilings."""
         integer_values = {
             "physical_gpu_count": self.physical_gpu_count,
             "gpu_worker_processes": self.gpu_worker_processes,
@@ -92,10 +112,12 @@ class GpuCalibrationSettings:
 
 
 def control_settings() -> GpuCalibrationSettings:
+    """Return the one-GPU-worker baseline settings."""
     return GpuCalibrationSettings()
 
 
 def candidate_settings() -> GpuCalibrationSettings:
+    """Return the fifteen-logical-worker candidate settings for one physical GPU."""
     return GpuCalibrationSettings(
         physical_gpu_count=1,
         gpu_worker_processes=15,
@@ -109,6 +131,7 @@ def _run(
     timeout: float = 30,
     check: bool = True,
 ) -> subprocess.CompletedProcess[str]:
+    """Run a repository-root subprocess with captured text output and a timeout."""
     return subprocess.run(
         arguments,
         cwd=ROOT,
@@ -120,10 +143,12 @@ def _run(
 
 
 def _git(*arguments: str) -> str:
+    """Run a repository-root Git query and return stripped stdout."""
     return _run(["git", *arguments]).stdout.strip()
 
 
 def _percentile(values: list[float], percentile: float) -> float | None:
+    """Return the nearest-rank percentile, or `None` for an empty sample."""
     if not values:
         return None
     ordered = sorted(values)
@@ -137,6 +162,7 @@ def _telemetry_summary(
     initial_swap_used_bytes: int | None,
     unsafe_reason: str | None,
 ) -> dict[str, Any]:
+    """Aggregate GPU/swap samples, errors, and safety reason into quantiles and a pass flag."""
     gpu_utilisation = [float(item["gpu_utilisation_percent"]) for item in samples]
     gpu_used = [int(item["gpu_memory_used_bytes"]) for item in samples]
     gpu_free = [int(item["gpu_memory_free_bytes"]) for item in samples]
@@ -196,6 +222,7 @@ class _RemoteGpuTelemetry:
         settings: GpuCalibrationSettings,
         unsafe_callback: Callable[[str], None],
     ):
+        """Retain cluster/settings and initialize samples, errors, events, and SSH-process state."""
         self.cluster = cluster
         self.settings = settings
         self.unsafe_callback = unsafe_callback
@@ -209,6 +236,7 @@ class _RemoteGpuTelemetry:
         self._stopping = threading.Event()
 
     def _reader(self) -> None:
+        """Decode remote telemetry lines, record samples/errors, and trigger safety shutdown on breached limits."""
         assert self._process is not None and self._process.stdout is not None
         try:
             for line in self._process.stdout:
@@ -249,12 +277,14 @@ class _RemoteGpuTelemetry:
             self._trigger("GPU telemetry sampler failed")
 
     def _trigger(self, reason: str) -> None:
+        """Record the first unsafe reason and invoke the cluster-stop callback once."""
         if self.unsafe_reason is not None:
             return
         self.unsafe_reason = reason
         self.unsafe_callback(reason)
 
     def __enter__(self) -> "_RemoteGpuTelemetry":
+        """Launch the remote GPU/swap sampler over SSH and start its reader thread."""
         script = r'''import json, subprocess, time
 interval = float(__import__("sys").argv[1])
 while True:
@@ -310,6 +340,7 @@ while True:
         return self
 
     def __exit__(self, *_: object) -> None:
+        """Stop the remote sampler and join its reader thread."""
         self._stopping.set()
         if self._process is not None and self._process.poll() is None:
             self._process.terminate()
@@ -322,6 +353,7 @@ while True:
             self._thread.join(timeout=3)
 
     def summary(self) -> dict[str, Any]:
+        """Return aggregate GPU telemetry and safety status for this sampling interval."""
         return _telemetry_summary(
             self.samples,
             self.errors,
@@ -331,6 +363,7 @@ while True:
 
 
 class _SchedulerSafetyMonitor:
+    """Background guard detecting Dask worker loss, replacement, memory spill, or scheduler sampling failure."""
     def __init__(
         self,
         client: Client,
@@ -338,6 +371,7 @@ class _SchedulerSafetyMonitor:
         interval_seconds: float,
         unsafe_callback: Callable[[str], None],
     ):
+        """Retain the expected workers and callback plus spill, error, and thread state."""
         self.client = client
         self.workers = workers
         self.interval_seconds = interval_seconds
@@ -350,6 +384,7 @@ class _SchedulerSafetyMonitor:
         self._thread = threading.Thread(target=self._run, daemon=True)
 
     def _run(self) -> None:
+        """Poll scheduler workers and spill bytes, triggering shutdown on any change or spill."""
         while not self._stop.wait(self.interval_seconds):
             try:
                 current = self.client.scheduler_info()["workers"]
@@ -377,20 +412,24 @@ class _SchedulerSafetyMonitor:
                 return
 
     def _trigger(self, reason: str) -> None:
+        """Record the first scheduler safety failure and request cluster shutdown once."""
         if self.unsafe_reason is not None:
             return
         self.unsafe_reason = reason
         self.unsafe_callback(reason)
 
     def __enter__(self) -> "_SchedulerSafetyMonitor":
+        """Start scheduler polling in the background and return the monitor."""
         self._thread.start()
         return self
 
     def __exit__(self, *_: object) -> None:
+        """Stop scheduler polling and join the monitor thread."""
         self._stop.set()
         self._thread.join(timeout=3)
 
     def summary(self) -> dict[str, Any]:
+        """Return observed worker-set stability, peak spill bytes, errors, and pass status."""
         return {
             "sampling_errors": self.errors,
             "initial_workers": sorted(self.workers),
@@ -406,7 +445,9 @@ class _SchedulerSafetyMonitor:
 
 
 class _GpuCluster:
+    """Own the local scheduler and remote Ubuntu GPU workers for one labeled calibration configuration."""
     def __init__(self, label: str, settings: GpuCalibrationSettings):
+        """Retain trial identity/settings and resolve hosts, addresses, runtime paths, and process state."""
         self.label = label
         self.settings = settings
         self.ubuntu_host = os.environ.get(
@@ -430,6 +471,7 @@ class _GpuCluster:
         self._stopped = False
 
     def ssh_arguments(self, command: str) -> list[str]:
+        """Build the noninteractive SSH argument vector for one Ubuntu-host shell command."""
         return [
             "ssh",
             "-o",
@@ -441,9 +483,11 @@ class _GpuCluster:
         ]
 
     def ssh(self, command: str, timeout: float = 30) -> str:
+        """Run one Ubuntu-host shell command over SSH and return stripped stdout."""
         return _run(self.ssh_arguments(command), timeout=timeout).stdout.strip()
 
     def preflight(self) -> dict[str, Any]:
+        """Require clean revision-matched hosts, runtimes, free ports, and the expected GPU count."""
         local_revision = _git("rev-parse", "HEAD")
         if _git("status", "--porcelain", "--untracked-files=all"):
             raise RuntimeError("Mac worktree must be clean before GPU calibration")
@@ -480,6 +524,7 @@ class _GpuCluster:
         }
 
     def start(self) -> tuple[Client, dict[str, Any]]:
+        """Start the local scheduler and remote GPU workers, then return their client and reports."""
         self.runtime.mkdir(parents=True, exist_ok=True)
         scheduler_log = (
             self.runtime / f"gpu-concurrency-{self.label}-scheduler.log"
@@ -559,6 +604,7 @@ class _GpuCluster:
             raise
 
     def stop(self) -> None:
+        """Idempotently shut down Dask, the local scheduler, and remote worker processes."""
         with self._stop_lock:
             if self._stopped:
                 return
@@ -591,6 +637,7 @@ class _GpuCluster:
             pass
 
     def confirm_stopped(self) -> dict[str, Any]:
+        """Report whether local Dask ports and remote worker/PID state are clean."""
         local_ports = _run(
             ["lsof", "-nP", "-iTCP:8786", "-iTCP:8787", "-sTCP:LISTEN"],
             check=False,
@@ -609,6 +656,7 @@ class _GpuCluster:
 def _load_workload(
     database: Path, acceptance_report: Path
 ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]], dict[str, Any]]:
+    """Load exactly 400 accepted Chronos tasks and reference forecasts from the read-only baseline database."""
     accepted = json.loads(acceptance_report.read_text(encoding="utf-8"))
     if not accepted.get("acceptance_passed") or accepted.get("repository_revision") != ACCEPTED_REVISION:
         raise RuntimeError("accepted POC2 report is missing or does not match the baseline")
@@ -677,6 +725,7 @@ def _load_workload(
 def _original_scale_result(
     result: dict[str, Any], reference: dict[str, Any]
 ) -> dict[str, Any]:
+    """Invert one Chronos response's point and quantile forecasts using its reference transformation."""
     method = reference["transformation_method"]
     parameters = reference["transformation_parameters"]
     return {
@@ -698,10 +747,12 @@ def _run_repetition(
     repetition: str,
     cluster: _GpuCluster,
 ) -> dict[str, Any]:
+    """Run all Chronos batches once while measuring outputs, workers, latency, and safety."""
     unsafe_reasons: list[str] = []
     stop_lock = threading.Lock()
 
     def unsafe(reason: str) -> None:
+        """Record the first unsafe condition under lock and stop the active cluster."""
         with stop_lock:
             if unsafe_reasons:
                 return
@@ -721,6 +772,7 @@ def _run_repetition(
     maximum_in_flight = 0
 
     def submit(batch: list[dict[str, Any]], worker: str | None = None) -> None:
+        """Submit one unretried Chronos future, optionally pinned to a worker, and track dispatch."""
         nonlocal submitted, maximum_in_flight
         key = f"gpu-concurrency/{repetition}/{submitted}/{uuid.uuid4().hex}"
         options: dict[str, Any] = {}
@@ -892,6 +944,7 @@ def _configuration_decisions(
     settings: GpuCalibrationSettings,
     measurements: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    """Summarize whether all repetitions were complete, equivalent, safe, and used every configured worker."""
     scientific = all(
         item["complete"]
         and item["scientific_comparison"]["equivalent"]
@@ -916,6 +969,7 @@ def _run_configuration(
     jobs: list[dict[str, Any]],
     references: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
+    """Preflight and run one cold plus three warm trials, always stopping the cluster."""
     settings.validate()
     cluster = _GpuCluster(label, settings)
     report: dict[str, Any] = {
@@ -1002,6 +1056,7 @@ def _run_configuration(
 
 
 def _environment_identity(root: Path) -> dict[str, Any]:
+    """Record Git revisions, scientific configuration hash, model identity, and Python version."""
     config = json.loads(
         (root / "config/experiments/m4_daily_reference.json").read_text(
             encoding="utf-8"
@@ -1022,6 +1077,7 @@ def _environment_identity(root: Path) -> dict[str, Any]:
 
 
 def run_experiment(database: Path, acceptance_report: Path, output: Path) -> dict[str, Any]:
+    """Compare one versus fifteen GPU workers and incrementally write adoption evidence."""
     database = database.resolve()
     acceptance_report = acceptance_report.resolve()
     output = output.resolve()
@@ -1124,6 +1180,7 @@ def run_experiment(database: Path, acceptance_report: Path, output: Path) -> dic
 
 
 def main() -> int:
+    """Parse calibration paths, write the experiment report, print its decision, and return pass/fail status."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--database", type=Path, default=DEFAULT_DATABASE)
     parser.add_argument(

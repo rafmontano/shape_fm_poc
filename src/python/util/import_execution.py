@@ -1,3 +1,12 @@
+# ==============================================================================
+# import_execution.py
+#
+# Purpose: Single-writer Stage 1 coordinator with sequential and local worker modes.
+# Inputs: Pinned M4 Daily source files, import configuration, source revision, and worker count.
+# Outputs: Canonical series/windows plus restartable run, task, attempt, and invocation rows in DuckDB.
+# Run from: Imported; not run directly.
+# ==============================================================================
+
 """Single-writer Stage 1 coordinator with sequential and local worker modes."""
 
 from __future__ import annotations
@@ -30,12 +39,15 @@ from .gift_eval_source import iter_source_series, source_fingerprint, source_met
 from .provenance import sha256_file, utc_now
 
 
+# Persistent task-stage identifier used in import run and attempt rows.
 STAGE = "import"
+# Maximum series tasks sent to one local worker scheduling batch.
 BATCH_SIZE = 64
 
 
 @dataclass(frozen=True)
 class SeriesTask:
+    """Immutable worker payload identifying one source row and its values, frequency, horizon, and split convention."""
     task_id: str
     dataset_id: str
     series_id: str
@@ -50,6 +62,7 @@ class SeriesTask:
 
 @dataclass(frozen=True)
 class SeriesResult:
+    """Validated worker result containing canonical series metadata, float32-content SHA-256, and evaluation window."""
     task_id: str
     dataset_id: str
     series_id: str
@@ -65,6 +78,7 @@ class SeriesResult:
 
 @dataclass(frozen=True)
 class WorkerOutcome:
+    """Pickle-safe worker envelope carrying either one series result or its formatted failure."""
     task_id: str
     result: SeriesResult | None
     error: str | None
@@ -112,6 +126,7 @@ def compute_series(task: SeriesTask) -> SeriesResult:
 
 
 def worker_entry(task: SeriesTask) -> WorkerOutcome:
+    """Execute one side-effect-free series task and convert any exception into a worker outcome."""
     try:
         return WorkerOutcome(task.task_id, compute_series(task), None)
     except BaseException as exc:
@@ -119,11 +134,12 @@ def worker_entry(task: SeriesTask) -> WorkerOutcome:
 
 
 def repository_root() -> Path:
+    """Return the repository root containing this utility module."""
     return Path(__file__).resolve().parents[3]
 
 
 def command_output(command: list[str], timeout_seconds: float = 30.0) -> str | None:
-    """Return optional provenance output without blocking scientific work."""
+    """Capture a provenance command's stdout, returning `None` on launch, exit, or timeout failure."""
     try:
         return subprocess.run(
             command,
@@ -138,6 +154,7 @@ def command_output(command: list[str], timeout_seconds: float = 30.0) -> str | N
 
 
 def execution_provenance() -> tuple[dict[str, Any], dict[str, Any]]:
+    """Collect Python/R/tool versions and lock hash together with host OS and architecture identity."""
     root = repository_root()
     packages = {}
     for name in ("shape-fm-poc", "duckdb", "pyarrow"):
@@ -171,19 +188,23 @@ def execution_provenance() -> tuple[dict[str, Any], dict[str, Any]]:
 
 
 class ImportCoordinator:
-    """The sole owner of the writable DuckDB connection."""
+    """Single DuckDB writer that registers, resumes, and atomically commits Stage 1 series tasks."""
 
     def __init__(self, database_path: Path):
+        """Migrate `database_path` and open the coordinator's writable connection."""
         self.database_path = migrate_database(database_path)
         self.connection = duckdb.connect(str(self.database_path))
 
     def close(self) -> None:
+        """Close the owned DuckDB connection."""
         self.connection.close()
 
     def __enter__(self) -> "ImportCoordinator":
+        """Return the open coordinator for context-managed imports."""
         return self
 
     def __exit__(self, *_: object) -> None:
+        """Close the DuckDB connection on context exit."""
         self.close()
 
     def _prepare(
@@ -196,6 +217,7 @@ class ImportCoordinator:
         metadata: dict[str, Any],
         workers: int,
     ) -> tuple[str, str]:
+        """Upsert dataset/run provenance, create an invocation, reset interrupted tasks, and return both IDs."""
         run_id = f"import/{json_fingerprint({'dataset_id': dataset_id, 'stage': STAGE})[:24]}"
         invocation_id = f"invocation/{uuid.uuid4().hex}"
         environment, machine = execution_provenance()
@@ -280,6 +302,7 @@ class ImportCoordinator:
         return run_id, invocation_id
 
     def _register_task(self, run_id: str, dataset_id: str, series_id: str) -> tuple[str, str]:
+        """Create the deterministic per-series task if absent and return its ID and resumable status."""
         task_id = f"task/{json_fingerprint({'run_id': run_id, 'series_id': series_id})[:32]}"
         self.connection.execute(
             """
@@ -294,6 +317,7 @@ class ImportCoordinator:
         return task_id, status
 
     def _start_attempt(self, task_id: str) -> int:
+        """Atomically mark a task running, increment its attempt number, and insert the attempt row."""
         self.connection.execute("BEGIN TRANSACTION")
         try:
             self.connection.execute(
@@ -323,6 +347,7 @@ class ImportCoordinator:
             raise
 
     def _record_failure(self, task_id: str, attempt: int, error: str) -> None:
+        """Atomically mark a task and its numbered attempt failed with the same error text."""
         self.connection.execute("BEGIN TRANSACTION")
         try:
             self.connection.execute(
@@ -457,6 +482,7 @@ class ImportCoordinator:
         tasks: list[SeriesTask],
         executor: ProcessPoolExecutor | None,
     ) -> tuple[int, int]:
+        """Run one task batch locally or in the process pool, commit successes, and count successes/failures."""
         attempts = {task.task_id: self._start_attempt(task.task_id) for task in tasks}
         outcomes: Iterable[WorkerOutcome]
         outcomes = (
@@ -488,6 +514,7 @@ class ImportCoordinator:
         source_revision: str,
         workers: int = 1,
     ) -> dict[str, Any]:
+        """Import selected M4 Daily rows restartably, verify source immutability, and return run/invocation counts."""
         if workers < 1:
             raise ValueError("workers must be at least 1")
         source_before = source_fingerprint(source_dir)

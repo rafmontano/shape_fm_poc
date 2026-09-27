@@ -1,4 +1,13 @@
-"""Single-writer, restartable POC 1 pipeline enclosed by official GIFT-Eval."""
+# ==============================================================================
+# experiment_execution.py
+#
+# Purpose: Plan M4 Daily tasks, execute preprocessing through official evaluation, and export a candidate.
+# Inputs: Imported M4 series, experiment configuration, execution profile/settings, and stage selection.
+# Outputs: Restartable task/invocation rows, forecasts, official evaluations, status, and candidate exports.
+# Run from: Imported; not run directly.
+# ==============================================================================
+
+"""Plan and execute the restartable M4 Daily POC 1 pipeline in a single-writer DuckDB."""
 
 from __future__ import annotations
 
@@ -36,11 +45,14 @@ from .transformations import TransformationResult, inverse, transform
 from .provenance import utc_now
 
 
+# Probability levels required from each model and stored with every forecast.
 QUANTILES = (0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
+# Ordered database stage numbers mapped to invocation gate names.
 STAGES = {2: "preprocess", 3: "transform", 4: "forecast", 5: "combine", 6: "evaluate"}
 
 
 def expected_task_counts(instance_count: int) -> dict[int, int]:
+    """Return Stage 2–6 task totals implied by the instance count and fixed candidate grid."""
     if instance_count < 0:
         raise ValueError("instance count cannot be negative")
     return {
@@ -53,7 +65,7 @@ def expected_task_counts(instance_count: int) -> dict[int, int]:
 
 
 def scientific_configuration(config: dict[str, Any]) -> dict[str, Any]:
-    """Exclude mutable candidate selection and all invocation controls."""
+    """Return identity-defining experiment settings, excluding export-only metadata."""
     return {
         key: value
         for key, value in config.items()
@@ -62,6 +74,7 @@ def scientific_configuration(config: dict[str, Any]) -> dict[str, Any]:
 
 
 def validated_submission_metadata(config: dict[str, Any]) -> dict[str, Any]:
+    """Validate draft/approved GIFT-Eval submission fields and return them key-sorted."""
     metadata = config.get("submission_metadata", {})
     required = {
         "status",
@@ -116,6 +129,12 @@ def validated_submission_metadata(config: dict[str, Any]) -> dict[str, Any]:
 
 @dataclass(frozen=True)
 class ExperimentPlan:
+    """Result of planning an executable POC 1 experiment.
+
+    Fields identify the persisted experiment and benchmark, describe its requested
+    scope and optional series cap, and report instance, variant, and per-stage task
+    counts. Pass a non-dry-run plan to :meth:`POC1Coordinator.run_all`.
+    """
     experiment_id: str
     scope: str
     instance_count: int
@@ -127,6 +146,13 @@ class ExperimentPlan:
 
 @dataclass(frozen=True)
 class ExperimentForecast:
+    """Read model for one persisted candidate forecast and its held-out target.
+
+    Identity fields locate the experiment, variant, forecast instance, and
+    candidate. ``mean`` and ``median`` are horizon-length point forecasts;
+    ``quantiles`` aligns with ``quantile_levels`` and ``actual`` contains the
+    comparison target. Instances are returned by :func:`get_forecast`.
+    """
     forecast_id: str
     experiment_id: str
     variant_id: str
@@ -154,6 +180,7 @@ def _run_parallel(
 
 
 def _batches(values: list[Any], batch_size: int) -> list[list[Any]]:
+    """Split values in input order into positive, fixed-size chunks."""
     if batch_size < 1:
         raise ValueError("batch_size must be positive")
     return [values[offset : offset + batch_size] for offset in range(0, len(values), batch_size)]
@@ -187,17 +214,28 @@ def _run_external_batches(
 
 
 def _transform_job(job: tuple[list[float], str]) -> TransformationResult:
+    """Apply the named transformation to one value sequence in a process worker."""
     return transform(job[0], job[1])
 
 
 def _combine_job(job: dict[str, Any]) -> dict[str, Any]:
+    """Equal-weight one pair of component forecast mappings in a process worker."""
     return combine_equal_weight(job["left"], job["right"])
 
 
 class POC1Coordinator:
-    """The only writable DuckDB owner for POC 1."""
+    """Coordinate planning and stage execution through one writable DuckDB connection.
+
+    Construct with a database path (the default project database is used when
+    omitted). Construction migrates the database, loads the fixed M4 Daily
+    experiment configuration, and initializes a hardware cache. Use as a context
+    manager, call :meth:`plan`, then execute individual gates or :meth:`run_all`;
+    task attempts, forecasts, evaluations, and exports are persisted for restart
+    and audit. Read-only module helpers serve consumers that do not need a writer.
+    """
 
     def __init__(self, database_path: Path = DEFAULT_DATABASE):
+        """Migrate ``database_path``, open it for writes, and load POC configuration."""
         self.root = repository_root()
         self.database_path = migrate_database(database_path)
         self.connection = duckdb.connect(str(self.database_path))
@@ -209,15 +247,19 @@ class POC1Coordinator:
         self._hardware_cache: dict[str, dict[str, Any]] = {}
 
     def close(self) -> None:
+        """Close the coordinator's writable DuckDB connection."""
         self.connection.close()
 
     def __enter__(self) -> "POC1Coordinator":
+        """Return the open single-writer coordinator."""
         return self
 
     def __exit__(self, *_: object) -> None:
+        """Close the coordinator's DuckDB connection on context exit."""
         self.close()
 
     def _gift_bridge(self, *arguments: str, timeout: float = 300.0) -> dict[str, Any]:
+        """Run the isolated GIFT-Eval bridge with CLI arguments and decode its JSON response."""
         command = [
             str(self.root / "environments/gift-eval/.venv/bin/python"),
             str(self.root / "src/python/06_evaluate_gift_eval.py"),
@@ -234,6 +276,7 @@ class POC1Coordinator:
         return json.loads(completed.stdout)
 
     def _dataset_id(self) -> str:
+        """Return the newest imported M4 Daily dataset ID, failing when Stage 1 has not run."""
         row = self.connection.execute(
             "SELECT dataset_id FROM datasets WHERE dataset_name = 'm4_daily' "
             "ORDER BY created_at DESC LIMIT 1"
@@ -243,6 +286,7 @@ class POC1Coordinator:
         return row[0]
 
     def _validate_official_configuration(self, official: dict[str, Any]) -> None:
+        """Require the configured benchmark name and the single POC forecast window."""
         expected_configuration = self.config["benchmark"]["configuration"]
         if official["configuration_name"] != expected_configuration:
             raise RuntimeError(
@@ -261,6 +305,13 @@ class POC1Coordinator:
         dry_run: bool = False,
         series_limit: int | None = None,
     ) -> ExperimentPlan | dict[str, Any]:
+        """Select official M4 instances and materialize their deterministic task graph.
+
+        ``manifest`` scope always returns bridge metadata without database writes;
+        other dry runs return counts. A persisted plan contains Stage 2–6 tasks for
+        the selected smoke, full, or series-limited scope and can safely reuse or
+        expand the same experiment identity.
+        """
         if series_limit is not None and (
             isinstance(series_limit, bool)
             or not isinstance(series_limit, int)
@@ -626,6 +677,7 @@ class POC1Coordinator:
         variant_id: str | None,
         candidate: str | None,
     ) -> str:
+        """Insert one deterministic pending task if absent and return its task ID."""
         row = self._task_row(
             experiment_id, stage, instance_id, variant_id, candidate
         )
@@ -645,6 +697,7 @@ class POC1Coordinator:
         variant_id: str | None,
         candidate: str | None,
     ) -> tuple[str, str, int, str | None, str | None, str | None]:
+        """Build the deterministic task ID and normalized database tuple for one stage unit."""
         identity = {
             "experiment": experiment_id,
             "stage": stage,
@@ -673,6 +726,7 @@ class POC1Coordinator:
         overrides: dict[str, Any] | None = None,
         hardware: dict[str, Any] | None = None,
     ) -> str:
+        """Record a running gate invocation and reset interrupted tasks for retry."""
         invocation_id = f"poc1-invocation/{uuid.uuid4().hex}"
         self.connection.execute(
             """INSERT INTO experiment_invocations
@@ -713,6 +767,7 @@ class POC1Coordinator:
         return invocation_id
 
     def _chronos_hardware(self, requested_device: str) -> dict[str, Any]:
+        """Probe the Chronos bridge for the requested accelerator and decode its hardware report."""
         try:
             completed = subprocess.run(
                 [
@@ -736,6 +791,7 @@ class POC1Coordinator:
         return json.loads(completed.stdout)
 
     def execution_hardware(self, profile: ExecutionProfile) -> dict[str, Any]:
+        """Validate and cache host, accelerator, R, forecast, and model details."""
         requested = profile.required_accelerator or "auto"
         if requested not in self._hardware_cache:
             accelerator = self._chronos_hardware(requested)
@@ -772,6 +828,7 @@ class POC1Coordinator:
     def validate_hardware(
         self, profile: ExecutionProfile, run_chronos_smoke: bool = False
     ) -> dict[str, Any]:
+        """Report profile hardware and optionally prove Chronos inference on one instance."""
         details = self.execution_hardware(profile)
         result: dict[str, Any] = {
             "profile": profile.to_dict(),
@@ -822,6 +879,7 @@ class POC1Coordinator:
         return result
 
     def _start_tasks(self, rows: list[tuple], invocation_id: str) -> dict[str, int]:
+        """Mark selected tasks running, create attempt rows, and return attempt numbers."""
         attempts = {}
         for row in rows:
             task_id = row[0]
@@ -857,6 +915,7 @@ class POC1Coordinator:
         insert: Callable[[], None],
         resources: dict[str, Any] | None = None,
     ) -> None:
+        """Atomically run a result insert and mark its task attempt completed."""
         self.connection.execute("BEGIN TRANSACTION")
         try:
             insert()
@@ -876,6 +935,7 @@ class POC1Coordinator:
             raise
 
     def _fail_task(self, task_id: str, attempt: int, error: str) -> None:
+        """Atomically mark a task and its current attempt failed with an error."""
         self.connection.execute("BEGIN TRANSACTION")
         try:
             self.connection.execute(
@@ -893,6 +953,7 @@ class POC1Coordinator:
             raise
 
     def _r_worker(self, payload: dict[str, Any], timeout: float = 1800.0) -> dict[str, Any]:
+        """Send cleaning or AutoARIMA jobs to the matching R bridge and decode its response."""
         script = (
             "src/r/04_forecast_auto_arima.R"
             if payload.get("action") == "forecast"
@@ -916,6 +977,7 @@ class POC1Coordinator:
         return json.loads(completed.stdout)
 
     def _pending(self, experiment_id: str, stage: int) -> list[tuple]:
+        """Return incomplete task identifiers and candidate dimensions for one experiment stage."""
         return self.connection.execute(
             """SELECT task_id, forecast_instance_id, variant_id, candidate
             FROM experiment_tasks WHERE experiment_id=? AND stage=? AND status!='completed'
@@ -924,6 +986,7 @@ class POC1Coordinator:
         ).fetchall()
 
     def _check_gate(self, experiment_id: str, stage: int) -> None:
+        """Require every task in the preceding stage to be complete."""
         if stage == 2:
             return
         incomplete = self.connection.execute(
@@ -945,6 +1008,14 @@ class POC1Coordinator:
         execution_settings: ExecutionSettings | None = None,
         series_limit: int | None = None,
     ) -> dict[str, Any]:
+        """Execute one restartable stage and return its invocation/task summary.
+
+        The execution profile determines stage concurrency and accelerator use;
+        sequential settings force all concurrency to one. Only incomplete tasks
+        are selected. Their attempts and stage outputs are committed through the
+        coordinator, while a failed stage remains retryable and raises
+        ``RuntimeError`` after invocation accounting is finalized.
+        """
         if stage not in STAGES or workers < 1 or batch_size < 1:
             raise ValueError("stage must be 2..6; workers and batch_size must be positive")
         legacy_batch_size = batch_size
@@ -1149,6 +1220,7 @@ class POC1Coordinator:
         dask_client: Any = None,
         settings: ExecutionSettings | None = None,
     ) -> None:
+        """Clean raw training contexts in R and atomically persist preprocessed series."""
         jobs = []
         for task_id, instance_id, _, method in rows:
             context, metadata = self.connection.execute(
@@ -1169,6 +1241,7 @@ class POC1Coordinator:
             )
 
         def invoke(batch: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any], float]:
+            """Send one cleaning batch to R and return its response with elapsed time."""
             started = time.monotonic()
             response = self._r_worker(
                 {"action": "clean", "jobs": [{k: v for k, v in job.items() if k != "instance_id"} for job in batch]}
@@ -1224,6 +1297,7 @@ class POC1Coordinator:
                     seasonality=job["seasonality"],
                     packages=response["packages"],
                 ):
+                    """Insert the cleaned context and its fingerprints as a preprocessed series."""
                     self.connection.execute(
                         """INSERT INTO preprocessed_series VALUES
                         (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, current_timestamp)
@@ -1258,6 +1332,7 @@ class POC1Coordinator:
         dask_client: Any = None,
         settings: ExecutionSettings | None = None,
     ) -> None:
+        """Apply configured transformations and persist transformed training contexts."""
         prepared = []
         metadata = []
         for task_id, instance_id, variant_id, _ in rows:
@@ -1279,10 +1354,12 @@ class POC1Coordinator:
             runtime: float,
             resources: dict[str, Any] | None = None,
         ) -> None:
+            """Persist one transformed context and complete its Stage 3 attempt."""
             task_id, instance_id, variant_id, pre_id, method, values = meta
             transformation_id = f"transformed/{json_fingerprint({'experiment': experiment_id, 'variant': variant_id, 'instance': instance_id})[:32]}"
 
             def insert(result=result, values=values):
+                """Insert transformed values, parameters, lineage, and content hashes."""
                 self.connection.execute(
                     """INSERT INTO transformed_series VALUES
                     (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
@@ -1354,6 +1431,7 @@ class POC1Coordinator:
         dask_client: Any = None,
         settings: ExecutionSettings | None = None,
     ) -> None:
+        """Run AutoARIMA and Chronos forecasts, invert transformations, and persist candidate forecasts."""
         prepared = []
         for task_id, instance_id, variant_id, model in rows:
             values, horizon, benchmark_metadata = self.connection.execute(
@@ -1379,6 +1457,7 @@ class POC1Coordinator:
         chronos_jobs = [job for job in prepared if job["model"] == "chronos_2"]
 
         def invoke_auto(batch: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any], float]:
+            """Forecast one AutoARIMA batch in R and attach runtime/package metadata."""
             jobs = [
                 {key: value for key, value in job.items() if key not in {"model", "instance_id", "variant_id"}}
                 for job in batch
@@ -1402,6 +1481,7 @@ class POC1Coordinator:
             response: dict[str, Any],
             runtime: float,
         ) -> None:
+            """Validate a model batch, invert its transformations, and commit forecasts."""
             result_ids = [item["id"] for item in response["results"]]
             by_id = {item["id"]: item for item in response["results"]}
             if len(result_ids) != len(set(result_ids)) or set(by_id) != {
@@ -1442,6 +1522,7 @@ class POC1Coordinator:
                     model=model,
                     metadata=metadata,
                 ):
+                    """Insert one original-scale model forecast with provenance and hash."""
                     self.connection.execute(
                         """INSERT INTO forecasts VALUES
                         (?, ?, ?, ?, ?, ?, ?, 'original', ?, ?, ?, ?, ?, ?, ?, current_timestamp)
@@ -1482,6 +1563,7 @@ class POC1Coordinator:
             )
 
             def pending_chronos() -> Iterable[list[dict[str, Any]]]:
+                """Yield queued Chronos batches until the stage queue is empty."""
                 while chronos_pending:
                     yield chronos_pending.popleft()
 
@@ -1536,6 +1618,7 @@ class POC1Coordinator:
             return
 
         def run_chronos(progress: Callable[[], None] = lambda: None) -> None:
+            """Serve queued Chronos batches, shrinking on OOM and committing each result."""
             if not chronos_jobs:
                 return
             chronos = self.config["models"]["chronos_2"]
@@ -1645,6 +1728,7 @@ class POC1Coordinator:
                 committed: set[int] = set()
 
                 def commit_finished_auto() -> None:
+                    """Commit each completed AutoARIMA future exactly once during GPU work."""
                     for index, (_, future) in enumerate(futures):
                         if index in committed or not future.done():
                             continue
@@ -1682,6 +1766,7 @@ class POC1Coordinator:
         dask_client: Any = None,
         settings: ExecutionSettings | None = None,
     ) -> None:
+        """Combine eligible base forecasts at equal weight and persist ensemble forecasts."""
         combination_rows = [row for row in rows if row[3] == "equal_weight"]
         jobs = []
         for task_id, instance_id, variant_id, _ in combination_rows:
@@ -1709,10 +1794,12 @@ class POC1Coordinator:
             runtime: float = 0.0,
             resources: dict[str, Any] | None = None,
         ) -> None:
+            """Persist an equal-weight result and complete its Stage 5 attempt."""
             task_id, instance_id, variant_id, candidate = row
             forecast_id = f"forecast/{json_fingerprint({'experiment': experiment_id, 'variant': variant_id, 'instance': instance_id, 'candidate': candidate})[:32]}"
 
             def insert() -> None:
+                """Insert the ensemble forecast and link both components at weight 0.5."""
                 self.connection.execute(
                     """INSERT INTO forecasts VALUES
                     (?, ?, ?, ?, 'equal_weight', NULL, NULL, 'original', ?, ?, ?, ?, 0, ?, ?, current_timestamp)
@@ -1820,6 +1907,7 @@ class POC1Coordinator:
         attempts: dict[str, int],
         workers: int,
     ) -> None:
+        """Evaluate complete candidate matrices through GIFT-Eval and persist official metrics."""
         source_root = Path(
             os.environ.get("SHAPEFM_GIFT_EVAL_ROOT", self.root / "data/source/gift_eval")
         )
@@ -1883,6 +1971,7 @@ class POC1Coordinator:
             )
 
         def invoke(item: dict[str, Any]) -> tuple[dict[str, Any], dict[str, float], float]:
+            """Evaluate one complete candidate payload through the GIFT-Eval bridge."""
             started = time.monotonic()
             with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as stream:
                 json.dump(item["payload"], stream)
@@ -1906,6 +1995,7 @@ class POC1Coordinator:
             evaluation_id = f"evaluation/{json_fingerprint({'experiment': experiment_id, 'variant': variant_id, 'candidate': candidate})[:32]}"
 
             def insert():
+                """Upsert official metrics and the exact evaluated-input fingerprint."""
                 self.connection.execute(
                     """INSERT INTO official_evaluations
                     (evaluation_id, experiment_id, variant_id, candidate,
@@ -1958,6 +2048,7 @@ class POC1Coordinator:
         execution: tuple[ExecutionProfile, dict[str, Any]] | None = None,
         execution_settings: ExecutionSettings | None = None,
     ) -> list[dict[str, Any]]:
+        """Run Stages 2–6 in order, mark the experiment complete, and return summaries."""
         results = []
         for stage in STAGES:
             results.append(
@@ -1979,6 +2070,7 @@ class POC1Coordinator:
         return results
 
     def status(self, experiment_id: str) -> dict[str, Any]:
+        """Return task counts grouped by stage and status for an experiment."""
         rows = self.connection.execute(
             """SELECT stage, status, count(*) FROM experiment_tasks WHERE experiment_id=?
             GROUP BY stage, status ORDER BY stage, status""",
@@ -1993,6 +2085,7 @@ class POC1Coordinator:
         }
 
     def official_results(self, experiment_id: str) -> list[dict[str, Any]]:
+        """Return official metrics and submittability for every evaluated variant/candidate."""
         rows = self.connection.execute(
             """SELECT v.cleaning_method, v.transformation_method, e.candidate,
                e.metrics, e.is_submittable
@@ -2017,6 +2110,12 @@ class POC1Coordinator:
         model_name: str = "ShapeFM-POC1-provisional",
         output_root: Path = Path("results"),
     ) -> dict[str, Any]:
+        """Write the configured provisional candidate as a non-submittable subset.
+
+        Produces GIFT-Eval ``all_results.csv`` and ``config.json`` beneath
+        ``output_root/model_name``, validates required finite metrics and approved
+        metadata, records the export, and returns its path and validation summary.
+        """
         provisional = self.config["provisional_candidate"]
         row = self.connection.execute(
             """SELECT e.metrics, b.configuration_name, b.domain, b.num_variates,
@@ -2108,6 +2207,7 @@ class POC1Coordinator:
 def get_forecast(
     database_path: Path, experiment_id: str, variant_id: str, series_id: str, candidate: str
 ) -> ExperimentForecast:
+    """Read one persisted forecast and its held-out actuals through a read-only connection."""
     connection = duckdb.connect(str(database_path), read_only=True)
     try:
         row = connection.execute(
@@ -2145,7 +2245,7 @@ def latest_experiment_id(database_path: Path = DEFAULT_DATABASE) -> str:
 def experiment_status(
     database_path: Path, experiment_id: str
 ) -> dict[str, Any]:
-    """Read experiment status without migration or a writable connection."""
+    """Read experiment metadata plus grouped task and invocation counts."""
     connection = duckdb.connect(str(Path(database_path).resolve()), read_only=True)
     try:
         experiment = connection.execute(
@@ -2189,7 +2289,7 @@ def experiment_status(
 def official_results(
     database_path: Path, experiment_id: str
 ) -> list[dict[str, Any]]:
-    """Read official evaluations without migration or a writable connection."""
+    """Read full official evaluation records through a read-only connection."""
     connection = duckdb.connect(str(Path(database_path).resolve()), read_only=True)
     try:
         rows = connection.execute(

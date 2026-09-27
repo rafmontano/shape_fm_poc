@@ -1,3 +1,14 @@
+# ==============================================================================
+# test_import.py
+#
+# Purpose: Verify M4 import identity, batching, retries, window construction, and atomic DuckDB persistence with synthetic sources.
+# Inputs: unittest fixtures, temporary databases/files, deterministic synthetic records, and mocked process or cluster boundaries.
+# Outputs: unittest pass/fail assertions and captured diagnostics; no production artifacts or external services.
+# Run from: PYTHONPATH=src/python .tools/uv/uv run --locked --no-sync python -m unittest tests.test_import
+# ==============================================================================
+
+"""Verify M4 import identity, batching, retries, window construction, and atomic DuckDB persistence with synthetic sources."""
+
 import json
 import shutil
 import tempfile
@@ -29,6 +40,7 @@ from util.import_execution import (
 
 
 def config(max_series=10):
+    """Build the canonical M4 Daily import configuration with an optional row limit."""
     return {
         "schema_version": "1",
         "dataset_name": "m4_daily",
@@ -45,6 +57,7 @@ def config(max_series=10):
 
 
 def write_source(path: Path, targets: list[list[float]]) -> None:
+    """Write synthetic target series and minimal GiftEval metadata as Arrow input."""
     path.mkdir(parents=True)
     table = pa.table(
         {
@@ -62,7 +75,9 @@ def write_source(path: Path, targets: list[list[float]]) -> None:
 
 
 class ConfigurationTests(unittest.TestCase):
+    """Verify M4 window boundaries, stable identities, and configuration validation."""
     def test_m4_daily_boundaries_are_zero_based_and_end_exclusive(self):
+        """A 107-point series yields the official 79/14/14 end-exclusive split."""
         self.assertEqual(
             evaluation_window(107, config()),
             {
@@ -80,24 +95,30 @@ class ConfigurationTests(unittest.TestCase):
         )
 
     def test_execution_scope_does_not_change_dataset_identity(self):
+        """Changing only max_series leaves the scientific dataset identity unchanged."""
         files = {"source.arrow": {"sha256": "a"}}
         first, _ = dataset_identity(config(10), "revision", files)
         second, _ = dataset_identity(config(None), "revision", files)
         self.assertEqual(first, second)
 
     def test_configuration_rejects_changed_horizon(self):
+        """M4 Daily configuration requires its official 14-step horizon."""
         value = config()
         value["benchmark"]["prediction_length"] = 13
         with self.assertRaises(ImportValidationError):
             validate_config(value)
 
     def test_json_fingerprint_is_order_independent(self):
+        """JSON fingerprints are invariant to mapping insertion order."""
         self.assertEqual(json_fingerprint({"a": 1, "b": 2}), json_fingerprint({"b": 2, "a": 1}))
 
 
 class WorkerTests(unittest.TestCase):
+    """Verify import worker results and optional provenance subprocess handling."""
+
     @patch("util.import_execution.subprocess.run")
     def test_optional_provenance_command_times_out(self, run):
+        """Optional provenance commands return None after the configured timeout."""
         run.side_effect = TimeoutExpired(["Rscript", "-e", "version"], 0.01)
 
         self.assertIsNone(
@@ -106,6 +127,7 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(run.call_args.kwargs["timeout"], 0.01)
 
     def test_worker_computes_result_without_database(self):
+        """Series computation produces boundaries and a content hash without database access."""
         task = SeriesTask(
             task_id="task",
             dataset_id="dataset",
@@ -127,13 +149,17 @@ class WorkerTests(unittest.TestCase):
 
 
 class DatabaseTests(unittest.TestCase):
+    """Exercise import persistence in a fresh temporary directory per test."""
     def setUp(self):
+        """Create the directory that owns each test's sources and databases."""
         self.temp = Path(tempfile.mkdtemp())
 
     def tearDown(self):
+        """Remove the test directory and all generated database files."""
         shutil.rmtree(self.temp)
 
     def test_migration_preserves_stage_1_tables_and_adds_poc1(self):
+        """Migration exposes both import-stage and POC1 experiment tables."""
         database = migrate_database(self.temp / "test.duckdb")
         connection = duckdb.connect(str(database), read_only=True)
         names = {row[0] for row in connection.execute("SHOW TABLES").fetchall()}
@@ -169,6 +195,7 @@ class DatabaseTests(unittest.TestCase):
         )
 
     def test_failure_is_preserved_and_retried(self):
+        """Repeated import failures retain failed invocations and increment attempts."""
         source = self.temp / "source"
         write_source(source, [[float(value) for value in range(10)]])
         database = self.temp / "failed.duckdb"
@@ -188,6 +215,7 @@ class DatabaseTests(unittest.TestCase):
             self.assertEqual(invocations, expected_attempts)
 
     def test_full_scope_extends_smoke_dataset_and_run(self):
+        """A full import resumes the smoke run, skips three rows, and adds the remaining nine."""
         source = self.temp / "source"
         write_source(
             source,
@@ -217,6 +245,7 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual(counts, (1, 1, 2, 12))
 
     def test_series_window_and_task_completion_are_atomic(self):
+        """An invalid window rolls back its series insert and leaves the task running."""
         source = self.temp / "source"
         write_source(source, [[float(value) for value in range(30)]])
         database = self.temp / "atomic.duckdb"

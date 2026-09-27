@@ -1,3 +1,12 @@
+# ==============================================================================
+# database.py
+#
+# Purpose: Versioned DuckDB schema and researcher-facing Stage 1 object interface.
+# Inputs: A DuckDB path plus dataset, series, and stage identifiers.
+# Outputs: Migrated schema state and immutable researcher-facing query records.
+# Run from: Imported; not run directly.
+# ==============================================================================
+
 """Versioned DuckDB schema and researcher-facing Stage 1 object interface."""
 
 from __future__ import annotations
@@ -9,10 +18,13 @@ from typing import Any
 import duckdb
 
 
+# SCHEMA_VERSION: latest DuckDB migration version required by this code.
 SCHEMA_VERSION = 4
+# DEFAULT_DATABASE: repository-relative default path used when the caller supplies no override.
 DEFAULT_DATABASE = Path("data/shapefm.duckdb")
 
 
+# SCHEMA_SQL: foundation DDL for imported datasets, series/windows, runs, and retryable tasks.
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS schema_versions (
     version INTEGER PRIMARY KEY,
@@ -124,6 +136,7 @@ CREATE TABLE IF NOT EXISTS task_attempts (
 """
 
 
+# POC1_SCHEMA_SQL: experiment DDL for benchmark instances, variants, forecasts, evaluations, and exports.
 POC1_SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS benchmark_configurations (
     benchmark_configuration_id VARCHAR PRIMARY KEY,
@@ -329,6 +342,7 @@ CREATE TABLE IF NOT EXISTS submission_exports (
 
 @dataclass(frozen=True)
 class EvaluationWindow:
+    """Evaluation slices returned with a series. IDs name the window/split; all boundaries are observation offsets interpreted by ``boundary_convention``; ``horizon`` is observations per validation/test slice."""
     window_id: str
     split_name: str
     train_start: int
@@ -343,6 +357,7 @@ class EvaluationWindow:
 
 @dataclass(frozen=True)
 class TimeSeries:
+    """Canonical series returned by ``get_series``. Dataset/series IDs identify stored and source records; frequency and start timestamp define time indexing; target contains observations, with count/digest and associated evaluation windows."""
     dataset_id: str
     dataset_name: str
     series_id: str
@@ -357,6 +372,7 @@ class TimeSeries:
 
 @dataclass(frozen=True)
 class StageStatus:
+    """Run summary returned by ``stage_status``: stage/dataset/run identities, allowed persisted run status, invocation and per-status task counts, and imported series/observation totals."""
     stage: str
     dataset_id: str
     dataset_name: str
@@ -369,6 +385,7 @@ class StageStatus:
 
 
 def migrate_database(path: Path = DEFAULT_DATABASE) -> Path:
+    """Create or upgrade the DuckDB schema transactionally and return its absolute path."""
     path = path.resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
     connection = duckdb.connect(str(path))
@@ -424,9 +441,10 @@ def migrate_database(path: Path = DEFAULT_DATABASE) -> Path:
 
 
 class ShapeFMDatabase:
-    """Read-only object interface to the canonical ShapeFM DuckDB database."""
+    """Research query interface retaining a resolved database path and open DuckDB connection. Coordinators/tests use it as a context manager to inspect canonical series, run status, and schema version; writable mode is available explicitly."""
 
     def __init__(self, path: Path, read_only: bool = True):
+        """Open ``path`` and retain its DuckDB connection; read-only mode requires an existing file."""
         self.path = path.resolve()
         if read_only and not self.path.is_file():
             raise FileNotFoundError(f"ShapeFM database does not exist: {self.path}")
@@ -436,18 +454,23 @@ class ShapeFMDatabase:
     def open(
         cls, path: str | Path = DEFAULT_DATABASE, read_only: bool = True
     ) -> "ShapeFMDatabase":
+        """Construct a database interface from a string or path, read-only by default."""
         return cls(Path(path), read_only=read_only)
 
     def close(self) -> None:
+        """Close the retained DuckDB connection."""
         self._connection.close()
 
     def __enter__(self) -> "ShapeFMDatabase":
+        """Return this open interface for context-manager use."""
         return self
 
     def __exit__(self, *_: object) -> None:
+        """Close the DuckDB connection when leaving a context."""
         self.close()
 
     def _resolve_dataset(self, dataset: str, stage: str = "import") -> tuple[str, str, str]:
+        """Resolve a dataset name or ID to its ID, name, and latest run for ``stage``."""
         row = self._connection.execute(
             """
             SELECT d.dataset_id, d.dataset_name, r.run_id
@@ -464,6 +487,7 @@ class ShapeFMDatabase:
         return row[0], row[1], row[2]
 
     def get_series(self, dataset: str, series_id: str) -> TimeSeries:
+        """Return a canonical series and ordered windows, resolving ``dataset`` by name or ID."""
         dataset_id, dataset_name, _ = self._resolve_dataset(dataset)
         row = self._connection.execute(
             """
@@ -499,6 +523,7 @@ class ShapeFMDatabase:
         )
 
     def stage_status(self, stage: str, dataset: str) -> StageStatus:
+        """Summarize the latest run, tasks, and imported volume for a dataset stage."""
         dataset_id, dataset_name, run_id = self._resolve_dataset(dataset, stage)
         run_status = self._connection.execute(
             "SELECT status FROM runs WHERE run_id = ?", [run_id]
@@ -530,6 +555,7 @@ class ShapeFMDatabase:
         )
 
     def schema_version(self) -> int:
+        """Return the highest migration version recorded in ``schema_versions``."""
         return self._connection.execute(
             "SELECT max(version) FROM schema_versions"
         ).fetchone()[0]

@@ -1,3 +1,14 @@
+# ==============================================================================
+# test_gpu_concurrency_calibration.py
+#
+# Purpose: Verify logical-GPU calibration settings, resource validation, telemetry safety decisions, and result equivalence boundaries.
+# Inputs: unittest fixtures, temporary databases/files, deterministic synthetic records, and mocked process or cluster boundaries.
+# Outputs: unittest pass/fail assertions and captured diagnostics; no production artifacts or external services.
+# Run from: PYTHONPATH=src/python .tools/uv/uv run --locked --no-sync python -m unittest tests.test_gpu_concurrency_calibration
+# ==============================================================================
+
+"""Verify logical-GPU calibration settings, resource validation, telemetry safety decisions, and result equivalence boundaries."""
+
 import unittest
 from unittest.mock import MagicMock
 
@@ -19,7 +30,9 @@ from util.gpu_concurrency_calibration import (
 
 
 class GpuConcurrencyCalibrationTests(unittest.TestCase):
+    """Verify calibration settings, cluster capacity, telemetry, and acceptance decisions."""
     def test_one_worker_defaults_preserve_existing_calibration_behaviour(self):
+        """Control settings retain the single-worker calibration and safety defaults."""
         settings = control_settings()
         settings.validate()
         self.assertEqual(settings.physical_gpu_count, 1)
@@ -29,6 +42,7 @@ class GpuConcurrencyCalibrationTests(unittest.TestCase):
         self.assertEqual(settings.telemetry_interval_seconds, 0.2)
 
     def test_fifteen_worker_request_expects_fifteen_logical_workers(self):
+        """Candidate settings require exactly fifteen conforming logical GPU workers."""
         settings = candidate_settings()
         settings.validate()
         self.assertEqual(settings.physical_gpu_count, 1)
@@ -91,6 +105,7 @@ class GpuConcurrencyCalibrationTests(unittest.TestCase):
             )
 
     def test_chronos_queue_requires_one_slot_per_logical_worker(self):
+        """Validation requires an in-flight Chronos slot for every logical worker."""
         with self.assertRaisesRegex(ValueError, "at least gpu_worker_processes"):
             GpuCalibrationSettings(
                 gpu_worker_processes=15,
@@ -98,6 +113,7 @@ class GpuConcurrencyCalibrationTests(unittest.TestCase):
             ).validate()
 
     def test_report_identity_distinguishes_physical_gpu_and_worker_processes(self):
+        """Calibration evidence distinguishes one physical GPU from fifteen workers."""
         settings = candidate_settings()
         evidence = {
             "physical_gpu_count": settings.physical_gpu_count,
@@ -106,6 +122,7 @@ class GpuConcurrencyCalibrationTests(unittest.TestCase):
         self.assertEqual(evidence, {"physical_gpu_count": 1, "gpu_worker_processes": 15})
 
     def test_all_fifteen_workers_must_contribute_and_resources_must_be_safe(self):
+        """Candidate acceptance requires safe telemetry and contribution from every worker."""
         workers = {
             f"gpu-{index}": {
                 "worker_name": f"gpu-{index}",

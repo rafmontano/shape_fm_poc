@@ -1,3 +1,12 @@
+# ==============================================================================
+# 04_forecast_chronos.py
+#
+# Purpose: Persistent Chronos-2 JSON-lines worker; this module never imports DuckDB.
+# Inputs: Internal hardware/serve arguments and, for serve, newline-delimited predict or shutdown JSON requests on stdin.
+# Outputs: Newline-delimited hardware, ready, forecast, shutdown, or error JSON responses on stdout.
+# Run from: Internal worker command: `.tools/uv/uv run --locked --no-sync python src/python/04_forecast_chronos.py <hardware|serve> [options]`.
+# ==============================================================================
+
 """Persistent Chronos-2 JSON-lines worker; this module never imports DuckDB."""
 
 from __future__ import annotations
@@ -20,6 +29,7 @@ from chronos import BaseChronosPipeline, Chronos2Pipeline
 
 
 def _apple_device_name() -> str:
+    """Read the Apple CPU brand string, falling back to platform identity when sysctl is unavailable."""
     try:
         return subprocess.run(
             ["/usr/sbin/sysctl", "-n", "machdep.cpu.brand_string"],
@@ -33,6 +43,7 @@ def _apple_device_name() -> str:
 
 
 def select_device(requested: str) -> str:
+    """Resolve auto/cpu/cuda/mps and reject an unavailable or unknown requested accelerator."""
     if requested == "cuda":
         if not torch.cuda.is_available():
             raise RuntimeError("CUDA profile requested but torch.cuda.is_available() is false")
@@ -53,6 +64,7 @@ def select_device(requested: str) -> str:
 
 
 def accelerator_memory(device: str) -> dict[str, int | None]:
+    """Report CUDA or MPS memory counters in bytes, using null counters for CPU execution."""
     if device == "cuda":
         free, total = torch.cuda.mem_get_info()
         return {
@@ -80,6 +92,7 @@ def accelerator_memory(device: str) -> dict[str, int | None]:
 
 
 def hardware(device: str) -> dict[str, Any]:
+    """Return the selected accelerator identity, memory counters, and runtime versions for provenance."""
     selected = select_device(device)
     if selected == "cuda":
         device_name = torch.cuda.get_device_name(0)
@@ -105,10 +118,12 @@ def hardware(device: str) -> dict[str, Any]:
 
 
 def is_out_of_memory(error: BaseException) -> bool:
+    """Classify Torch OOM exceptions and backend errors whose message reports out-of-memory."""
     return isinstance(error, torch.OutOfMemoryError) or "out of memory" in str(error).lower()
 
 
 def emit(value: dict[str, Any]) -> None:
+    """Write one compact, finite JSON protocol response and flush stdout immediately."""
     print(json.dumps(value, separators=(",", ":"), allow_nan=False), flush=True)
 
 
@@ -117,6 +132,7 @@ def predict(
     request: dict[str, Any],
     device: str,
 ) -> dict[str, Any]:
+    """Run one Chronos batch and return keyed means, medians, quantiles, timing, and memory telemetry."""
     started = time.monotonic()
     jobs = request["jobs"]
     levels = request["quantile_levels"]
@@ -157,6 +173,7 @@ def predict(
 
 
 def serve(args: argparse.Namespace) -> None:
+    """Load the pinned Chronos-2 model once and serve predict/shutdown requests until EOF or shutdown."""
     os.environ.setdefault("OMP_NUM_THREADS", "1")
     os.environ.setdefault("MKL_NUM_THREADS", "1")
     torch.set_num_threads(1)
@@ -207,6 +224,7 @@ def serve(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
+    """Dispatch the internal hardware probe or persistent worker protocol."""
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", required=True)
     hardware_parser = subparsers.add_parser("hardware")

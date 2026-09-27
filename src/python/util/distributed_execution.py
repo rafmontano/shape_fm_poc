@@ -1,8 +1,13 @@
-"""Serializable ShapeFM Dask workers and bounded coordinator submission.
+# ==============================================================================
+# distributed_execution.py
+#
+# Purpose: Serializable ShapeFM Dask workers and bounded coordinator submission.
+# Inputs: Serializable job batches, Dask clients/workers, execution settings, and model identities.
+# Outputs: Serializable worker results/provenance and bounded completion iterators; never DuckDB writes.
+# Run from: Imported; not run directly.
+# ==============================================================================
 
-This module never opens DuckDB. Workers receive ordinary batches and return
-ordinary result objects; the Mac coordinator remains the sole database owner.
-"""
+"""Serializable ShapeFM Dask workers and bounded coordinator submission."""
 
 from __future__ import annotations
 
@@ -28,16 +33,22 @@ from .forecast_combination import combine_equal_weight
 from .transformations import transform
 
 
+# Dask release required on every scheduler and worker to keep serialization compatible.
 EXPECTED_DASK_VERSION = "2026.8.0"
+# Immutable GIFT-Eval Git commit that cluster preflight must report.
 EXPECTED_GIFT_EVAL_REVISION = "4d5ab3fa0fe7451bbf59bb1ff6dd76e6e414d64a"
+# Immutable Chronos-2 model revision that GPU workers must load.
 EXPECTED_CHRONOS_REVISION = "29ec3766d36d6f73f0696f85560a422f50e8498c"
+# ROOT: repository root resolved from this source file.
 ROOT = Path(__file__).resolve().parents[3]
+# CHRONOS_GPU_RESOURCE: Dask resource label reserving one logical Chronos GPU slot.
 CHRONOS_GPU_RESOURCE = "CHRONOS_GPU_SLOT"
 
 
 def _worker_provenance(
     retry_count: int = 0, worker: Any = None
 ) -> dict[str, Any]:
+    """Describe the current Dask worker, its resources, host, and coordinator retry count."""
     worker = worker or get_worker()
     state = getattr(worker, "state", None)
     resources = dict(getattr(state, "total_resources", {}) or {})
@@ -52,7 +63,7 @@ def _worker_provenance(
 
 
 def worker_resource_snapshot(dask_worker: Any = None) -> dict[str, Any]:
-    """Return host and Dask-process telemetry without accessing experiment storage."""
+    """Sample worker CPU/memory/spill metrics and GPU metrics when it owns a GPU slot."""
     import psutil
 
     worker = dask_worker or get_worker()
@@ -93,6 +104,7 @@ def worker_resource_snapshot(dask_worker: Any = None) -> dict[str, Any]:
 
 
 def _run_r(payload: dict[str, Any], timeout: float = 1800.0) -> dict[str, Any]:
+    """Run the cleaning or AutoARIMA R script with JSON stdin and return its JSON response."""
     script = (
         "src/r/04_forecast_auto_arima.R"
         if payload.get("action") == "forecast"
@@ -117,6 +129,7 @@ def _run_r(payload: dict[str, Any], timeout: float = 1800.0) -> dict[str, Any]:
 
 
 def clean_batch(batch: list[dict[str, Any]], retry_count: int = 0) -> dict[str, Any]:
+    """Clean jobs through the R worker and return results, package versions, timing, and provenance."""
     started = time.monotonic()
     response = _run_r(
         {
@@ -137,6 +150,7 @@ def clean_batch(batch: list[dict[str, Any]], retry_count: int = 0) -> dict[str, 
 
 
 def transform_batch(batch: list[dict[str, Any]], retry_count: int = 0) -> dict[str, Any]:
+    """Transform each job locally and return serializable values, parameters, timing, and provenance."""
     started = time.monotonic()
     results = []
     for job in batch:
@@ -158,6 +172,7 @@ def transform_batch(batch: list[dict[str, Any]], retry_count: int = 0) -> dict[s
 def autoarima_batch(
     batch: list[dict[str, Any]], settings: dict[str, Any], retry_count: int = 0
 ) -> dict[str, Any]:
+    """Forecast a batch through R AutoARIMA and return forecasts plus execution metadata."""
     started = time.monotonic()
     response = _run_r(
         {
@@ -186,6 +201,7 @@ def autoarima_batch(
 
 
 def combine_batch(batch: list[dict[str, Any]], retry_count: int = 0) -> dict[str, Any]:
+    """Equal-weight each job's two forecasts and return combinations with worker metadata."""
     started = time.monotonic()
     results = []
     for job in batch:
@@ -203,13 +219,17 @@ def combine_batch(batch: list[dict[str, Any]], retry_count: int = 0) -> dict[str
     }
 
 
+# Process-global lock serializes access to one cached Chronos subprocess per Dask worker.
 _chronos_lock = threading.Lock()
+# Cached worker client and its model/revision/device key; both are replaced together.
 _chronos_worker: Any = None
 _chronos_key: tuple[str, str, str] | None = None
+# Monotonic process-local restart counter reported with forecast provenance.
 _chronos_generation = 0
 
 
 def _close_chronos() -> None:
+    """Force-close and forget the process-global persistent Chronos worker, if present."""
     global _chronos_worker, _chronos_key
     with _chronos_lock:
         if _chronos_worker is not None:
@@ -222,6 +242,7 @@ atexit.register(_close_chronos)
 
 
 def _get_chronos(model: str, revision: str, device: str) -> tuple[Any, int]:
+    """Return a persistent Chronos process and generation, restarting when its model key changes."""
     global _chronos_worker, _chronos_key, _chronos_generation
     from .execution_profiles import PersistentChronosWorker
 
@@ -256,6 +277,7 @@ def chronos_batch(
     device: str,
     retry_count: int = 0,
 ) -> dict[str, Any]:
+    """Request one persistent-worker prediction batch and return forecasts and accelerator metadata."""
     worker, generation = _get_chronos(model, revision, device)
     started = time.monotonic()
     response = worker.request(
@@ -298,6 +320,7 @@ def chronos_batch(
 
 
 def _command(*arguments: str, timeout: float = 30.0) -> str:
+    """Run a repository-root command and return stripped standard output."""
     return subprocess.run(
         list(arguments),
         cwd=ROOT,
@@ -309,7 +332,7 @@ def _command(*arguments: str, timeout: float = 30.0) -> str:
 
 
 def worker_preflight(dask_worker: Any = None) -> dict[str, Any]:
-    """Return exact environment identity from inside one Dask worker."""
+    """Collect Git, Python/R/Dask, configuration, checkpoint, and hardware identity on a worker."""
     config = json.loads(
         (ROOT / "config/experiments/m4_daily_reference.json").read_text()
     )
@@ -379,6 +402,7 @@ def validate_cluster(
     expected_gpu_name: str | None = "NVIDIA GeForce RTX 5090",
     expected_gpu_workers: int = 1,
 ) -> dict[str, dict[str, Any]]:
+    """Return worker preflight reports only when count, software, revisions, and GPU contract match."""
     if expected_gpu_workers < 1:
         raise ValueError("expected_gpu_workers must be positive")
     client.wait_for_workers(expected_workers, timeout=timeout)
@@ -438,12 +462,14 @@ def validate_cluster(
 
 
 def _batch_key(batch: list[dict[str, Any]]) -> str:
+    """Build a stable Dask key prefix from ordered job IDs and their SHA-256 digest."""
     identifiers = [job["id"] for job in batch]
     digest = json_fingerprint(identifiers)[:12]
     return f"{identifiers[0]}/batch-{len(identifiers)}-{digest}"
 
 
 def _future_error(result: Any) -> BaseException | None:
+    """Extract an exception from Dask's direct or ``exc_info``-tuple result forms."""
     if isinstance(result, BaseException):
         return result
     if (
@@ -473,6 +499,7 @@ def run_batches(
     completed = as_completed(with_results=True, raise_errors=False)
 
     def submit_batch(batch: list[dict[str, Any]], retry_count: int) -> None:
+        """Submit one attempt and register its batch/retry metadata for completion handling."""
         future = client.submit(
             function,
             batch,
@@ -487,6 +514,7 @@ def run_batches(
         completed.add(future)
 
     def submit_one() -> bool:
+        """Submit the next batch at attempt zero; return false when input is exhausted."""
         try:
             batch = next(pending_batches)
         except StopIteration:
@@ -540,6 +568,7 @@ def run_batch_groups(
     def submit_batch(
         name: str, batch: list[dict[str, Any]], retry_count: int
     ) -> None:
+        """Submit one named-group attempt and register it for completion handling."""
         function, _, resources, arguments, _ = groups[name]
         future = client.submit(
             function,
@@ -555,6 +584,7 @@ def run_batch_groups(
         completed.add(future)
 
     def submit_one(name: str) -> bool:
+        """Submit a group's next batch at attempt zero; return false when exhausted."""
         try:
             batch = next(iterators[name])
         except StopIteration:

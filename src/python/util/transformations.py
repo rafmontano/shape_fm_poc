@@ -1,3 +1,12 @@
+# ==============================================================================
+# transformations.py
+#
+# Purpose: Leakage-safe POC 1 transformations and inverse transformations.
+# Inputs: Numeric context/forecast values, a supported method name, and fitted parameters for inversion.
+# Outputs: Immutable transformed values and parameters, or values restored to the original scale.
+# Run from: Imported; not run directly.
+# ==============================================================================
+
 """Leakage-safe POC 1 transformations and inverse transformations."""
 
 from __future__ import annotations
@@ -9,11 +18,13 @@ from typing import Iterable
 
 @dataclass(frozen=True)
 class TransformationResult:
+    """Transformation output consumed by workers: immutable scaled values and fitted extrema/center/scale with constant-series flags; identity uses an empty parameter mapping."""
     values: tuple[float, ...]
     parameters: dict[str, float | bool]
 
 
 def transform(values: Iterable[float], method: str) -> TransformationResult:
+    """Apply identity or context-fitted min-max then population-standardization and return fitted parameters."""
     source = tuple(float(value) for value in values)
     if not source:
         raise ValueError("cannot transform an empty context")
@@ -46,6 +57,7 @@ def transform(values: Iterable[float], method: str) -> TransformationResult:
 
 
 def inverse(values: Iterable[float], method: str, parameters: dict) -> tuple[float, ...]:
+    """Restore forecast values from identity or fitted standardized/min-max scale to the original units."""
     source = tuple(float(value) for value in values)
     if method == "identity":
         return source
