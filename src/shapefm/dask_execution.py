@@ -364,7 +364,10 @@ def validate_cluster(
     expected_configuration_hash: str,
     require_gpu: bool,
     expected_gpu_name: str | None = "NVIDIA GeForce RTX 5090",
+    expected_gpu_workers: int = 1,
 ) -> dict[str, dict[str, Any]]:
+    if expected_gpu_workers < 1:
+        raise ValueError("expected_gpu_workers must be positive")
     client.wait_for_workers(expected_workers, timeout=timeout)
     reports = client.run(worker_preflight)
     failures = []
@@ -411,8 +414,11 @@ def validate_cluster(
                 failures.append(f"{address}: GPU worker is not the required RTX 5090 CUDA host")
     if len(reports) != expected_workers:
         failures.append(f"registered {len(reports)} workers, expected {expected_workers}")
-    if require_gpu and gpu_workers != 1:
-        failures.append(f"registered {gpu_workers} GPU workers, expected exactly 1")
+    if require_gpu and gpu_workers != expected_gpu_workers:
+        failures.append(
+            f"registered {gpu_workers} GPU workers, expected exactly "
+            f"{expected_gpu_workers}"
+        )
     if failures:
         raise RuntimeError("Dask worker preflight failed:\n" + "\n".join(failures))
     return reports
