@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -9,7 +10,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from shapefm.calibration import (
+from util.execution_calibration import (
     CALIBRATION_CANDIDATES,
     _chronos_context_responses,
     _chronos_differences,
@@ -17,13 +18,13 @@ from shapefm.calibration import (
     _recommended_setting,
     _scientific_comparison,
 )
-from shapefm.execution import (
+from util.execution_profiles import (
     ExecutionSettings,
     PersistentChronosWorker,
     resolve_execution_profile,
     system_hardware,
 )
-from shapefm.poc1 import _length_aware_batches, expected_task_counts
+from util.experiment_execution import _length_aware_batches, expected_task_counts
 
 
 class ExecutionProfileTests(unittest.TestCase):
@@ -84,7 +85,7 @@ class ExecutionProfileTests(unittest.TestCase):
         )
 
     def test_hardware_provenance_records_cpu_model(self) -> None:
-        with patch("shapefm.execution.cpu_model", return_value="Test CPU"):
+        with patch("util.execution_profiles.cpu_model", return_value="Test CPU"):
             self.assertEqual(system_hardware()["cpu_model"], "Test CPU")
 
     def test_execution_settings_are_invocation_only_and_validated(self) -> None:
@@ -182,6 +183,7 @@ class PersistentWorkerTests(unittest.TestCase):
                 input=json.dumps(payload),
                 check=True,
                 capture_output=True,
+                env={**os.environ, "RENV_CONFIG_SYNCHRONIZED_CHECK": "false"},
                 text=True,
                 timeout=60,
             )
@@ -265,7 +267,7 @@ for line in sys.stdin:
             self.assertIn("batch-tail", worker.stderr_tail)
 
     def test_worker_source_has_no_duckdb_access(self) -> None:
-        source = (Path(__file__).parents[3] / "src/shapefm/chronos_worker.py").read_text(
+        source = (Path(__file__).parents[3] / "src/python/04_forecast_chronos.py").read_text(
             encoding="utf-8"
         )
         imports = [
@@ -281,7 +283,7 @@ for line in sys.stdin:
         self.assertNotIn("duckdb", imports)
 
         dask_source = (
-            Path(__file__).parents[3] / "src/shapefm/dask_execution.py"
+            Path(__file__).parents[3] / "src/python/util/distributed_execution.py"
         ).read_text(encoding="utf-8")
         dask_imports = [
             node.names[0].name
@@ -298,8 +300,8 @@ for line in sys.stdin:
     def test_local_dask_batch_matches_sequential_transform(self) -> None:
         from distributed import Client, LocalCluster
 
-        from shapefm.dask_execution import run_batches, transform_batch
-        from shapefm.transformations import transform
+        from util.distributed_execution import run_batches, transform_batch
+        from util.transformations import transform
 
         jobs = [
             {
@@ -342,7 +344,7 @@ for line in sys.stdin:
     def test_dask_batch_retry_count_is_explicit(self) -> None:
         from distributed import Client, LocalCluster
 
-        from shapefm.dask_execution import run_batches
+        from util.distributed_execution import run_batches
 
         def succeed_on_retry(batch, retry_count=0):
             if retry_count == 0:

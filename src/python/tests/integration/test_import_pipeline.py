@@ -6,10 +6,10 @@ from pathlib import Path
 
 import duckdb
 
-from shapefm.config import load_config
-from shapefm.database import ShapeFMDatabase
-from shapefm.gift_eval import iter_source_series
-from shapefm.orchestration import ImportCoordinator
+from util.configuration import load_config
+from util.database import ShapeFMDatabase
+from util.gift_eval_source import iter_source_series
+from util.import_execution import ImportCoordinator
 
 
 class Stage1ImportTests(unittest.TestCase):

@@ -12,7 +12,7 @@ class OfficialAdapterTests(unittest.TestCase):
     def setUpClass(cls):
         cls.root = Path(__file__).resolve().parents[4]
         cls.python = cls.root / "environments/gift-eval/.venv/bin/python"
-        cls.bridge = cls.root / "scripts/gift_eval_bridge.py"
+        cls.bridge = cls.root / "src/python/06_evaluate_gift_eval.py"
         cls.source = cls.root / "data/source/gift_eval"
 
     def bridge_call(self, *arguments):

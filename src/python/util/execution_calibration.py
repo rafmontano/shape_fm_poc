@@ -20,14 +20,14 @@ from typing import Any
 import duckdb
 
 from .database import DEFAULT_DATABASE
-from .execution import (
+from .execution_profiles import (
     GIB,
     ExecutionProfile,
     PersistentChronosWorker,
     system_memory,
 )
-from .orchestration import repository_root
-from .poc1 import QUANTILES
+from .import_execution import repository_root
+from .experiment_execution import QUANTILES
 
 
 CALIBRATION_CANDIDATES = {
@@ -246,7 +246,12 @@ def _r_forecast(root: Path, job: dict[str, Any]) -> dict[str, Any]:
         capture_output=True,
         text=True,
         timeout=1800,
-        env={**os.environ, "OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1"},
+        env={
+            **os.environ,
+            "OMP_NUM_THREADS": "1",
+            "OPENBLAS_NUM_THREADS": "1",
+            "RENV_CONFIG_SYNCHRONIZED_CHECK": "false",
+        },
     )
     return json.loads(completed.stdout)
 
@@ -361,11 +366,13 @@ def calibrate(
                 break
 
         chronos = json.loads(
-            (root / "config/experiments/poc1.json").read_text(encoding="utf-8")
+            (root / "config/experiments/m4_daily_reference.json").read_text(
+                encoding="utf-8"
+            )
         )["models"]["chronos_2"]
         command = [
             str(root / "environments/chronos-2/.venv/bin/python"),
-            str(root / "src/shapefm/chronos_worker.py"),
+            str(root / "src/python/04_forecast_chronos.py"),
             "serve",
             "--model",
             chronos["repository"],
@@ -524,7 +531,7 @@ class _DistributedResourceSampler:
     def _sample(self) -> None:
         import psutil
 
-        from .dask_execution import worker_resource_snapshot
+        from .distributed_execution import worker_resource_snapshot
 
         started = time.monotonic()
         workers = self.client.run(worker_resource_snapshot)
@@ -735,7 +742,8 @@ def calibrate_dask_profile(
     """Exercise one two-machine profile without writing the canonical database."""
     from distributed import Client
 
-    from .dask_execution import (
+    from .distributed_execution import (
+        CHRONOS_GPU_RESOURCE,
         autoarima_batch,
         chronos_batch,
         clean_batch,
@@ -746,7 +754,9 @@ def calibrate_dask_profile(
 
     root = repository_root()
     config = json.loads(
-        (root / "config/experiments/poc1.json").read_text(encoding="utf-8")
+        (root / "config/experiments/m4_daily_reference.json").read_text(
+            encoding="utf-8"
+        )
     )
     contexts = _distributed_contexts(database_path)
     client = Client(scheduler_address, timeout="180s")
@@ -873,7 +883,7 @@ def calibrate_dask_profile(
                     "chronos_2": (
                         chronos_batch,
                         _calibration_batches(chronos_jobs, chronos_batch_size),
-                        {"GPU": 1},
+                        {CHRONOS_GPU_RESOURCE: 1},
                         (
                             chronos["repository"],
                             chronos["revision"],

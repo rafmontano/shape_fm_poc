@@ -1,79 +1,60 @@
-# ShapeFM POC architecture
+# ShapeFM architecture
 
-## One authoritative database
+## Research architecture
 
-`data/shapefm.duckdb` is the authoritative experimental store. It contains
-canonical series, evaluation boundaries, source and configuration provenance,
-run history, task state, and attempt history. There is no authoritative Parquet
-layer or disposable catalog.
+![ShapeFM research architecture](images/shapefm_research_architecture.png)
 
-Original GIFT-Eval files remain separate and immutable under
-`data/source/gift_eval/`. The adapter reads the pinned Arrow stream in bounded
-batches and does not modify it. A deterministic dataset ID includes the logical
-dataset, pinned source revision and hashes, and material import configuration;
-changed input therefore creates a new dataset version.
+The research view has seven layers: Research Interface, Experiment Management,
+Evaluation & Benchmarking, Forecast Decision, Modelling & Representation,
+Time-Series Engineering, and Research Data. Across those layers, the Experiment
+Grid is the experiment component, ShapeFM Decision is the scientific function,
+Benchmark Evaluation is the evaluation service, and Research Feedback closes
+the iteration loop.
 
-## Coordinator and workers
+The persistent research objects are a Time-Series Record (data object), an
+Experiment (research object), an Evidence Report (information object), and the
+Research Schema (data structure). They move through one six-process cycle:
 
-Only a coordinator opens the database for writing. `ImportCoordinator` streams source rows,
-creates deterministic per-series tasks, and sends ordinary task objects to a
-pure worker function. POC 1 uses the same rule through `POC1Coordinator` for
-Stages 2–6. Workers return result objects without database access.
+```text
+01 Import → 02 Clean → 03 Transform → 04 Forecast → 05 Combine → 06 Evaluate
+     ▲                                                                    │
+     └──────────────────────────── Iterate ────────────────────────────────┘
+```
 
-The execution abstraction supports `sequential`, `local`, and `dask`.
-Sequential calls the same worker functions one batch at a time. Local uses
-bounded machine-local processes or threads. Dask submits the existing bounded
-batches to CPU workers on the Mac and Ubuntu, while Chronos-2 batches require a
-dedicated Ubuntu worker advertising `GPU=1`. Execution mode, scheduler address,
-timeouts, retry count, and worker count are invocation controls and never enter
-scientific identity.
+This structure supports reproducible, traceable, scalable research while
+avoiding full reruns, data sprawl, and manual orchestration.
 
-The Dask scheduler and coordinator run on the Mac. Dask workers receive only
-serializable task batches and return ordinary result dictionaries; worker code
-does not import or open DuckDB. The coordinator validates every returned task
-ID set, commits each result and task completion atomically, then releases that
-future. Only a bounded window of futures exists, rather than one future per
-scientific task. Official Stage 6 GIFT-Eval evaluation remains on the Mac.
+## Technical layers
 
-The Dask scheduler is transient and never authoritative. DuckDB completion
-state controls restart: committed tasks are skipped, interrupted tasks return
-to pending, and only unfinished batches are submitted. A lost worker cannot
-invalidate committed results. The GPU worker lazily owns one persistent
-Chronos subprocess; a restarted worker reloads the pinned model and retries
-only unfinished work.
+![ShapeFM technical layers](images/shapefm_technical_layers.png)
 
-Worker count is an execution choice and does not affect dataset identity or
-scientific output. Likewise, `max_series` limits one invocation but is not part
-of dataset identity; the full invocation extends the smoke run's existing tasks.
+The technical view has three layers:
 
-For each successful result, one transaction inserts or validates the series,
-inserts or validates its evaluation window, completes the task, and completes
-the attempt. A failure rolls back all scientific writes and is recorded as a
-failed attempt. On rerun, completed tasks are skipped and failed or interrupted
-tasks are retried. `runs` stores the logical restartable import, while
-`run_invocations` preserves every call, including all-skipped calls, with its
-scope, worker count, environment, status, and summary.
+1. **DuckDB data layer.** One database stores canonical series, evaluation
+   boundaries, scientific results, task/attempt state, and provenance.
+2. **Python/R application layer.** Python coordinates and is the sole writable
+   database owner. R receives ordinary JSON jobs for specialised `tsclean` and
+   AutoARIMA computation and returns ordinary JSON results.
+3. **Dask/concurrent.futures execution layer.** Bounded local or distributed
+   queues execute serializable work. Workers never open writable DuckDB.
+
+## Identity, transactions, and restart
+
+Dataset identity is derived from pinned source revisions and material import
+configuration. Experiment, variant, task, forecast, and evaluation identities
+remain independent of worker placement and concurrency. Each successful result
+and task completion is committed atomically by the coordinator. Failed or
+interrupted work remains retryable; completed work is skipped on restart.
+
+The Dask scheduler is transient and non-authoritative. The Mac hosts the
+coordinator and scheduler. CPU work can run on Mac and Ubuntu. Chronos work
+requires `CHRONOS_GPU_SLOT=1`; 15 logical Ubuntu workers may share GPU device 0,
+but reports separately record `physical_gpu_count: 1` and
+`logical_gpu_worker_processes: 15`.
 
 ## Schema evolution
 
-Schema version 1 contains only `schema_versions`, `datasets`, `series`,
-`evaluation_windows`, `runs`, `run_invocations`, `tasks`, and `task_attempts`.
-
-Schema version 2 preserves all version 1 rows and adds:
-
-- benchmark and experiment identity: `benchmark_configurations`, `experiments`,
-  `experiment_variants`, and `forecast_instances`;
-- restart state: `experiment_invocations`, `experiment_tasks`, and
-  `experiment_task_attempts`;
-- scientific results: `preprocessed_series`, `transformed_series`, `forecasts`,
-  and `forecast_components`;
-- official outputs: `official_evaluations` and `submission_exports`.
-
-Schema version 4 adds the exact evaluation input count and deterministic
-forecast-input fingerprint to each official evaluation. Scope expansion keeps
-upstream scientific rows and task IDs, while invalidating only Stage 6 and
-scope-dependent evaluation/export records.
-
-Arrays stay in DuckDB list columns; model weights and temporary worker data do
-not. POC 2 will address Mantis, MOMENT, and training architecture through later
-explicit migrations, without pre-creating speculative tables here.
+Schema versions preserve prior rows while adding experiment identity, task and
+attempt state, scientific forecasts, and official evaluation provenance.
+Arrays remain in DuckDB list columns. Execution addresses, transient model
+weights, logs, and telemetry are not authoritative database content.

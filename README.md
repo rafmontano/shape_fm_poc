@@ -1,63 +1,93 @@
 # ShapeFM
 
-ShapeFM has one intended researcher entry point:
+ShapeFM is one traceable, restartable time-series research system. Its only
+researcher-facing entry point is:
 
 ```sh
 .tools/uv/uv run --locked --no-sync python src/python/00_main.py --help
 ```
 
-`00_main.py` never installs or synchronizes environments. Ordinary
-`uv run --locked` may synchronize the existing environment; the commands below
-use `--no-sync` and therefore require an already prepared environment.
-Supplying no action only displays help.
+`--no-sync` is required when using the already prepared locked environments;
+the command does not install or update dependencies. The public actions are
+`plan`, `status`, `results`, and `test`.
 
-## Deterministic acceptance case
+## Research workflow
 
-Inspect the dry plan for the first 100 official M4 Daily series:
+The six ordered processes are:
+
+```text
+01 import → 02 preprocess → 03 transform → 04 forecast → 05 combine → 06 evaluate
+```
+
+Python coordinates every process and is the sole DuckDB writer. R is a
+specialised worker for `tsclean` preprocessing and AutoARIMA forecasting.
+Completed task state and scientific provenance are stored transactionally, so
+rerunning the same experiment skips completed work without changing experiment,
+task, forecast, or evaluation identity.
+
+Inspect the deterministic first-100-series plan:
 
 ```sh
 .tools/uv/uv run --locked --no-sync python src/python/00_main.py plan --series-limit 100
 ```
 
-After the local checkpoint and explicit approval for two-machine execution,
-run the complete import-to-official-evaluation acceptance action from the Mac:
+Run or restart the isolated two-machine acceptance case:
 
 ```sh
-.tools/uv/uv run --locked --no-sync python src/python/00_main.py test
+.tools/uv/uv run --locked --no-sync python src/python/00_main.py test \
+  --database results/poc2_final_acceptance.duckdb \
+  --report results/poc2_final_acceptance_report.json
 ```
 
-Run the same command a second time to prove restart behaviour against the same
-isolated database. The acceptance database and generated report are written
-under ignored `results/`; `data/shapefm.duckdb` is never used by this action.
-
-Inspect the isolated experiment without writing:
+Read status and official evaluation results:
 
 ```sh
-.tools/uv/uv run --locked --no-sync python src/python/00_main.py status
-```
-
-Read the official evaluation results from the same isolated acceptance database:
-
-```sh
-.tools/uv/uv run --locked --no-sync python src/python/00_main.py results
+.tools/uv/uv run --locked --no-sync python src/python/00_main.py status \
+  --database results/poc2_final_acceptance.duckdb
+.tools/uv/uv run --locked --no-sync python src/python/00_main.py results \
+  --database results/poc2_final_acceptance.duckdb
 ```
 
 Read one stored forecast by supplying all three selectors:
 
 ```sh
 .tools/uv/uv run --locked --no-sync python src/python/00_main.py results \
+  --database results/poc2_final_acceptance.duckdb \
   --variant-id VARIANT_ID --series-id SERIES_ID --candidate CANDIDATE
 ```
 
-The accepted end-to-end baseline used 5 Mac CPU workers, 15 Ubuntu CPU workers,
-and 1 Ubuntu GPU worker: 21 Dask workers in total. The subsequently approved
-target uses 5 Mac CPU workers, 15 Ubuntu CPU workers, and 15 logical Ubuntu GPU
-workers sharing one physical RTX 5090: 35 workers in total. The 15-GPU-worker
-calibration passed scientific-equivalence, throughput, and resource-safety
-checks. The complete 100-series pipeline has not yet been rerun with the
-integrated 35-worker target, so that topology remains pending integrated
-acceptance. Python remains the only DuckDB writer and official GIFT-Eval remains
-the evaluation authority.
+Generated databases and reports remain ignored; `test` refuses to overwrite
+`data/shapefm.duckdb`.
 
-See [architecture](docs/architecture.md), [data contract](docs/data-contract.md),
-and [POC2 preparation instructions](docs/amp-poc2-preparation-instructions.md).
+## Final source structure
+
+```text
+src/python/00_main.py                 single researcher interface
+src/python/04_forecast_chronos.py     Chronos process worker
+src/python/06_evaluate_gift_eval.py   official evaluation bridge
+src/python/util/                       shared Python implementation
+src/python/tests/                      unit, integration, and acceptance tests
+src/r/02_preprocess_series.R           R preprocessing worker
+src/r/04_forecast_auto_arima.R         R AutoARIMA worker
+src/r/util/time_series_input.R         shared R time-series input contract
+```
+
+## POC2 phases and topology
+
+POC2 has two phases. **Preparation** establishes the stable structure, single
+entry point, distributed acceptance, traceability, and restart proof. **Import**
+will later introduce approved scientific components without creating a second
+repository or changing this interface.
+
+The accepted historical end-to-end baseline used 5 Mac CPU workers, 15 Ubuntu
+CPU workers, and 1 Ubuntu GPU worker (21 Dask workers). A subsequent isolated
+calibration found that 15 logical Chronos worker processes sharing one physical
+Ubuntu RTX 5090 were scientifically equivalent, faster, and resource-safe.
+The integrated target is therefore 5 Mac CPU + 15 Ubuntu CPU + 15 logical
+Ubuntu GPU workers = 35 Dask workers. One physical GPU and 15 logical execution
+slots are distinct facts. Until the final two-pass run is recorded in
+[`docs/poc2-preparation-completion.md`](docs/poc2-preparation-completion.md),
+the 35-worker topology remains pending integrated acceptance.
+
+See the [architecture](docs/architecture.md), [code standards](docs/code-standards.md),
+[data contract](docs/data-contract.md), and [local execution contract](docs/local-execution.md).

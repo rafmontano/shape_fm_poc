@@ -13,7 +13,7 @@ from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
 
-from .orchestration import repository_root
+from .import_execution import repository_root
 
 
 GIB = 1024**3

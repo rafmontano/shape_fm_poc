@@ -11,6 +11,7 @@ from tests.acceptance import (
     MAX_IN_FLIGHT,
     UBUNTU_CPU_MEMORY_GIB,
     UBUNTU_GPU_MEMORY_GIB,
+    UBUNTU_GPU_WORKERS,
     _contribution_checks,
     _contribution_topology,
     _memory_budget,
@@ -21,15 +22,17 @@ from tests.acceptance import (
     _write_failure_report,
     run_acceptance,
 )
+from util.distributed_execution import CHRONOS_GPU_RESOURCE
 
 
 class AcceptanceReadinessTests(unittest.TestCase):
     def setUp(self):
+        gpu_workers = [f"gpu-worker-{index}" for index in range(UBUNTU_GPU_WORKERS)]
         self.topology = {
             "topology": {
                 "mac_hosts": ["mac"],
                 "ubuntu_hosts": ["ubuntu"],
-                "gpu_worker_addresses": ["gpu-worker"],
+                "gpu_worker_addresses": gpu_workers,
             },
             "workers": {
                 "mac-worker": {"hostname": "mac", "resources": {"CPU": 1}},
@@ -37,7 +40,13 @@ class AcceptanceReadinessTests(unittest.TestCase):
                     "hostname": "ubuntu",
                     "resources": {"CPU": 1},
                 },
-                "gpu-worker": {"hostname": "ubuntu", "resources": {"GPU": 1}},
+                **{
+                    worker: {
+                        "hostname": "ubuntu",
+                        "resources": {CHRONOS_GPU_RESOURCE: 1},
+                    }
+                    for worker in gpu_workers
+                },
             },
         }
 
@@ -58,10 +67,13 @@ class AcceptanceReadinessTests(unittest.TestCase):
             "chronos_contribution": [
                 {
                     "hostname": "ubuntu",
-                    "dask_worker": "gpu-worker",
-                    "advertised_resource": "GPU",
-                    "completed_tasks": EXPECTED_CHRONOS_TASKS,
+                    "dask_worker": f"gpu-worker-{index}",
+                    "advertised_resource": CHRONOS_GPU_RESOURCE,
+                    "completed_tasks": (
+                        36 if index == UBUNTU_GPU_WORKERS - 1 else 26
+                    ),
                 }
+                for index in range(UBUNTU_GPU_WORKERS)
             ],
         }
 
@@ -82,19 +94,27 @@ class AcceptanceReadinessTests(unittest.TestCase):
                     "dask_spilled_memory_bytes": 0,
                     "dask_spilled_disk_bytes": 0,
                 },
-                "gpu-worker": {
-                    "hostname": "ubuntu",
-                    "system_available_memory_bytes": 20 * GIB,
-                    "swap_used_bytes": 0,
-                    "dask_spilled_memory_bytes": 0,
-                    "dask_spilled_disk_bytes": 0,
-                    "gpu": {"available_memory_bytes": 8 * GIB},
+                **{
+                    f"gpu-worker-{index}": {
+                        "hostname": "ubuntu",
+                        "system_available_memory_bytes": 20 * GIB,
+                        "swap_used_bytes": 0,
+                        "dask_spilled_memory_bytes": 0,
+                        "dask_spilled_disk_bytes": 0,
+                        "gpu": {"available_memory_bytes": 8 * GIB},
+                    }
+                    for index in range(UBUNTU_GPU_WORKERS)
                 },
             },
             "scheduler_workers": {
                 "mac-worker": {"memory_limit": MAC_CPU_MEMORY_GIB * GIB},
                 "ubuntu-worker": {"memory_limit": UBUNTU_CPU_MEMORY_GIB * GIB},
-                "gpu-worker": {"memory_limit": UBUNTU_GPU_MEMORY_GIB * GIB},
+                **{
+                    f"gpu-worker-{index}": {
+                        "memory_limit": UBUNTU_GPU_MEMORY_GIB * GIB
+                    }
+                    for index in range(UBUNTU_GPU_WORKERS)
+                },
             },
         }
 
@@ -114,7 +134,9 @@ class AcceptanceReadinessTests(unittest.TestCase):
         self.assertFalse(_contribution_checks(wrong_worker, self.topology)["passed"])
 
     def test_rejects_gpu_only_ubuntu_contribution(self):
-        result = _contribution_checks(self._evidence("GPU"), self.topology)
+        result = _contribution_checks(
+            self._evidence(CHRONOS_GPU_RESOURCE), self.topology
+        )
         self.assertFalse(result["passed"])
         self.assertEqual(result["ubuntu_cpu_completed_tasks"], 0)
 
@@ -324,7 +346,9 @@ class AcceptanceReadinessTests(unittest.TestCase):
             **self.topology,
             "topology": {
                 **self.topology["topology"],
-                "gpu_worker_addresses": ["new-gpu-worker"],
+                "gpu_worker_addresses": [
+                    f"new-gpu-worker-{index}" for index in range(UBUNTU_GPU_WORKERS)
+                ],
             },
         }
         report = {
@@ -344,6 +368,7 @@ class AcceptanceReadinessTests(unittest.TestCase):
         self.assertEqual(profile.dask_mac_cpu_workers, 5)
         self.assertEqual(profile.dask_ubuntu_cpu_workers, 15)
         self.assertEqual(profile.dask_max_in_flight, MAX_IN_FLIGHT)
+        self.assertGreaterEqual(MAX_IN_FLIGHT, UBUNTU_GPU_WORKERS)
         self.assertEqual(
             overrides,
             {
@@ -353,6 +378,10 @@ class AcceptanceReadinessTests(unittest.TestCase):
             },
         )
         budget = _memory_budget()
+        self.assertEqual(
+            budget["ubuntu"]["configured_worker_memory_ceiling_bytes"],
+            90 * GIB,
+        )
         self.assertGreaterEqual(
             budget["mac"]["memory_outside_worker_ceilings_bytes"],
             budget["mac"]["required_headroom_bytes"],

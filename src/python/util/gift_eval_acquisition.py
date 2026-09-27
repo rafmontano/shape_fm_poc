@@ -13,15 +13,15 @@ import pyarrow as pa
 import pyarrow.ipc as ipc
 from huggingface_hub import HfApi, snapshot_download
 
-from .config import ImportValidationError
-from .utils import atomic_write_json, sha256_file, utc_now
+from .configuration import ImportValidationError
+from .provenance import atomic_write_json, sha256_file, utc_now
 
 
 MANIFEST_NAME = "source-manifest.json"
 
 
 def repository_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+    return Path(__file__).resolve().parents[3]
 
 
 def load_dependency(path: Path) -> dict[str, Any]:

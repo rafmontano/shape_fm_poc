@@ -14,10 +14,9 @@ from typing import Any, Sequence
 
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "src/python"))
 
-from shapefm.poc1 import (
+from util.experiment_execution import (
     POC1Coordinator,
     experiment_status,
     get_forecast,

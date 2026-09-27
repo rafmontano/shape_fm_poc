@@ -1,4 +1,8 @@
-# Foundation Stage 1 walkthrough
+# Historical record: Foundation Stage 1 walkthrough
+
+> **Historical document.** This records the original Stage 1 implementation;
+> its launchers are no longer active. Use `src/python/00_main.py` and the current
+> README.
 
 1. Gate 00 verifies the pinned GIFT-Eval submodule/environment and acquires the
    immutable M4 Daily source.

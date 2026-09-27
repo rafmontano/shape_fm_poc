@@ -22,16 +22,24 @@ from typing import Any, Callable
 
 
 ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT / "src/python"))
 
 import duckdb
 from distributed import Client, Future, as_completed
 
-from shapefm.calibration import _scientific_comparison
-from shapefm.config import json_fingerprint
-from shapefm.dask_execution import chronos_batch, validate_cluster
-from shapefm.poc1 import QUANTILES, _length_aware_batches, scientific_configuration
-from shapefm.transformations import inverse
+from util.configuration import json_fingerprint
+from util.distributed_execution import (
+    CHRONOS_GPU_RESOURCE,
+    chronos_batch,
+    validate_cluster,
+)
+from util.execution_calibration import _scientific_comparison
+from util.experiment_execution import (
+    QUANTILES,
+    _length_aware_batches,
+    scientific_configuration,
+)
+from util.transformations import inverse
 
 
 ACCEPTED_REVISION = "597232a2b9e0ad67550480607b44ec4cbe542f43"
@@ -481,6 +489,7 @@ class _GpuCluster:
                 str(ROOT / ".tools/uv/uv"),
                 "run",
                 "--locked",
+                "--no-sync",
                 "dask",
                 "scheduler",
                 "--host",
@@ -491,6 +500,11 @@ class _GpuCluster:
                 "127.0.0.1:8787",
             ],
             cwd=ROOT,
+            env={
+                **os.environ,
+                "PYTHONPATH": str(ROOT / "src/python"),
+                "RENV_CONFIG_SYNCHRONIZED_CHECK": "false",
+            },
             stdin=subprocess.DEVNULL,
             stdout=scheduler_log,
             stderr=subprocess.STDOUT,
@@ -502,17 +516,22 @@ class _GpuCluster:
         self.ssh(
             "set -eu; "
             f"cd {remote_root}; mkdir -p data/dask; "
-            f"nohup env CUDA_VISIBLE_DEVICES=0 .tools/uv/uv run --locked dask worker "
+            "nohup env CUDA_VISIBLE_DEVICES=0 PYTHONPATH=src/python "
+            "RENV_CONFIG_SYNCHRONIZED_CHECK=false "
+            ".tools/uv/uv run --locked --no-sync dask worker "
             f"{shlex.quote(self.worker_address)} "
             f"--nworkers {self.settings.gpu_worker_processes} --nthreads 1 "
-            f"--name gpu-concurrency-worker-{self.label} --resources GPU=1 "
+            f"--name gpu-concurrency-worker-{self.label} "
+            f"--resources {CHRONOS_GPU_RESOURCE}=1 "
             f"--memory-limit {self.settings.worker_memory_limit_gib}GiB --no-dashboard "
             f">data/dask/gpu-concurrency-{self.label}-worker.log 2>&1 </dev/null & "
             "echo $! >data/dask/gpu-concurrency.pid"
         )
         client = Client(self.scheduler_address, timeout="180s")
         config = json.loads(
-            (ROOT / "config/experiments/poc1.json").read_text(encoding="utf-8")
+            (ROOT / "config/experiments/m4_daily_reference.json").read_text(
+                encoding="utf-8"
+            )
         )
         try:
             reports = validate_cluster(
@@ -528,7 +547,7 @@ class _GpuCluster:
             )
             if any(
                 report["hostname"] == socket.gethostname()
-                or report["resources"].get("GPU", 0) != 1
+                or report["resources"].get(CHRONOS_GPU_RESOURCE, 0) != 1
                 or report["resources"].get("CPU", 0) != 0
                 for report in reports.values()
             ):
@@ -716,7 +735,7 @@ def _run_repetition(
             "cuda",
             0,
             key=key,
-            resources={"GPU": 1},
+            resources={CHRONOS_GPU_RESOURCE: 1},
             retries=0,
             pure=False,
             **options,
@@ -984,7 +1003,9 @@ def _run_configuration(
 
 def _environment_identity(root: Path) -> dict[str, Any]:
     config = json.loads(
-        (root / "config/experiments/poc1.json").read_text(encoding="utf-8")
+        (root / "config/experiments/m4_daily_reference.json").read_text(
+            encoding="utf-8"
+        )
     )
     return {
         "git_revision": _git("rev-parse", "HEAD"),

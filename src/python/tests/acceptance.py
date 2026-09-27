@@ -18,11 +18,14 @@ from typing import Any, Callable
 
 import duckdb
 
-from shapefm.config import load_config
-from shapefm.dask_execution import worker_resource_snapshot
-from shapefm.execution import ExecutionSettings, resolve_execution_profile
-from shapefm.orchestration import ImportCoordinator
-from shapefm.poc1 import POC1Coordinator, expected_task_counts
+from util.configuration import load_config
+from util.distributed_execution import (
+    CHRONOS_GPU_RESOURCE,
+    worker_resource_snapshot,
+)
+from util.execution_profiles import ExecutionSettings, resolve_execution_profile
+from util.experiment_execution import POC1Coordinator, expected_task_counts
+from util.import_execution import ImportCoordinator
 
 
 SERIES_LIMIT = 100
@@ -32,15 +35,17 @@ EXPECTED_EVALUATIONS = 12
 EXPECTED_CHRONOS_TASKS = 400
 MAC_CPU_WORKERS = 5
 UBUNTU_CPU_WORKERS = 15
-EXPECTED_WORKERS = MAC_CPU_WORKERS + UBUNTU_CPU_WORKERS + 1
+UBUNTU_GPU_WORKERS = 15
+PHYSICAL_GPU_COUNT = 1
+EXPECTED_WORKERS = MAC_CPU_WORKERS + UBUNTU_CPU_WORKERS + UBUNTU_GPU_WORKERS
 MAX_IN_FLIGHT = 32
 GIB = 1024**3
 MAC_MEMORY_HEADROOM_BYTES = 3 * GIB
 UBUNTU_MEMORY_HEADROOM_BYTES = 16 * GIB
 GPU_MEMORY_HEADROOM_BYTES = 4 * GIB
 MAC_CPU_MEMORY_GIB = 2
-UBUNTU_CPU_MEMORY_GIB = 5
-UBUNTU_GPU_MEMORY_GIB = 16
+UBUNTU_CPU_MEMORY_GIB = 4
+UBUNTU_GPU_MEMORY_GIB = 2
 PERSISTENT_UNSAFE_SAMPLES = 3
 
 
@@ -53,7 +58,8 @@ def _memory_budget() -> dict[str, Any]:
     ubuntu_total = 128_000_000_000
     mac_workers = MAC_CPU_WORKERS * MAC_CPU_MEMORY_GIB * GIB
     ubuntu_workers = (
-        UBUNTU_CPU_WORKERS * UBUNTU_CPU_MEMORY_GIB + UBUNTU_GPU_MEMORY_GIB
+        UBUNTU_CPU_WORKERS * UBUNTU_CPU_MEMORY_GIB
+        + UBUNTU_GPU_WORKERS * UBUNTU_GPU_MEMORY_GIB
     ) * GIB
     return {
         "mac": {
@@ -70,13 +76,13 @@ def _memory_budget() -> dict[str, Any]:
             "required_headroom_bytes": UBUNTU_MEMORY_HEADROOM_BYTES,
             "worker_layout": (
                 f"{UBUNTU_CPU_WORKERS} CPU x {UBUNTU_CPU_MEMORY_GIB} GiB + "
-                f"1 GPU x {UBUNTU_GPU_MEMORY_GIB} GiB"
+                f"{UBUNTU_GPU_WORKERS} logical GPU x {UBUNTU_GPU_MEMORY_GIB} GiB"
             ),
         },
         "rationale": (
             "Configured Mac worker ceilings total 10 GiB, leaving 6 GiB outside "
             "worker ceilings on the 16 GiB Mac. Configured Ubuntu worker ceilings "
-            "total 91 GiB (97.7 GB), leaving about 30.3 GB outside worker ceilings "
+            "total 90 GiB (96.6 GB), leaving about 31.4 GB outside worker ceilings "
             "on the stated 128 GB system, above the 16 GiB threshold."
         ),
     }
@@ -101,6 +107,7 @@ def _run(
     return subprocess.run(
         arguments,
         cwd=root,
+        env={**os.environ, "RENV_CONFIG_SYNCHRONIZED_CHECK": "false"},
         check=check,
         capture_output=True,
         text=True,
@@ -308,7 +315,7 @@ def _summarize_resources(
     for address, worker in topology["workers"].items():
         expected_limit = (
             UBUNTU_GPU_MEMORY_GIB * GIB
-            if worker["resources"].get("GPU", 0) == 1
+            if worker["resources"].get(CHRONOS_GPU_RESOURCE, 0) == 1
             else MAC_CPU_MEMORY_GIB * GIB
             if worker["hostname"] in topology["topology"]["mac_hosts"]
             else UBUNTU_CPU_MEMORY_GIB * GIB
@@ -508,6 +515,16 @@ class _TwoMachineCluster:
         local_revision = _run(
             ["git", "-C", "external/gift-eval", "rev-parse", "HEAD"], root=self.root
         ).stdout.strip()
+        _run(
+            [
+                "env",
+                "PYTHONPATH=src/python",
+                str(self.root / ".venv/bin/python"),
+                "-c",
+                "import util.experiment_execution, util.distributed_execution",
+            ],
+            root=self.root,
+        )
         local_environment = _local_environment_identity(self.root)
         project_script = shlex.quote(
             _python_identity_script(("dask", "distributed", "duckdb", "pyarrow"))
@@ -529,6 +546,7 @@ class _TwoMachineCluster:
             "test -x .tools/uv/uv; test -x .venv/bin/python; "
             "test -x environments/gift-eval/.venv/bin/python; "
             "test -x environments/chronos-2/.venv/bin/python; "
+            "test -d data/source/gift_eval/m4_daily; "
             "test ! -e data/dask/acceptance-ubuntu-cpu.pid; "
             "test ! -e data/dask/acceptance-ubuntu-gpu.pid; "
             "! pgrep -f '[a]cceptance-ubuntu-cpu' >/dev/null; "
@@ -536,18 +554,25 @@ class _TwoMachineCluster:
             "! ss -ltn | grep -Eq ':(8786|8787)[[:space:]]'; "
             "printf '%s\\n%s\\n%s\\n' \"$(git rev-parse HEAD)\" "
             "\"$(git -C external/gift-eval rev-parse HEAD)\" \"$(hostname)\"; "
+            "nvidia-smi --query-gpu=name --format=csv,noheader; "
+            "PYTHONPATH=src/python .venv/bin/python -c "
+            "'import util.experiment_execution, util.distributed_execution'; "
             f".venv/bin/python -c {project_script}; "
             f"environments/gift-eval/.venv/bin/python -c {gift_script}; "
             f"environments/chronos-2/.venv/bin/python -c {chronos_script}; "
-            f"Rscript -e {r_script}"
+            f"RENV_CONFIG_SYNCHRONIZED_CHECK=false Rscript -e {r_script}"
         ).splitlines()
-        if remote[:2] != [commit, local_revision] or len(remote) != 7:
+        if (
+            remote[:2] != [commit, local_revision]
+            or len(remote) != 8
+            or remote[3] != "NVIDIA GeForce RTX 5090"
+        ):
             raise RuntimeError(
                 "Mac/Ubuntu revision or connectivity preflight failed: "
                 f"expected {[commit, local_revision]!r}, found {remote!r}"
             )
         remote_environment = dict(
-            zip(("project", "gift_eval", "chronos", "r"), remote[3:], strict=True)
+            zip(("project", "gift_eval", "chronos", "r"), remote[4:], strict=True)
         )
         if remote_environment != local_environment:
             raise RuntimeError(
@@ -559,6 +584,8 @@ class _TwoMachineCluster:
             "gift_eval_revision": local_revision,
             "mac_hostname": socket.gethostname(),
             "ubuntu_hostname": remote[2],
+            "physical_gpu_count": PHYSICAL_GPU_COUNT,
+            "physical_gpu_name": remote[3],
             "ports_available": [8786, 8787],
             "stale_processes_found": False,
             "environments_present": True,
@@ -568,9 +595,15 @@ class _TwoMachineCluster:
 
     def _start_local(self, arguments: list[str], log_name: str) -> None:
         log = (self.runtime / log_name).open("a", encoding="utf-8")
+        environment = {
+            **os.environ,
+            "PYTHONPATH": str(self.root / "src/python"),
+            "RENV_CONFIG_SYNCHRONIZED_CHECK": "false",
+        }
         process = subprocess.Popen(
             arguments,
             cwd=self.root,
+            env=environment,
             stdin=subprocess.DEVNULL,
             stdout=log,
             stderr=subprocess.STDOUT,
@@ -588,6 +621,7 @@ class _TwoMachineCluster:
                 uv,
                 "run",
                 "--locked",
+                "--no-sync",
                 "dask",
                 "scheduler",
                 "--host",
@@ -605,6 +639,7 @@ class _TwoMachineCluster:
                 uv,
                 "run",
                 "--locked",
+                "--no-sync",
                 "dask",
                 "worker",
                 self.worker_address,
@@ -629,28 +664,36 @@ class _TwoMachineCluster:
         self._ssh(
             "set -eu; "
             f"cd {remote_root}; mkdir -p data/dask; "
-            f"nohup .tools/uv/uv run --locked dask worker {worker_address} "
+            "nohup env PYTHONPATH=src/python RENV_CONFIG_SYNCHRONIZED_CHECK=false "
+            ".tools/uv/uv run --locked --no-sync "
+            f"dask worker {worker_address} "
             f"--nworkers {UBUNTU_CPU_WORKERS} --nthreads 1 "
             "--name acceptance-ubuntu-cpu --resources CPU=1 "
             f"--memory-limit {UBUNTU_CPU_MEMORY_GIB}GiB --no-dashboard "
             ">data/dask/acceptance-ubuntu-cpu.log 2>&1 </dev/null & "
             "echo $! >data/dask/acceptance-ubuntu-cpu.pid; "
-            f"nohup env CUDA_VISIBLE_DEVICES=0 .tools/uv/uv run --locked dask worker {worker_address} "
-            "--nworkers 1 --nthreads 1 --name acceptance-ubuntu-gpu "
-            f"--resources GPU=1 --memory-limit {UBUNTU_GPU_MEMORY_GIB}GiB --no-dashboard "
+            "nohup env CUDA_VISIBLE_DEVICES=0 PYTHONPATH=src/python "
+            "RENV_CONFIG_SYNCHRONIZED_CHECK=false "
+            ".tools/uv/uv run --locked --no-sync dask worker "
+            f"{worker_address} --nworkers {UBUNTU_GPU_WORKERS} --nthreads 1 "
+            "--name acceptance-ubuntu-gpu "
+            f"--resources {CHRONOS_GPU_RESOURCE}=1 "
+            f"--memory-limit {UBUNTU_GPU_MEMORY_GIB}GiB --no-dashboard "
             ">data/dask/acceptance-ubuntu-gpu.log 2>&1 </dev/null & "
             "echo $! >data/dask/acceptance-ubuntu-gpu.pid"
         )
         from distributed import Client
 
-        from shapefm.config import json_fingerprint
-        from shapefm.dask_execution import validate_cluster
-        from shapefm.poc1 import scientific_configuration
+        from util.configuration import json_fingerprint
+        from util.distributed_execution import validate_cluster
+        from util.experiment_execution import scientific_configuration
 
         client = Client(self.scheduler_address, timeout="180s")
         try:
             config = json.loads(
-                (self.root / "config/experiments/poc1.json").read_text(encoding="utf-8")
+                (self.root / "config/experiments/m4_daily_reference.json").read_text(
+                    encoding="utf-8"
+                )
             )
             reports = validate_cluster(
                 client,
@@ -661,6 +704,7 @@ class _TwoMachineCluster:
                     scientific_configuration(config)
                 ),
                 require_gpu=True,
+                expected_gpu_workers=UBUNTU_GPU_WORKERS,
             )
             local_host = socket.gethostname()
             mac_cpu = sum(
@@ -675,17 +719,19 @@ class _TwoMachineCluster:
             )
             ubuntu_gpu = sum(
                 report["hostname"] != local_host
-                and report["resources"].get("GPU", 0) == 1
+                and report["resources"].get(CHRONOS_GPU_RESOURCE, 0) == 1
                 for report in reports.values()
             )
             mac_gpu = sum(
                 report["hostname"] == local_host
-                and report["resources"].get("GPU", 0) >= 1
+                and report["resources"].get(CHRONOS_GPU_RESOURCE, 0) >= 1
                 for report in reports.values()
             )
             topology = {
                 "mac_cpu_workers": mac_cpu,
                 "ubuntu_cpu_workers": ubuntu_cpu,
+                "physical_gpu_count": PHYSICAL_GPU_COUNT,
+                "logical_gpu_worker_processes": ubuntu_gpu,
                 "ubuntu_gpu_workers": ubuntu_gpu,
                 "mac_gpu_workers": mac_gpu,
                 "total_workers": len(reports),
@@ -706,13 +752,15 @@ class _TwoMachineCluster:
                 "gpu_worker_addresses": sorted(
                     address
                     for address, report in reports.items()
-                    if report["resources"].get("GPU", 0) == 1
+                    if report["resources"].get(CHRONOS_GPU_RESOURCE, 0) == 1
                 ),
             }
             expected = {
                 "mac_cpu_workers": MAC_CPU_WORKERS,
                 "ubuntu_cpu_workers": UBUNTU_CPU_WORKERS,
-                "ubuntu_gpu_workers": 1,
+                "physical_gpu_count": PHYSICAL_GPU_COUNT,
+                "logical_gpu_worker_processes": UBUNTU_GPU_WORKERS,
+                "ubuntu_gpu_workers": UBUNTU_GPU_WORKERS,
                 "mac_gpu_workers": 0,
                 "total_workers": EXPECTED_WORKERS,
             }
@@ -812,8 +860,8 @@ def _database_evidence(database: Path, experiment_id: str) -> dict[str, Any]:
                 hosts[resource.get("hostname", "Mac coordinator/local")] += 1
                 advertised = resource.get("resources", {})
                 contribution = (
-                    "GPU"
-                    if advertised.get("GPU", 0) >= 1
+                    CHRONOS_GPU_RESOURCE
+                    if advertised.get(CHRONOS_GPU_RESOURCE, 0) >= 1
                     else "CPU"
                     if advertised.get("CPU", 0) >= 1
                     else "coordinator"
@@ -833,8 +881,9 @@ def _database_evidence(database: Path, experiment_id: str) -> dict[str, Any]:
                     (
                         resource.get("hostname", ""),
                         resource.get("dask_worker", ""),
-                        "GPU"
-                        if resource.get("resources", {}).get("GPU", 0) == 1
+                        CHRONOS_GPU_RESOURCE
+                        if resource.get("resources", {}).get(CHRONOS_GPU_RESOURCE, 0)
+                        == 1
                         else "other",
                     )
                 ] += 1
@@ -918,7 +967,10 @@ def _database_evidence(database: Path, experiment_id: str) -> dict[str, Any]:
             ],
             "chronos_worker_provenance": list(chronos_provenance.values()),
             "chronos_all_gpu": bool(chronos_attempts)
-            and all(item.get("resources", {}).get("GPU", 0) >= 1 for item in chronos_attempts),
+            and all(
+                item.get("resources", {}).get(CHRONOS_GPU_RESOURCE, 0) >= 1
+                for item in chronos_attempts
+            ),
             "duplicate_forecast_rows": int(duplicate_counts[0]),
             "duplicate_evaluation_rows": int(duplicate_counts[1]),
         }
@@ -946,26 +998,33 @@ def _contribution_checks(
     )
     chronos = evidence["chronos_contribution"]
     chronos_tasks = sum(item["completed_tasks"] for item in chronos)
-    chronos_only_on_sole_gpu = (
-        len(gpu_workers) == 1
+    contributing_gpu_workers = {
+        item["dask_worker"] for item in chronos if item["completed_tasks"] > 0
+    }
+    chronos_only_on_gpu_workers = (
+        len(gpu_workers) == UBUNTU_GPU_WORKERS
         and bool(chronos)
         and all(
             item["hostname"] in ubuntu_hosts
             and item["dask_worker"] in gpu_workers
-            and item["advertised_resource"] == "GPU"
+            and item["advertised_resource"] == CHRONOS_GPU_RESOURCE
             for item in chronos
         )
     )
+    all_gpu_workers_contributed = contributing_gpu_workers == gpu_workers
     return {
         "mac_cpu_completed_tasks": mac_cpu_tasks,
         "ubuntu_cpu_completed_tasks": ubuntu_cpu_tasks,
         "chronos_completed_tasks": chronos_tasks,
-        "chronos_only_on_sole_ubuntu_gpu_worker": chronos_only_on_sole_gpu,
+        "chronos_only_on_ubuntu_gpu_workers": chronos_only_on_gpu_workers,
+        "contributing_logical_gpu_workers": len(contributing_gpu_workers),
+        "all_logical_gpu_workers_contributed": all_gpu_workers_contributed,
         "passed": (
             mac_cpu_tasks >= 1
             and ubuntu_cpu_tasks >= 1
             and chronos_tasks == EXPECTED_CHRONOS_TASKS
-            and chronos_only_on_sole_gpu
+            and chronos_only_on_gpu_workers
+            and all_gpu_workers_contributed
         ),
     }
 
@@ -1143,7 +1202,9 @@ def run_acceptance(
         (root / "config/dependencies/gift_eval.json").read_text(encoding="utf-8")
     )
     experiment_config = json.loads(
-        (root / "config/experiments/poc1.json").read_text(encoding="utf-8")
+        (root / "config/experiments/m4_daily_reference.json").read_text(
+            encoding="utf-8"
+        )
     )
     report = _report_document(
         previous if previous_matches_database else None,
@@ -1295,6 +1356,8 @@ def run_acceptance(
                 contribution["passed"],
                 evidence["duplicate_forecast_rows"] == 0,
                 evidence["duplicate_evaluation_rows"] == 0,
+                evidence["failed_attempt_count"] == 0,
+                evidence["worker_retry_count"] == 0,
                 resources["passed"],
             )
         )
@@ -1305,6 +1368,8 @@ def run_acceptance(
             "resources_pass": resources["passed"],
             "no_duplicate_forecasts": evidence["duplicate_forecast_rows"] == 0,
             "no_duplicate_evaluations": evidence["duplicate_evaluation_rows"] == 0,
+            "no_failed_attempts": evidence["failed_attempt_count"] == 0,
+            "no_retries": evidence["worker_retry_count"] == 0,
         }
         if not scientific_run_complete:
             raise RuntimeError("one or more scientific acceptance gates failed")

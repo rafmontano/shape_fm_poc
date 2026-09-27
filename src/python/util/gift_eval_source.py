@@ -11,8 +11,8 @@ from typing import Any, Iterator
 import pyarrow as pa
 import pyarrow.ipc as ipc
 
-from .config import ImportValidationError, json_fingerprint
-from .utils import sha256_file
+from .configuration import ImportValidationError, json_fingerprint
+from .provenance import sha256_file
 
 
 SOURCE_ARROW_NAME = "data-00000-of-00001.arrow"

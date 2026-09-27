@@ -5,9 +5,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from shapefm.config import json_fingerprint
-from shapefm.execution import resolve_execution_profile
-from shapefm.poc1 import (
+from util.configuration import json_fingerprint
+from util.execution_profiles import resolve_execution_profile
+from util.experiment_execution import (
     POC1Coordinator,
     _batches,
     _combine_job,
@@ -17,7 +17,7 @@ from shapefm.poc1 import (
     scientific_configuration,
     validated_submission_metadata,
 )
-from shapefm.transformations import inverse, transform
+from util.transformations import inverse, transform
 
 
 EXPECTED_100_TASK_COUNTS = {2: 200, 3: 400, 4: 800, 5: 1_200, 6: 12}
@@ -471,7 +471,9 @@ class TransactionTests(unittest.TestCase):
         execution = resolve_execution_profile(
             "sequential_safe", {"chronos_inference_batch_size": 2}
         )
-        with patch("shapefm.poc1.PersistentChronosWorker", OOMThenSuccessWorker):
+        with patch(
+            "util.experiment_execution.PersistentChronosWorker", OOMThenSuccessWorker
+        ):
             result = self.coordinator.run_gate("experiment", 4, execution=execution)
         self.assertEqual(result["counts"], {"completed": 2})
         self.assertEqual(OOMThenSuccessWorker.starts, 2)

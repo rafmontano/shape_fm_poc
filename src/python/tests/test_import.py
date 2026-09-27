@@ -11,15 +11,15 @@ import duckdb
 import pyarrow as pa
 import pyarrow.ipc as ipc
 
-from shapefm.config import (
+from util.configuration import (
     ImportValidationError,
     dataset_identity,
     evaluation_window,
     json_fingerprint,
     validate_config,
 )
-from shapefm.database import ShapeFMDatabase, migrate_database
-from shapefm.orchestration import (
+from util.database import ShapeFMDatabase, migrate_database
+from util.import_execution import (
     ImportCoordinator,
     SeriesResult,
     SeriesTask,
@@ -96,7 +96,7 @@ class ConfigurationTests(unittest.TestCase):
 
 
 class WorkerTests(unittest.TestCase):
-    @patch("shapefm.orchestration.subprocess.run")
+    @patch("util.import_execution.subprocess.run")
     def test_optional_provenance_command_times_out(self, run):
         run.side_effect = TimeoutExpired(["Rscript", "-e", "version"], 0.01)
 

@@ -1,4 +1,9 @@
-# Portable environments
+# Historical environment reconstruction record
+
+> **Historical document.** This preserves how the locked environments were
+> originally built. It is not an active execution guide and its former console
+> and workflow commands have been removed. Current commands use
+> `src/python/00_main.py` with `--locked --no-sync` as documented in the README.
 
 Installed environments must never be copied between macOS and Ubuntu. Git
 stores declarations, interpreter selections, activation files, and lockfiles;

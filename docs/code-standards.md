@@ -40,13 +40,13 @@ Python is the control layer because it owns Dask execution, the single DuckDB
 writer, task orchestration, restart state, GIFT-Eval integration, and most
 foundation-model execution.
 
-The entry point exposes explicit actions, for example:
+The entry point exposes only the actions with demonstrated researcher workflows:
 
 ```text
-python src/python/00_main.py run
-python src/python/00_main.py test
+python src/python/00_main.py plan
 python src/python/00_main.py status
-python src/python/00_main.py setup
+python src/python/00_main.py results
+python src/python/00_main.py test
 ```
 
 There is no implicit default that starts an experiment, installs software, or
@@ -124,7 +124,7 @@ Examples include:
 
 ```text
 src/python/04_forecast_chronos.py
-src/r/02_preprocess_tsclean.R
+src/r/02_preprocess_series.R
 src/r/04_forecast_auto_arima.R
 ```
 
@@ -175,7 +175,7 @@ R is retained where its implementation is scientifically required, for
 example:
 
 ```text
-src/r/02_preprocess_tsclean.R
+src/r/02_preprocess_series.R
 src/r/04_forecast_auto_arima.R
 ```
 
@@ -196,7 +196,8 @@ Python controls Dask and the experiment lifecycle.
 - Execution mode and worker count do not alter scientific identity.
 - Completed tasks are not repeated after restart.
 - R operations execute inside bounded worker calls controlled by Python.
-- Foundation-model GPU tasks use an explicitly declared accelerator resource.
+- Foundation-model GPU tasks use `CHRONOS_GPU_SLOT`, an explicitly declared
+  logical execution resource that is distinct from physical GPU count.
 
 ## One acceptance case
 
@@ -212,8 +213,10 @@ The acceptance case uses:
 - the first 100 official time series in deterministic GIFT-Eval order;
 - a fresh isolated DuckDB database;
 - the complete import-to-evaluation pipeline;
-- five Mac workers;
-- sixteen total Ubuntu workers, including the dedicated Ubuntu GPU worker;
+- five Mac CPU workers;
+- fifteen Ubuntu CPU workers;
+- fifteen logical Ubuntu GPU workers sharing one physical RTX 5090;
+- 35 Dask workers in total;
 - official GIFT-Eval evaluation;
 - a restart run that proves completed work is skipped;
 - recorded task counts, row counts, fingerprints, provenance, host
@@ -229,11 +232,9 @@ src/python/tests/
 
 It is invoked through `00_main.py`; it is not another public entry point.
 
-POC1 tests and interfaces may remain temporarily while the new acceptance case
-is being established. After the new test passes before and after refactoring,
-obsolete POC1 tests, workflows, console commands, shell entry points, and
-compatibility wrappers are removed. Git preserves their history, so no archive
-copy is created.
+Obsolete POC1 workflows, console commands, shell entry points, root R wrappers,
+and compatibility packages are removed after replacement coverage. Git
+preserves their history, so no archive copy is created.
 
 ## Configuration and documentation
 

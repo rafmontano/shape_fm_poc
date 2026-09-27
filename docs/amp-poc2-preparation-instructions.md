@@ -1,4 +1,9 @@
-# AMP Code instructions: POC2 single entry point and acceptance baseline
+# Historical brief: POC2 single entry point and acceptance baseline
+
+> **Historical document.** This was the original AMP preparation brief before
+> the final source cutover. It is retained only as design and acceptance-history
+> evidence. `README.md`, `docs/architecture.md`, `docs/code-standards.md`, and
+> `docs/local-execution.md` define the current interface and structure.
 
 ## Objective
 

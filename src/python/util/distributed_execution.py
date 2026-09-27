@@ -23,15 +23,16 @@ import dask
 import distributed
 from distributed import Client, Future, as_completed, get_worker
 
-from .config import json_fingerprint
-from .forecasting import combine_equal_weight
+from .configuration import json_fingerprint
+from .forecast_combination import combine_equal_weight
 from .transformations import transform
 
 
 EXPECTED_DASK_VERSION = "2026.8.0"
 EXPECTED_GIFT_EVAL_REVISION = "4d5ab3fa0fe7451bbf59bb1ff6dd76e6e414d64a"
 EXPECTED_CHRONOS_REVISION = "29ec3766d36d6f73f0696f85560a422f50e8498c"
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
+CHRONOS_GPU_RESOURCE = "CHRONOS_GPU_SLOT"
 
 
 def _worker_provenance(
@@ -70,7 +71,7 @@ def worker_resource_snapshot(dask_worker: Any = None) -> dict[str, Any]:
         "dask_spilled_memory_bytes": int(getattr(spilled, "memory", 0)),
         "dask_spilled_disk_bytes": int(getattr(spilled, "disk", 0)),
     }
-    if resources.get("GPU", 0) >= 1:
+    if resources.get(CHRONOS_GPU_RESOURCE, 0) >= 1:
         query = subprocess.run(
             [
                 "nvidia-smi",
@@ -105,7 +106,12 @@ def _run_r(payload: dict[str, Any], timeout: float = 1800.0) -> dict[str, Any]:
         capture_output=True,
         text=True,
         timeout=timeout,
-        env={**os.environ, "OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1"},
+        env={
+            **os.environ,
+            "OMP_NUM_THREADS": "1",
+            "OPENBLAS_NUM_THREADS": "1",
+            "RENV_CONFIG_SYNCHRONIZED_CHECK": "false",
+        },
     )
     return json.loads(completed.stdout)
 
@@ -217,7 +223,7 @@ atexit.register(_close_chronos)
 
 def _get_chronos(model: str, revision: str, device: str) -> tuple[Any, int]:
     global _chronos_worker, _chronos_key, _chronos_generation
-    from .execution import PersistentChronosWorker
+    from .execution_profiles import PersistentChronosWorker
 
     key = (model, revision, device)
     with _chronos_lock:
@@ -226,7 +232,7 @@ def _get_chronos(model: str, revision: str, device: str) -> tuple[Any, int]:
                 _chronos_worker.close(force=True)
             command = [
                 str(ROOT / "environments/chronos-2/.venv/bin/python"),
-                str(ROOT / "src/shapefm/chronos_worker.py"),
+                str(ROOT / "src/python/04_forecast_chronos.py"),
                 "serve",
                 "--model",
                 model,
@@ -304,7 +310,9 @@ def _command(*arguments: str, timeout: float = 30.0) -> str:
 
 def worker_preflight(dask_worker: Any = None) -> dict[str, Any]:
     """Return exact environment identity from inside one Dask worker."""
-    config = json.loads((ROOT / "config/experiments/poc1.json").read_text())
+    config = json.loads(
+        (ROOT / "config/experiments/m4_daily_reference.json").read_text()
+    )
     scientific = {
         key: value
         for key, value in config.items()
@@ -410,7 +418,7 @@ def validate_cluster(
             "checkpoint_present"
         ]:
             failures.append(f"{address}: pinned Chronos checkpoint is unavailable")
-        if report["resources"].get("GPU", 0) >= 1:
+        if report["resources"].get(CHRONOS_GPU_RESOURCE, 0) >= 1:
             gpu_workers += 1
             if expected_gpu_name and (
                 not chronos["cuda_available"]

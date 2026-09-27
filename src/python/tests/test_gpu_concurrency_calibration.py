@@ -1,13 +1,14 @@
 import unittest
 from unittest.mock import MagicMock
 
-from shapefm.dask_execution import (
+from util.distributed_execution import (
+    CHRONOS_GPU_RESOURCE,
     EXPECTED_CHRONOS_REVISION,
     EXPECTED_DASK_VERSION,
     EXPECTED_GIFT_EVAL_REVISION,
     validate_cluster,
 )
-from tests.gpu_concurrency import (
+from util.gpu_concurrency_calibration import (
     GIB,
     GpuCalibrationSettings,
     _configuration_decisions,
@@ -45,7 +46,7 @@ class GpuConcurrencyCalibrationTests(unittest.TestCase):
                 "distributed_version": EXPECTED_DASK_VERSION,
                 "configuration_hash": "configuration",
                 "gift_eval_revision": EXPECTED_GIFT_EVAL_REVISION,
-                "resources": {"GPU": 1},
+                "resources": {CHRONOS_GPU_RESOURCE: 1},
                 "r_packages": {
                     "R": "4.6.1",
                     "renv": "1.2.4",

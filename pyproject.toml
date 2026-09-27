@@ -16,14 +16,10 @@ dependencies = [
   "pyarrow>=20",
 ]
 
-[project.scripts]
-shapefm-acquire = "shapefm.acquire_gift_eval:main"
-shapefm-cluster = "shapefm.cluster_cli:main"
-shapefm-import = "shapefm.import_gift_eval:main"
-shapefm-poc1 = "shapefm.poc1_cli:main"
-
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["src/python"]
+include = ["util*"]
+exclude = ["tests*"]
 
 [tool.uv]
 required-version = "==0.12.18"

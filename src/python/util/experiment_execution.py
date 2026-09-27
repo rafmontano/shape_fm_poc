@@ -19,9 +19,9 @@ from typing import Any, Callable, Iterable
 
 import duckdb
 
-from .config import canonical_json, json_fingerprint
+from .configuration import canonical_json, json_fingerprint
 from .database import DEFAULT_DATABASE, migrate_database
-from .execution import (
+from .execution_profiles import (
     GIB,
     ExecutionProfile,
     ExecutionSettings,
@@ -30,10 +30,10 @@ from .execution import (
     system_hardware,
     validate_system_memory,
 )
-from .forecasting import combine_equal_weight
-from .orchestration import repository_root
+from .forecast_combination import combine_equal_weight
+from .import_execution import repository_root
 from .transformations import TransformationResult, inverse, transform
-from .utils import utc_now
+from .provenance import utc_now
 
 
 QUANTILES = (0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
@@ -202,7 +202,9 @@ class POC1Coordinator:
         self.database_path = migrate_database(database_path)
         self.connection = duckdb.connect(str(self.database_path))
         self.config = json.loads(
-            (self.root / "config/experiments/poc1.json").read_text(encoding="utf-8")
+            (self.root / "config/experiments/m4_daily_reference.json").read_text(
+                encoding="utf-8"
+            )
         )
         self._hardware_cache: dict[str, dict[str, Any]] = {}
 
@@ -218,7 +220,7 @@ class POC1Coordinator:
     def _gift_bridge(self, *arguments: str, timeout: float = 300.0) -> dict[str, Any]:
         command = [
             str(self.root / "environments/gift-eval/.venv/bin/python"),
-            str(self.root / "scripts/gift_eval_bridge.py"),
+            str(self.root / "src/python/06_evaluate_gift_eval.py"),
             *arguments,
         ]
         completed = subprocess.run(
@@ -715,7 +717,7 @@ class POC1Coordinator:
             completed = subprocess.run(
                 [
                     str(self.root / "environments/chronos-2/.venv/bin/python"),
-                    str(self.root / "src/shapefm/chronos_worker.py"),
+                    str(self.root / "src/python/04_forecast_chronos.py"),
                     "hardware",
                     "--device",
                     requested_device,
@@ -786,7 +788,7 @@ class POC1Coordinator:
         chronos = self.config["models"]["chronos_2"]
         command = [
             str(self.root / "environments/chronos-2/.venv/bin/python"),
-            str(self.root / "src/shapefm/chronos_worker.py"),
+            str(self.root / "src/python/04_forecast_chronos.py"),
             "serve",
             "--model",
             chronos["repository"],
@@ -904,7 +906,12 @@ class POC1Coordinator:
             capture_output=True,
             text=True,
             timeout=timeout,
-            env={**os.environ, "OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1"},
+            env={
+                **os.environ,
+                "OMP_NUM_THREADS": "1",
+                "OPENBLAS_NUM_THREADS": "1",
+                "RENV_CONFIG_SYNCHRONIZED_CHECK": "false",
+            },
         )
         return json.loads(completed.stdout)
 
@@ -975,7 +982,7 @@ class POC1Coordinator:
         if settings.mode == "dask" and stage != 6:
             from distributed import Client
 
-            from .dask_execution import validate_cluster
+            from .distributed_execution import validate_cluster
 
             if settings.dask_scheduler_address:
                 dask_client = Client(
@@ -989,7 +996,7 @@ class POC1Coordinator:
                     n_workers=1,
                     threads_per_worker=1,
                     processes=True,
-                    resources={"CPU": 1, "GPU": 1},
+                    resources={"CPU": 1, "CHRONOS_GPU_SLOT": 1},
                     timeout=f"{settings.dask_timeout_seconds}s",
                 )
                 expected_gpu_name = None
@@ -1168,7 +1175,7 @@ class POC1Coordinator:
             return batch, response, time.monotonic() - started
 
         if dask_client is not None:
-            from .dask_execution import clean_batch, run_batches
+            from .distributed_execution import clean_batch, run_batches
 
             dask_results = run_batches(
                 dask_client,
@@ -1304,7 +1311,7 @@ class POC1Coordinator:
                 commit_result(meta, result, 0.0)
             return
 
-        from .dask_execution import run_batches, transform_batch
+        from .distributed_execution import run_batches, transform_batch
 
         jobs = [
             {"id": meta[0], "values": values, "method": method}
@@ -1461,7 +1468,7 @@ class POC1Coordinator:
                 )
 
         if dask_client is not None:
-            from .dask_execution import (
+            from .distributed_execution import (
                 autoarima_batch,
                 chronos_batch,
                 run_batch_groups,
@@ -1491,14 +1498,14 @@ class POC1Coordinator:
                 groups["chronos_2"] = (
                     chronos_batch,
                     pending_chronos(),
-                    {"GPU": 1},
+                    {"CHRONOS_GPU_SLOT": 1},
                     (
                         chronos["repository"],
                         chronos["revision"],
                         list(QUANTILES),
                         device,
                     ),
-                    1,
+                    settings.dask_max_in_flight,
                 )
             for model, batch, response in run_batch_groups(
                 dask_client, groups, retries=settings.dask_retries
@@ -1533,7 +1540,7 @@ class POC1Coordinator:
             chronos = self.config["models"]["chronos_2"]
             command = [
                 str(self.root / "environments/chronos-2/.venv/bin/python"),
-                str(self.root / "src/shapefm/chronos_worker.py"),
+                str(self.root / "src/python/04_forecast_chronos.py"),
                 "serve",
                 "--model",
                 chronos["repository"],
@@ -1776,7 +1783,7 @@ class POC1Coordinator:
                 commit_combination(row, result, job)
             return
 
-        from .dask_execution import combine_batch, run_batches
+        from .distributed_execution import combine_batch, run_batches
 
         rows_by_id = {row[0]: row for row in combination_rows}
         jobs_by_id = {job["id"]: job for job in jobs}

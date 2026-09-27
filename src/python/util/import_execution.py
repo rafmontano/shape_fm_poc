@@ -17,7 +17,7 @@ from typing import Any, Iterable
 
 import duckdb
 
-from .config import (
+from .configuration import (
     ImportValidationError,
     canonical_import_configuration,
     canonical_json,
@@ -26,8 +26,8 @@ from .config import (
     json_fingerprint,
 )
 from .database import migrate_database
-from .gift_eval import iter_source_series, source_fingerprint, source_metadata
-from .utils import sha256_file, utc_now
+from .gift_eval_source import iter_source_series, source_fingerprint, source_metadata
+from .provenance import sha256_file, utc_now
 
 
 STAGE = "import"
@@ -119,7 +119,7 @@ def worker_entry(task: SeriesTask) -> WorkerOutcome:
 
 
 def repository_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+    return Path(__file__).resolve().parents[3]
 
 
 def command_output(command: list[str], timeout_seconds: float = 30.0) -> str | None:

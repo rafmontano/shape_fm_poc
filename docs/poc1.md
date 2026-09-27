@@ -1,4 +1,8 @@
-# POC 1: official end-to-end GIFT-Eval demonstration
+# Historical record: POC 1 official end-to-end GIFT-Eval demonstration
+
+> **Historical document.** Commands and paths below record the former POC1
+> interface and are not active researcher instructions. Use `src/python/00_main.py`
+> and the current README.
 
 ## Authority and data flow
 
