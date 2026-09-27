@@ -20,6 +20,9 @@ from shapefm.poc1 import (
 from shapefm.transformations import inverse, transform
 
 
+EXPECTED_100_TASK_COUNTS = {2: 200, 3: 400, 4: 800, 5: 1_200, 6: 12}
+
+
 class TransformationTests(unittest.TestCase):
     def test_provisional_selection_does_not_change_scientific_identity(self):
         first = {"models": {"a": {"revision": "1"}}, "provisional_candidate": "a"}
@@ -529,6 +532,109 @@ class ScopeExpansionTests(unittest.TestCase):
     def _gift_bridge(self, *arguments, **_kwargs):
         limit = int(arguments[arguments.index("--limit") + 1])
         return self._description(limit)
+
+    def test_series_limit_dry_plan_selects_exact_official_prefix(self):
+        self.coordinator._gift_bridge = self._gift_bridge
+
+        plan = self.coordinator.plan(
+            "m4_daily", dry_run=True, series_limit=100
+        )
+
+        self.assertEqual(plan["series_limit_requested"], 100)
+        self.assertEqual(plan["series_count"], 100)
+        self.assertEqual(plan["forecast_instances"], 100)
+        self.assertEqual(plan["candidate_forecast_rows"], 1_200)
+        self.assertEqual(plan["official_evaluation_rows"], 12)
+        self.assertEqual(
+            plan["task_counts"],
+            {"2": 200, "3": 400, "4": 800, "5": 1_200, "6": 12},
+        )
+
+    def test_series_limit_rejects_invalid_unavailable_and_inconsistent_values(self):
+        self.coordinator._gift_bridge = self._gift_bridge
+        for value in (0, -1, True, 1.5):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, "positive integer"):
+                    self.coordinator.plan("m4_daily", series_limit=value)
+        with self.assertRaisesRegex(ValueError, "exceeds 4227"):
+            self.coordinator.plan("m4_daily", series_limit=4_228)
+
+        def duplicate_bridge(*arguments, **_kwargs):
+            result = self._gift_bridge(*arguments, **_kwargs)
+            if int(arguments[arguments.index("--limit") + 1]) == 100:
+                result["instances"][-1]["item_id"] = "0"
+            return result
+
+        self.coordinator._gift_bridge = duplicate_bridge
+        with self.assertRaisesRegex(RuntimeError, "99 distinct series"):
+            self.coordinator.plan("m4_daily", dry_run=True, series_limit=100)
+
+    def test_series_limit_expands_smoke_and_replans_without_duplicate_tasks(self):
+        self.coordinator._gift_bridge = self._gift_bridge
+        smoke = self.coordinator.plan("smoke")
+        self.coordinator.connection.execute(
+            """UPDATE experiment_tasks SET status='completed'
+               WHERE experiment_id=? AND stage BETWEEN 2 AND 5""",
+            [smoke.experiment_id],
+        )
+
+        expanded = self.coordinator.plan("m4_daily", series_limit=100)
+        repeated = self.coordinator.plan("m4_daily", series_limit=100)
+
+        self.assertEqual(expanded.experiment_id, smoke.experiment_id)
+        self.assertEqual(expanded.scope, "series_limit:100")
+        self.assertEqual(expanded.instance_count, 100)
+        self.assertEqual(expanded.task_counts, EXPECTED_100_TASK_COUNTS)
+        self.assertEqual(repeated.task_counts, EXPECTED_100_TASK_COUNTS)
+        self.assertEqual(
+            self.coordinator.connection.execute(
+                "SELECT count(*) FROM experiment_tasks WHERE experiment_id=?",
+                [expanded.experiment_id],
+            ).fetchone()[0],
+            sum(EXPECTED_100_TASK_COUNTS.values()),
+        )
+        for stage, expected in ((2, 20), (3, 40), (4, 80), (5, 120)):
+            completed = self.coordinator.connection.execute(
+                """SELECT count(*) FROM experiment_tasks
+                   WHERE experiment_id=? AND stage=? AND status='completed'""",
+                [expanded.experiment_id, stage],
+            ).fetchone()[0]
+            self.assertEqual(completed, expected)
+        self.assertEqual(
+            self.coordinator.connection.execute(
+                """SELECT status, count(*) FROM experiment_tasks
+                   WHERE experiment_id=? AND stage=6 GROUP BY status""",
+                [expanded.experiment_id],
+            ).fetchall(),
+            [("pending", 12)],
+        )
+
+        row = self.coordinator._pending(expanded.experiment_id, 6)[0]
+        with self.assertRaisesRegex(RuntimeError, "exactly 100 unique forecasts"):
+            self.coordinator._stage6(expanded.experiment_id, [row], {row[0]: 1}, 1)
+
+        self.coordinator.connection.execute(
+            """UPDATE experiment_tasks SET status='completed'
+               WHERE experiment_id=? AND stage=2""",
+            [expanded.experiment_id],
+        )
+        self.coordinator.run_gate(expanded.experiment_id, 2, series_limit=100)
+        selection = json.loads(
+            self.coordinator.connection.execute(
+                """SELECT execution_overrides FROM experiment_invocations
+                   WHERE experiment_id=? AND requested_gate='preprocess'
+                   ORDER BY started_at DESC LIMIT 1""",
+                [expanded.experiment_id],
+            ).fetchone()[0]
+        )["selection"]
+        self.assertEqual(
+            selection,
+            {
+                "series_limit_requested": 100,
+                "series_count_actual": 100,
+                "forecast_instance_count_actual": 100,
+            },
+        )
 
     def test_smoke_to_full_preserves_upstream_and_invalidates_evaluation(self):
         self.coordinator._gift_bridge = self._gift_bridge

@@ -28,6 +28,7 @@ def main() -> None:
     plan_parser = subparsers.add_parser("plan")
     plan_parser.add_argument("--scope", choices=["smoke", "m4_daily", "manifest"], default="smoke")
     plan_parser.add_argument("--dry-run", action="store_true")
+    plan_parser.add_argument("--series-limit", type=int)
     run_parser = subparsers.add_parser("run")
     run_parser.add_argument("--experiment-id")
     run_parser.add_argument("--stage", type=int, choices=range(2, 7))
@@ -135,7 +136,11 @@ def main() -> None:
         selected_experiment = latest_experiment_id(args.database)
     with POC1Coordinator(args.database) as coordinator:
         if args.command == "plan":
-            value = coordinator.plan(args.scope, dry_run=args.dry_run)
+            value = coordinator.plan(
+                args.scope,
+                dry_run=args.dry_run,
+                series_limit=args.series_limit,
+            )
             result = asdict(value) if isinstance(value, ExperimentPlan) else value
         elif args.command == "run":
             experiment_id = selected_experiment

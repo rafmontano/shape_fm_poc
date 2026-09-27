@@ -122,6 +122,7 @@ class ExperimentPlan:
     variant_count: int
     task_counts: dict[int, int]
     benchmark_configuration: str
+    series_limit: int | None = None
 
 
 @dataclass(frozen=True)
@@ -253,9 +254,20 @@ class POC1Coordinator:
             )
 
     def plan(
-        self, scope: str = "smoke", dry_run: bool = False
+        self,
+        scope: str = "smoke",
+        dry_run: bool = False,
+        series_limit: int | None = None,
     ) -> ExperimentPlan | dict[str, Any]:
+        if series_limit is not None and (
+            isinstance(series_limit, bool)
+            or not isinstance(series_limit, int)
+            or series_limit <= 0
+        ):
+            raise ValueError("series_limit must be a positive integer")
         if scope == "manifest":
+            if series_limit is not None:
+                raise ValueError("series_limit cannot be used with manifest scope")
             manifest = self._gift_bridge("manifest", "--root", str(self.root))
             manifest["task_formula_per_forecast_instance"] = {
                 "stage_2": 2,
@@ -273,33 +285,50 @@ class POC1Coordinator:
                 "SHAPEFM_GIFT_EVAL_ROOT", self.root / "data/source/gift_eval"
             )
         )
-        if scope == "m4_daily":
-            summary = self._gift_bridge(
-                "describe", "--source-root", str(source_root), "--limit", "1"
+        availability = self._gift_bridge(
+            "describe", "--source-root", str(source_root), "--limit", "1"
+        )
+        self._validate_official_configuration(availability)
+        available_instances = int(availability["available_instances"])
+        limit = (
+            series_limit
+            if series_limit is not None
+            else available_instances
+            if scope == "m4_daily"
+            else 10
+        )
+        if limit > available_instances:
+            raise ValueError(
+                f"series_limit {limit} exceeds {available_instances} available M4 Daily instances"
             )
-            self._validate_official_configuration(summary)
-            instances = summary["available_instances"]
-            if dry_run:
-                return {
-                    "scope": scope,
-                    "mode": "dry-run",
-                    "benchmark_configuration": summary["configuration_name"],
-                    "forecast_instances": instances,
-                    "task_counts": {
-                        str(stage): count
-                        for stage, count in expected_task_counts(instances).items()
-                    },
-                    "resource_note": "planning only; no experiment rows were materialised",
-                }
+        requested_scope = (
+            f"series_limit:{limit}" if series_limit is not None else scope
+        )
+        if dry_run and scope == "m4_daily" and series_limit is None:
+            return {
+                "scope": requested_scope,
+                "mode": "dry-run",
+                "series_limit_requested": None,
+                "series_count": available_instances,
+                "forecast_instances": available_instances,
+                "candidate_forecast_rows": expected_task_counts(available_instances)[5],
+                "official_evaluation_rows": expected_task_counts(available_instances)[6],
+                "benchmark_configuration": availability["configuration_name"],
+                "task_counts": {
+                    str(stage): count
+                    for stage, count in expected_task_counts(available_instances).items()
+                },
+                "resource_note": "planning only; no experiment rows were materialised",
+            }
+        if not dry_run:
             dataset_id = self._dataset_id()
             benchmark_identity = {
                 "revision": self.config["benchmark"]["gift_eval_revision"],
-                "configuration": summary["configuration_name"],
+                "configuration": availability["configuration_name"],
             }
             benchmark_id = f"benchmark/{json_fingerprint(benchmark_identity)[:24]}"
-            configuration_hash = json_fingerprint(
-                scientific_configuration(self.config)
-            )
+            scientific = scientific_configuration(self.config)
+            configuration_hash = json_fingerprint(scientific)
             experiment_id = f"experiment/{json_fingerprint({'benchmark': benchmark_id, 'dataset': dataset_id, 'configuration': configuration_hash})[:24]}"
             existing_counts = {
                 int(stage): int(count)
@@ -309,35 +338,67 @@ class POC1Coordinator:
                     [experiment_id],
                 ).fetchall()
             }
-            expected_counts = expected_task_counts(instances)
+            expected_counts = expected_task_counts(limit)
+            existing_instances = existing_counts.get(2, 0) // len(
+                self.config["cleaning"]
+            )
+            if series_limit is not None and existing_instances > limit:
+                raise ValueError(
+                    f"series_limit {limit} cannot shrink an existing "
+                    f"{existing_instances}-series experiment"
+                )
+            existing_scope_row = self.connection.execute(
+                "SELECT scope FROM experiments WHERE experiment_id=?", [experiment_id]
+            ).fetchone()
+            plan_scope = (
+                existing_scope_row[0]
+                if existing_instances > limit and existing_scope_row is not None
+                else requested_scope
+            )
             if existing_counts == expected_counts:
                 return ExperimentPlan(
                     experiment_id,
-                    scope,
-                    instances,
+                    plan_scope,
+                    limit,
                     len(self.config["cleaning"])
                     * len(self.config["transformations"]),
                     existing_counts,
-                    summary["configuration_name"],
+                    availability["configuration_name"],
+                    series_limit,
                 )
-            expanding_scope = 0 < existing_counts.get(2, 0) < expected_counts[2]
-            limit = instances
-        else:
-            expanding_scope = False
-            limit = 10
         official = self._gift_bridge(
             "describe", "--source-root", str(source_root), "--limit", str(limit)
         )
         self._validate_official_configuration(official)
-        dataset_id = self._dataset_id()
-        benchmark_identity = {
-            "revision": self.config["benchmark"]["gift_eval_revision"],
-            "configuration": official["configuration_name"],
-        }
-        benchmark_id = f"benchmark/{json_fingerprint(benchmark_identity)[:24]}"
-        scientific = scientific_configuration(self.config)
-        configuration_hash = json_fingerprint(scientific)
-        experiment_id = f"experiment/{json_fingerprint({'benchmark': benchmark_id, 'dataset': dataset_id, 'configuration': configuration_hash})[:24]}"
+        instances = official["instances"]
+        series_ids = [str(item["item_id"]) for item in instances]
+        positions = [int(item["official_position"]) for item in instances]
+        if (
+            len(instances) != limit
+            or len(set(series_ids)) != limit
+            or positions != list(range(limit))
+        ):
+            raise RuntimeError(
+                f"requested {limit} official M4 Daily series but selected "
+                f"{len(instances)} instances and {len(set(series_ids))} distinct series"
+            )
+        if dry_run:
+            return {
+                "scope": requested_scope,
+                "mode": "dry-run",
+                "series_limit_requested": series_limit,
+                "series_count": len(set(series_ids)),
+                "forecast_instances": len(instances),
+                "candidate_forecast_rows": expected_task_counts(len(instances))[5],
+                "official_evaluation_rows": expected_task_counts(len(instances))[6],
+                "benchmark_configuration": official["configuration_name"],
+                "task_counts": {
+                    str(stage): count
+                    for stage, count in expected_task_counts(len(instances)).items()
+                },
+                "resource_note": "planning only; no experiment rows were materialised",
+            }
+        expanding_scope = 0 < existing_instances < limit
         self.connection.execute("BEGIN TRANSACTION")
         try:
             self.connection.execute(
@@ -370,7 +431,7 @@ class POC1Coordinator:
                     provisional_candidate
                 ) VALUES (?, ?, ?, 'poc1', ?, ?, ?, 'planned', ?)
                 ON CONFLICT (experiment_id) DO UPDATE SET
-                    scope = CASE WHEN excluded.scope = 'm4_daily' THEN excluded.scope ELSE experiments.scope END,
+                    scope = excluded.scope,
                     updated_at = now()""",
                 [
                     experiment_id,
@@ -378,7 +439,7 @@ class POC1Coordinator:
                     dataset_id,
                     canonical_json(scientific),
                     configuration_hash,
-                    scope,
+                    plan_scope,
                     canonical_json(self.config["provisional_candidate"]),
                 ],
             )
@@ -531,9 +592,9 @@ class POC1Coordinator:
                     [experiment_id],
                 )
                 self.connection.execute(
-                    """UPDATE experiments SET scope='m4_daily', status='planned',
+                    """UPDATE experiments SET scope=?, status='planned',
                        updated_at=current_timestamp WHERE experiment_id=?""",
-                    [experiment_id],
+                    [plan_scope, experiment_id],
                 )
             self.connection.execute("COMMIT")
         except BaseException:
@@ -547,11 +608,12 @@ class POC1Coordinator:
         )
         return ExperimentPlan(
             experiment_id,
-            scope,
+            plan_scope,
             len(official["instances"]),
             len(variants),
             {int(stage): int(count) for stage, count in counts.items()},
             official["configuration_name"],
+            series_limit,
         )
 
     def _register_task(
@@ -869,6 +931,7 @@ class POC1Coordinator:
         batch_size: int = 8,
         execution: tuple[ExecutionProfile, dict[str, Any]] | None = None,
         execution_settings: ExecutionSettings | None = None,
+        series_limit: int | None = None,
     ) -> dict[str, Any]:
         if stage not in STAGES or workers < 1 or batch_size < 1:
             raise ValueError("stage must be 2..6; workers and batch_size must be positive")
@@ -956,6 +1019,20 @@ class POC1Coordinator:
             6: profile.evaluation_workers,
         }[stage]
         self._check_gate(experiment_id, stage)
+        actual_series, actual_instances = self.connection.execute(
+            """SELECT count(DISTINCT i.series_id), count(DISTINCT i.forecast_instance_id)
+               FROM forecast_instances i
+               JOIN experiment_tasks t USING (forecast_instance_id)
+               WHERE t.experiment_id=? AND t.stage=2""",
+            [experiment_id],
+        ).fetchone()
+        invocation_overrides = dict(overrides)
+        if series_limit is not None:
+            invocation_overrides["selection"] = {
+                "series_limit_requested": series_limit,
+                "series_count_actual": int(actual_series),
+                "forecast_instance_count_actual": int(actual_instances),
+            }
         invocation = self._begin_invocation(
             experiment_id,
             stage,
@@ -963,7 +1040,7 @@ class POC1Coordinator:
             resolved_device,
             profile.chronos_inference_batch_size,
             profile,
-            overrides,
+            invocation_overrides,
             {**hardware, "execution_settings": settings.to_dict()},
         )
         rows = self._pending(experiment_id, stage)
@@ -1737,11 +1814,12 @@ class POC1Coordinator:
             "SELECT benchmark_configuration_id FROM experiments WHERE experiment_id=?",
             [experiment_id],
         ).fetchone()[0]
-        scope = self.connection.execute(
-            "SELECT scope FROM experiments WHERE experiment_id=?",
+        expected_count = self.connection.execute(
+            """SELECT count(DISTINCT forecast_instance_id)
+               FROM experiment_tasks
+               WHERE experiment_id=? AND stage=2""",
             [experiment_id],
         ).fetchone()[0]
-        expected_count = 4_227 if scope == "m4_daily" else 10
         prepared = []
         for task_id, _, variant_id, candidate in rows:
             records = self.connection.execute(
@@ -1878,6 +1956,7 @@ class POC1Coordinator:
                     batch_size,
                     execution,
                     execution_settings,
+                    plan.series_limit,
                 )
             )
         self.connection.execute(

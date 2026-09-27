@@ -1,116 +1,42 @@
-# ShapeFM proof of concept
+# ShapeFM
 
-Foundation Stage 1 is frozen at tag `v0.1-foundation`. POC 1 adds an
-end-to-end, restartable research grid while keeping official GIFT-Eval as the
-enclosing benchmark and sole evaluation authority.
-
-## Start POC 1 in RStudio
-
-```r
-source("R/shapefm_import.R")
-source("R/shapefm_database.R")
-source("R/shapefm_poc1.R")
-
-plan <- shapefm_plan_poc1(scope = "smoke")
-shapefm_run_poc1(plan, profile = "sequential_safe")
-
-db <- shapefm_open()
-forecast <- shapefm_get_forecast(db, plan, series_id = "0")
-results <- shapefm_get_official_results(db, plan)
-print(results) # concise MASE, sMAPE, CRPS, and RMSE comparison
-status <- shapefm_experiment_status(db, plan)
-shapefm_close(db)
-```
-
-The smoke plan means the first ten **official forecast instances**, not the
-first ten arbitrary rows. It produces 4 cleaning/transformation branches and
-three candidates per branch (AutoARIMA, Chronos-2, and their equal-weight
-combination), for 120 candidate forecasts. See [POC 1](docs/poc1.md).
-
-Foundation Stage 1 imports pinned GIFT-Eval M4 Daily source data into one
-authoritative DuckDB database: `data/shapefm.duckdb`. The original source under
-`data/source/gift_eval/` remains immutable.
-
-## Start here in RStudio
-
-1. Open `shape_fm_poc.Rproj`.
-2. If this is a new machine, source
-   `workflows/gate_00_setup/01_prepare_gift_eval.R` once.
-3. Source `workflows/stage_01_import/01_smoke_m4_daily.R`. This creates or
-   migrates the database and imports ten series sequentially.
-4. Source `workflows/stage_01_import/03_inspect_series.R`. It prints import
-   status and retrieves series `0` as an ordinary R object.
-
-The smoke workflow is restart-safe. Running it again skips its ten completed
-tasks without duplicating series or windows. The later full import has the same
-dataset and logical run identity, skips those ten tasks, and extends the database
-with the remaining 4,217 series. Every call has its own invocation record.
-
-## Researcher interface
-
-R:
-
-```r
-source("R/shapefm_import.R")
-source("R/shapefm_database.R")
-
-db <- shapefm_open()
-series <- shapefm_get_series(db, dataset = "m4_daily", series_id = "0")
-status <- shapefm_stage_status(db, stage = "import", dataset = "m4_daily")
-shapefm_close(db)
-```
-
-Python:
-
-```python
-from shapefm import ShapeFMDatabase
-
-with ShapeFMDatabase.open() as db:
-    series = db.get_series(dataset="m4_daily", series_id="0")
-    status = db.stage_status(stage="import", dataset="m4_daily")
-```
-
-Researchers use these objects rather than source-file or SQL details.
-
-## Stage 1 commands
+ShapeFM has one intended researcher entry point:
 
 ```sh
-# Create or migrate the database
-.tools/uv/uv run --locked shapefm-import migrate
-
-# Import the ten-series smoke sample (normal sequential path)
-.tools/uv/uv run --locked shapefm-import import --max-series 10 --workers 1
-
-# Inspect status and retrieve one series
-.tools/uv/uv run --locked shapefm-import status --dataset m4_daily
-.tools/uv/uv run --locked shapefm-import get --dataset m4_daily --series-id 0
-
-# Available later; do not run as part of the smoke gate
-Rscript workflows/stage_01_import/02_import_m4_daily.R
+.tools/uv/uv run --locked python src/python/00_main.py --help
 ```
 
-Run the restartable two-machine POC 1 smoke experiment from the Mac with:
+It never installs or synchronizes environments automatically. Supplying no
+action only displays help.
+
+## Deterministic acceptance case
+
+Inspect the dry plan for the first 100 official M4 Daily series:
 
 ```sh
-scripts/run_two_machine.sh --scope smoke
+.tools/uv/uv run --locked python src/python/00_main.py plan --series-limit 100
 ```
 
-See [local and distributed execution](docs/local-execution.md) for worker
-preflight, dashboard, troubleshooting, resume, and later full-run commands.
+After the local checkpoint and explicit approval for two-machine execution,
+run the complete import-to-official-evaluation acceptance action from the Mac:
 
-Set `workers` above one only for local parallel computation. Workers receive
-ordinary task objects and never open writable DuckDB connections; the single
-coordinator commits each result and task completion in one transaction.
+```sh
+.tools/uv/uv run --locked python src/python/00_main.py test
+```
 
-## Scope
+Run the same command a second time to prove restart behaviour against the same
+isolated database. The acceptance database and generated report are written
+under ignored `results/`; `data/shapefm.duckdb` is never used by this action.
 
-Foundation Stage 1 remains the canonical ingestion layer. POC 1 demonstrates
-identity/`tsclean` preprocessing, reversible transformations, AutoARIMA,
-Chronos-2, equal-weight combination, Dask execution across the Mac and Ubuntu,
-and official GIFT-Eval evaluation. It deliberately excludes Mantis, MOMENT,
-fine-tuning, learned selection, NAS, and automatic leaderboard submission.
+Inspect the isolated experiment without writing:
+
+```sh
+.tools/uv/uv run --locked python src/python/00_main.py status
+```
+
+The acceptance topology is five Mac CPU workers and sixteen Ubuntu workers:
+fifteen CPU workers plus one dedicated CUDA worker. Python remains the only
+DuckDB writer and official GIFT-Eval remains the evaluation authority.
 
 See [architecture](docs/architecture.md), [data contract](docs/data-contract.md),
-[environment setup](docs/environment.md), and the
-[Stage 1 walkthrough](docs/foundation-stage-1.md). Hardware-aware POC 1
-execution is described in [local execution](docs/local-execution.md).
+and [POC2 preparation instructions](docs/amp-poc2-preparation-instructions.md).
