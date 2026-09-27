@@ -200,7 +200,7 @@ for line in sys.stdin:
             self.assertIn("batch-tail", worker.stderr_tail)
 
     def test_worker_source_has_no_duckdb_access(self) -> None:
-        source = (Path(__file__).parents[1] / "src/shapefm/chronos_worker.py").read_text(
+        source = (Path(__file__).parents[3] / "src/shapefm/chronos_worker.py").read_text(
             encoding="utf-8"
         )
         imports = [
@@ -216,7 +216,7 @@ for line in sys.stdin:
         self.assertNotIn("duckdb", imports)
 
         dask_source = (
-            Path(__file__).parents[1] / "src/shapefm/dask_execution.py"
+            Path(__file__).parents[3] / "src/shapefm/dask_execution.py"
         ).read_text(encoding="utf-8")
         dask_imports = [
             node.names[0].name

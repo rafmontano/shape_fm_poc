@@ -10,7 +10,7 @@ from gift_eval.data import Dataset
 
 class GiftEvalSemanticsTests(unittest.TestCase):
     def test_m4_daily_contract_matches_official_package(self):
-        root = Path(__file__).resolve().parents[2]
+        root = Path(__file__).resolve().parents[4]
         source_root = Path(
             os.environ.get("SHAPEFM_GIFT_EVAL_ROOT", root / "data/source/gift_eval")
         )

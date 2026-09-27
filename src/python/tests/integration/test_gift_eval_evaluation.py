@@ -10,7 +10,7 @@ from pathlib import Path
 class OfficialAdapterTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.root = Path(__file__).resolve().parents[2]
+        cls.root = Path(__file__).resolve().parents[4]
         cls.python = cls.root / "environments/gift-eval/.venv/bin/python"
         cls.bridge = cls.root / "scripts/gift_eval_bridge.py"
         cls.source = cls.root / "data/source/gift_eval"

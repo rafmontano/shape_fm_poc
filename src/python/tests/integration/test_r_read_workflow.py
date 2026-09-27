@@ -7,7 +7,7 @@ from pathlib import Path
 
 class RReadWorkflowTests(unittest.TestCase):
     def test_forecast_results_and_status_share_open_read_only_connection(self):
-        root = Path(__file__).resolve().parents[2]
+        root = Path(__file__).resolve().parents[4]
         script = r'''
 source("R/shapefm_import.R")
 source("R/shapefm_database.R")

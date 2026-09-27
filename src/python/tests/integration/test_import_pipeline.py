@@ -15,7 +15,7 @@ from shapefm.orchestration import ImportCoordinator
 class Stage1ImportTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.root = Path(__file__).resolve().parents[2]
+        cls.root = Path(__file__).resolve().parents[4]
         cls.source = cls.root / "data/source/gift_eval/m4_daily"
         cls.config = load_config(cls.root / "config/imports/m4_daily.json", 10)
         cls.revision = "30841734ac5cfddbd0c3bad6d09d2b6b32becbb0"
