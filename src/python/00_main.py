@@ -8,6 +8,7 @@ import json
 import platform
 import subprocess
 import sys
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -16,7 +17,13 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "src/python"))
 
-from shapefm.poc1 import POC1Coordinator, experiment_status, latest_experiment_id
+from shapefm.poc1 import (
+    POC1Coordinator,
+    experiment_status,
+    get_forecast,
+    latest_experiment_id,
+    official_results,
+)
 from tests.acceptance import SERIES_LIMIT, run_acceptance
 
 
@@ -81,6 +88,15 @@ def build_parser() -> argparse.ArgumentParser:
     status.add_argument("--database", type=Path, default=DEFAULT_DATABASE)
     status.add_argument("--experiment-id")
 
+    results = subparsers.add_parser(
+        "results", help="read official evaluations or one stored forecast"
+    )
+    results.add_argument("--database", type=Path, default=DEFAULT_DATABASE)
+    results.add_argument("--experiment-id")
+    results.add_argument("--variant-id")
+    results.add_argument("--series-id")
+    results.add_argument("--candidate")
+
     test = subparsers.add_parser("test", help="run or restart the 100-series acceptance case")
     test.add_argument("--database", type=Path, default=DEFAULT_DATABASE)
     test.add_argument("--report", type=Path, default=DEFAULT_REPORT)
@@ -96,7 +112,42 @@ def main(argv: Sequence[str] | None = None) -> int:
     database = args.database.resolve()
     invocation = invocation_record(args.action, args, database)
     try:
-        if args.action == "plan":
+        if args.action == "results":
+            forecast_selectors = (args.variant_id, args.series_id, args.candidate)
+            if any(forecast_selectors) and not all(forecast_selectors):
+                raise ValueError(
+                    "--variant-id, --series-id, and --candidate must be supplied together"
+                )
+            if not database.is_file():
+                raise FileNotFoundError(f"database does not exist: {database}")
+            experiment_id = args.experiment_id or latest_experiment_id(database)
+            if all(forecast_selectors):
+                output = {
+                    "invocation": invocation,
+                    "experiment_id": experiment_id,
+                    "forecast": asdict(
+                        get_forecast(
+                            database,
+                            experiment_id,
+                            args.variant_id,
+                            args.series_id,
+                            args.candidate,
+                        )
+                    ),
+                }
+            else:
+                evaluations = official_results(database, experiment_id)
+                if not evaluations:
+                    raise RuntimeError(
+                        "experiment not found or has no official evaluations: "
+                        f"{experiment_id}"
+                    )
+                output = {
+                    "invocation": invocation,
+                    "experiment_id": experiment_id,
+                    "results": evaluations,
+                }
+        elif args.action == "plan":
             if database == (ROOT / "data/shapefm.duckdb").resolve():
                 raise ValueError("dry plan refuses to open the authoritative database for writing")
             with POC1Coordinator(database) as coordinator:
