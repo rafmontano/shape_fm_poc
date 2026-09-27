@@ -222,17 +222,16 @@ The Mac is the coordinator and Dask scheduler. Register exactly:
 
 ```text
 Mac:       5 CPU workers
-Ubuntu:   15 CPU workers + 1 dedicated CUDA/GPU worker
-Total:    21 Dask workers
+Ubuntu:   15 CPU workers + 15 logical CUDA/GPU workers on one physical GPU
+Total:    35 Dask workers
 ```
 
-The dedicated GPU worker counts as one of the sixteen Ubuntu workers. The
-scheduler and coordinator do not count as workers. Do not silently create a
-seventeenth Ubuntu worker.
+The scheduler and coordinator do not count as workers. Each logical GPU worker
+advertises one Chronos slot while all fifteen share the same physical RTX 5090.
 
-Each CPU worker uses one thread. Chronos-2 requests the Ubuntu `GPU=1`
-resource. Official GIFT-Eval evaluation remains controlled by the Mac. Only
-the coordinator writes to DuckDB.
+Each CPU worker uses one thread. Chronos-2 requests the Ubuntu
+`CHRONOS_GPU_SLOT=1` resource. Official GIFT-Eval evaluation remains controlled
+by the Mac. Only the coordinator writes to DuckDB.
 
 Before execution, verify and record:
 
@@ -241,8 +240,8 @@ Before execution, verify and record:
 - matching pinned GIFT-Eval revisions;
 - existing locked environments on both machines;
 - five registered Mac workers;
-- sixteen registered Ubuntu workers;
-- exactly one Ubuntu worker advertising `GPU=1`;
+- thirty registered Ubuntu workers;
+- exactly fifteen Ubuntu workers advertising `CHRONOS_GPU_SLOT=1`;
 - no Mac worker advertising CUDA.
 
 Do not install, upgrade, or synchronize dependencies as part of the test. If a

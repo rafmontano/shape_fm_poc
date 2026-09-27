@@ -83,11 +83,11 @@ The accepted historical end-to-end baseline used 5 Mac CPU workers, 15 Ubuntu
 CPU workers, and 1 Ubuntu GPU worker (21 Dask workers). A subsequent isolated
 calibration found that 15 logical Chronos worker processes sharing one physical
 Ubuntu RTX 5090 were scientifically equivalent, faster, and resource-safe.
-The integrated target is therefore 5 Mac CPU + 15 Ubuntu CPU + 15 logical
+The final integrated topology is 5 Mac CPU + 15 Ubuntu CPU + 15 logical
 Ubuntu GPU workers = 35 Dask workers. One physical GPU and 15 logical execution
-slots are distinct facts. Until the final two-pass run is recorded in
-[`docs/poc2-preparation-completion.md`](docs/poc2-preparation-completion.md),
-the 35-worker topology remains pending integrated acceptance.
+slots are distinct facts. The complete 100-series pipeline and its restart
+passed with this topology; measured evidence is recorded in
+[`docs/poc2-preparation-completion.md`](docs/poc2-preparation-completion.md).
 
 See the [architecture](docs/architecture.md), [code standards](docs/code-standards.md),
 [data contract](docs/data-contract.md), and [local execution contract](docs/local-execution.md).
