@@ -9,7 +9,7 @@ researcher-facing entry point is:
 
 `--no-sync` is required when using the already prepared locked environments;
 the command does not install or update dependencies. The public actions are
-`plan`, `status`, `results`, and `test`.
+`plan`, `run`, `status`, `results`, and `test`.
 
 ## Research workflow
 
@@ -28,8 +28,28 @@ task, forecast, or evaluation identity.
 Inspect the deterministic first-100-series plan:
 
 ```sh
-.tools/uv/uv run --locked --no-sync python src/python/00_main.py plan --series-limit 100
+.tools/uv/uv run --locked --no-sync python src/python/00_main.py plan \
+  --configuration config/experiments/poc2_m4_daily_100.json
 ```
+
+Create one experiment database and execute Processes 01–03:
+
+```sh
+.tools/uv/uv run --locked --no-sync python src/python/00_main.py run \
+  --database results/poc2_m4_daily_100.duckdb \
+  --configuration config/experiments/poc2_m4_daily_100.json \
+  --processes 1-3
+```
+
+Resume Processes 04–06 from DuckDB alone. Do not pass the original JSON again:
+
+```sh
+.tools/uv/uv run --locked --no-sync python src/python/00_main.py run \
+  --database results/poc2_m4_daily_100.duckdb --processes 4-6
+```
+
+An existing database rejects `--configuration`. Repeating the second command
+records another execution event but skips completed scientific work.
 
 Run or restart the isolated two-machine acceptance case:
 
@@ -74,20 +94,25 @@ src/r/util/time_series_input.R         shared R time-series input contract
 
 ## POC2 phases and topology
 
-POC2 has two phases. **Preparation** establishes the stable structure, single
+POC2 has two phases. **Preparation** established the stable structure, single
 entry point, distributed acceptance, traceability, and restart proof. **Import**
-will later introduce approved scientific components without creating a second
-repository or changing this interface.
+uses a versioned JSON experiment definition for database creation and then uses
+the stored DuckDB configuration exclusively for every resume.
 
 The accepted historical end-to-end baseline used 5 Mac CPU workers, 15 Ubuntu
 CPU workers, and 1 Ubuntu GPU worker (21 Dask workers). A subsequent isolated
 calibration found that 15 logical Chronos worker processes sharing one physical
 Ubuntu RTX 5090 were scientifically equivalent, faster, and resource-safe.
-The final integrated topology is 5 Mac CPU + 15 Ubuntu CPU + 15 logical
-Ubuntu GPU workers = 35 Dask workers. One physical GPU and 15 logical execution
-slots are distinct facts. The complete 100-series pipeline and its restart
-passed with this topology; measured evidence is recorded in
+The Preparation topology was 5 Mac CPU + 15 Ubuntu CPU + 15 logical Ubuntu GPU
+workers = 35 Dask workers. One physical GPU and 15 logical execution slots are
+distinct facts. The complete 100-series pipeline and its restart passed with
+this topology; measured evidence is recorded in
 [`docs/poc2-preparation-completion.md`](docs/poc2-preparation-completion.md).
+The POC2 Import acceptance target is deliberately two workers: one Mac CPU and
+one Ubuntu GPU worker; the scheduler is not a worker. This new target has not
+yet been accepted.
 
 See the [architecture](docs/architecture.md), [code standards](docs/code-standards.md),
-[data contract](docs/data-contract.md), and [local execution contract](docs/local-execution.md).
+[experiment configuration reference](docs/experiment-configuration.md),
+[configuration inventory](docs/configuration-inventory.md), [data contract](docs/data-contract.md),
+and [local execution contract](docs/local-execution.md).

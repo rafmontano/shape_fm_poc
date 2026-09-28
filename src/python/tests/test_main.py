@@ -17,7 +17,9 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
+
+import duckdb
 
 
 # ROOT: repository root resolved from this source file.
@@ -64,8 +66,9 @@ class MainResultsTests(unittest.TestCase):
         self.assertIsNone(results.candidate)
 
         plan = parser.parse_args(["plan"])
-        self.assertEqual(plan.series_limit, MAIN.SERIES_LIMIT)
-        self.assertEqual(plan.database, MAIN.DEFAULT_PLAN_DATABASE)
+        self.assertEqual(plan.configuration, MAIN.DEFAULT_CONFIGURATION)
+        run = parser.parse_args(["run", "--database", "experiment.duckdb"])
+        self.assertEqual(run.processes, tuple(range(1, 7)))
         status = parser.parse_args(["status"])
         self.assertEqual(status.database, MAIN.DEFAULT_DATABASE)
         self.assertIsNone(status.experiment_id)
@@ -284,6 +287,129 @@ class MainResultsTests(unittest.TestCase):
                 )
             self.assertEqual(status, 1)
             self.assertIn("forecast not found", stderr)
+
+
+class MainRunTests(unittest.TestCase):
+    """Verify creation, DuckDB-only resume, prerequisites, skipping, and event state."""
+
+    def setUp(self):
+        """Create a temporary directory and retain the complete reference configuration."""
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name)
+        self.configuration = ROOT / "config/experiments/poc2_m4_daily_100.json"
+
+    def tearDown(self):
+        """Remove temporary databases and copied configuration documents."""
+        self.temporary.cleanup()
+
+    def test_new_database_requires_configuration_without_creating_a_file(self):
+        """A fresh path without --configuration fails before DuckDB is opened."""
+        database = self.root / "missing.duckdb"
+        with self.assertRaisesRegex(ValueError, "configuration is required"):
+            MAIN.run_configured_processes(database, None, (1,))
+        self.assertFalse(database.exists())
+
+    def test_existing_database_rejects_a_competing_configuration(self):
+        """Resume rejects JSON so stored configuration remains the sole authority."""
+        database = self.root / "existing.duckdb"
+        MAIN.initialize_experiment_database(database, self.configuration)
+        with self.assertRaisesRegex(ValueError, "only valid when creating"):
+            MAIN.run_configured_processes(database, self.configuration, (1,))
+
+    def test_process_one_initializes_database_and_records_execution_event(self):
+        """A configured Process 01 run persists completion and execution evidence."""
+        database = self.root / "experiment.duckdb"
+        coordinator = MagicMock()
+        coordinator.__enter__.return_value.import_configured.return_value = {
+            "selected_series": 100,
+            "series_count": 100,
+        }
+        with patch.object(MAIN, "ImportCoordinator", return_value=coordinator):
+            result = MAIN.run_configured_processes(
+                database, self.configuration, (1,)
+            )
+        self.assertEqual(result["configuration"]["source"], "DuckDB")
+        self.assertEqual(result["processes"][0]["status"], "completed")
+        connection = duckdb.connect(str(database), read_only=True)
+        try:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT status FROM experiment_processes WHERE process_id=1"
+                ).fetchone()[0],
+                "completed",
+            )
+            self.assertEqual(
+                connection.execute(
+                    "SELECT status FROM execution_events"
+                ).fetchone()[0],
+                "completed",
+            )
+        finally:
+            connection.close()
+
+    def test_resume_uses_duckdb_and_skips_completed_processes_without_json(self):
+        """Removing creation JSON cannot affect a restart that has no incomplete work."""
+        configuration = self.root / "creation.json"
+        configuration.write_bytes(self.configuration.read_bytes())
+        database = self.root / "resume.duckdb"
+        MAIN.initialize_experiment_database(database, configuration)
+        connection = duckdb.connect(str(database))
+        try:
+            connection.execute(
+                "UPDATE experiment_processes SET status='completed', completed_at=current_timestamp"
+            )
+        finally:
+            connection.close()
+        configuration.unlink()
+        with (
+            patch.object(MAIN, "ImportCoordinator") as import_coordinator,
+            patch.object(MAIN, "POC1Coordinator") as experiment_coordinator,
+        ):
+            result = MAIN.run_configured_processes(
+                database, None, tuple(range(1, 7))
+            )
+        self.assertEqual(
+            [item["status"] for item in result["processes"]],
+            ["skipped_completed"] * 6,
+        )
+        import_coordinator.assert_not_called()
+        experiment_coordinator.assert_not_called()
+
+    def test_incomplete_process_prerequisite_is_rejected(self):
+        """Process 04 cannot execute while stored Processes 01–03 remain incomplete."""
+        database = self.root / "prerequisite.duckdb"
+        MAIN.initialize_experiment_database(database, self.configuration)
+        with self.assertRaisesRegex(RuntimeError, "requires completed Processes 01, 02, 03"):
+            MAIN.run_configured_processes(database, None, (4,))
+
+    def test_failed_process_and_execution_event_remain_retryable(self):
+        """A worker failure records failed process/event state and preserves a future retry path."""
+        database = self.root / "failed.duckdb"
+        coordinator = MagicMock()
+        coordinator.__enter__.return_value.import_configured.side_effect = RuntimeError(
+            "synthetic import failure"
+        )
+        with (
+            patch.object(MAIN, "ImportCoordinator", return_value=coordinator),
+            self.assertRaisesRegex(RuntimeError, "synthetic import failure"),
+        ):
+            MAIN.run_configured_processes(database, self.configuration, (1,))
+        connection = duckdb.connect(str(database), read_only=True)
+        try:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT status, last_error FROM experiment_processes WHERE process_id=1"
+                ).fetchone(),
+                ("failed", "RuntimeError: synthetic import failure"),
+            )
+            self.assertEqual(
+                connection.execute(
+                    "SELECT status, error FROM execution_events"
+                ).fetchone(),
+                ("failed", "RuntimeError: synthetic import failure"),
+            )
+        finally:
+            connection.close()
 
 
 if __name__ == "__main__":

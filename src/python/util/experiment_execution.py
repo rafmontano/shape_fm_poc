@@ -29,13 +29,12 @@ from typing import Any, Callable, Iterable
 import duckdb
 
 from .configuration import canonical_json, json_fingerprint
-from .database import DEFAULT_DATABASE, migrate_database
+from .database import DEFAULT_DATABASE, load_database_configuration, migrate_database
 from .execution_profiles import (
     GIB,
     ExecutionProfile,
     ExecutionSettings,
     PersistentChronosWorker,
-    resolve_execution_profile,
     system_hardware,
     validate_system_memory,
 )
@@ -45,22 +44,26 @@ from .transformations import TransformationResult, inverse, transform
 from .provenance import utc_now
 
 
-# Probability levels required from each model and stored with every forecast.
-QUANTILES = (0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
 # Ordered database stage numbers mapped to invocation gate names.
 STAGES = {2: "preprocess", 3: "transform", 4: "forecast", 5: "combine", 6: "evaluate"}
 
 
-def expected_task_counts(instance_count: int) -> dict[int, int]:
-    """Return Stage 2–6 task totals implied by the instance count and fixed candidate grid."""
+def expected_task_counts(
+    instance_count: int, workflow: dict[str, Any]
+) -> dict[int, int]:
+    """Derive Process 02–06 task totals from selected instances and stored settings."""
     if instance_count < 0:
         raise ValueError("instance count cannot be negative")
+    cleaning_count = len(workflow["cleaning"])
+    variant_count = cleaning_count * len(workflow["transformations"])
+    model_count = len(workflow["models"])
+    candidate_count = model_count + 1
     return {
-        2: instance_count * 2,
-        3: instance_count * 4,
-        4: instance_count * 8,
-        5: instance_count * 12,
-        6: 12,
+        2: instance_count * cleaning_count,
+        3: instance_count * variant_count,
+        4: instance_count * variant_count * model_count,
+        5: instance_count * variant_count * candidate_count,
+        6: variant_count * candidate_count,
     }
 
 
@@ -141,7 +144,6 @@ class ExperimentPlan:
     variant_count: int
     task_counts: dict[int, int]
     benchmark_configuration: str
-    series_limit: int | None = None
 
 
 @dataclass(frozen=True)
@@ -220,7 +222,7 @@ def _transform_job(job: tuple[list[float], str]) -> TransformationResult:
 
 def _combine_job(job: dict[str, Any]) -> dict[str, Any]:
     """Equal-weight one pair of component forecast mappings in a process worker."""
-    return combine_equal_weight(job["left"], job["right"])
+    return combine_equal_weight(job["left"], job["right"], job["weights"])
 
 
 class POC1Coordinator:
@@ -235,14 +237,20 @@ class POC1Coordinator:
     """
 
     def __init__(self, database_path: Path = DEFAULT_DATABASE):
-        """Migrate ``database_path``, open it for writes, and load POC configuration."""
+        """Open an initialized database and load its authoritative configuration."""
         self.root = repository_root()
+        if not Path(database_path).resolve().is_file():
+            raise FileNotFoundError(
+                f"experiment database does not exist: {Path(database_path).resolve()}"
+            )
         self.database_path = migrate_database(database_path)
         self.connection = duckdb.connect(str(self.database_path))
-        self.config = json.loads(
-            (self.root / "config/experiments/m4_daily_reference.json").read_text(
-                encoding="utf-8"
-            )
+        self.configuration = load_database_configuration(
+            self.database_path, self.connection
+        )
+        self.config = self.configuration.workflow
+        self.quantiles = tuple(
+            self.configuration.resolved["models"]["chronos_2"]["quantile_levels"]
         )
         self._hardware_cache: dict[str, dict[str, Any]] = {}
 
@@ -260,8 +268,9 @@ class POC1Coordinator:
 
     def _gift_bridge(self, *arguments: str, timeout: float = 300.0) -> dict[str, Any]:
         """Run the isolated GIFT-Eval bridge with CLI arguments and decode its JSON response."""
+        environment = self.configuration.resolved["evaluation"]["gift_eval"]["environment"]
         command = [
-            str(self.root / "environments/gift-eval/.venv/bin/python"),
+            str(self.root / environment / "bin/python"),
             str(self.root / "src/python/06_evaluate_gift_eval.py"),
             *arguments,
         ]
@@ -278,8 +287,9 @@ class POC1Coordinator:
     def _dataset_id(self) -> str:
         """Return the newest imported M4 Daily dataset ID, failing when Stage 1 has not run."""
         row = self.connection.execute(
-            "SELECT dataset_id FROM datasets WHERE dataset_name = 'm4_daily' "
-            "ORDER BY created_at DESC LIMIT 1"
+            "SELECT dataset_id FROM datasets WHERE dataset_name = ? "
+            "ORDER BY created_at DESC LIMIT 1",
+            [self.configuration.resolved["data"]["dataset_name"]],
         ).fetchone()
         if row is None:
             raise RuntimeError("Foundation Stage 1 M4 Daily import is required")
@@ -299,80 +309,61 @@ class POC1Coordinator:
                 f"{official['configuration_name']} has {official['window_count']}"
             )
 
-    def plan(
-        self,
-        scope: str = "smoke",
-        dry_run: bool = False,
-        series_limit: int | None = None,
-    ) -> ExperimentPlan | dict[str, Any]:
-        """Select official M4 instances and materialize their deterministic task graph.
-
-        ``manifest`` scope always returns bridge metadata without database writes;
-        other dry runs return counts. A persisted plan contains Stage 2–6 tasks for
-        the selected smoke, full, or series-limited scope and can safely reuse or
-        expand the same experiment identity.
-        """
-        if series_limit is not None and (
-            isinstance(series_limit, bool)
-            or not isinstance(series_limit, int)
-            or series_limit <= 0
-        ):
-            raise ValueError("series_limit must be a positive integer")
-        if scope == "manifest":
-            if series_limit is not None:
-                raise ValueError("series_limit cannot be used with manifest scope")
-            manifest = self._gift_bridge("manifest", "--root", str(self.root))
-            manifest["task_formula_per_forecast_instance"] = {
-                "stage_2": 2,
-                "stage_3": 4,
-                "stage_4": 8,
-                "stage_5": 12,
-            }
-            manifest["stage_6_per_configuration"] = 12
-            manifest["execution"] = "dry-run; source acquisition required for instance counts"
-            return manifest
-        if scope not in {"smoke", "m4_daily"}:
-            raise ValueError("scope must be smoke, m4_daily, or manifest")
-        source_root = Path(
-            os.environ.get(
-                "SHAPEFM_GIFT_EVAL_ROOT", self.root / "data/source/gift_eval"
-            )
+    def _configured_execution(self) -> tuple[ExecutionProfile, ExecutionSettings]:
+        """Build sequential process controls exclusively from stored execution settings."""
+        values = self.configuration.execution
+        workers = values["process_workers"]
+        profile = ExecutionProfile(
+            name="stored_default",
+            required_accelerator=None,
+            expected_accelerator_name=None,
+            cleaning_workers=int(workers["2"]),
+            transformation_workers=int(workers["3"]),
+            autoarima_workers=int(workers["4"]),
+            chronos_processes=1,
+            chronos_inference_batch_size=int(values["batch_sizes"]["chronos"]),
+            combination_workers=int(workers["5"]),
+            evaluation_workers=int(workers["6"]),
+            cpu_gpu_overlap=bool(values["cpu_gpu_overlap"]),
+            system_memory_min_available_gib=float(values["system_memory_min_available_gib"]),
+            accelerator_memory_min_available_gib=float(values["accelerator_memory_min_available_gib"]),
+            database_writers=int(values["database_writers"]),
+            dask_max_in_flight=int(values["dask_max_in_flight"]),
         )
+        settings = ExecutionSettings(
+            mode=values["mode"],
+            dask_timeout_seconds=float(values["dask_timeout_seconds"]),
+            dask_max_in_flight=int(values["dask_max_in_flight"]),
+            dask_retries=int(values["dask_retries"]),
+        )
+        return profile, settings
+
+    def plan(self, dry_run: bool = False) -> ExperimentPlan | dict[str, Any]:
+        """Select the configured official prefix and materialize its deterministic task graph."""
+        source_root = self.root / self.configuration.source_directory
         availability = self._gift_bridge(
-            "describe", "--source-root", str(source_root), "--limit", "1"
+            "describe",
+            "--source-root",
+            str(source_root),
+            "--dataset-name",
+            self.configuration.resolved["data"]["dataset_name"],
+            "--term",
+            self.configuration.resolved["data"]["benchmark"]["term"],
+            "--domain",
+            self.configuration.resolved["data"]["benchmark"]["domain"],
+            "--num-variates",
+            str(self.configuration.resolved["data"]["benchmark"]["num_variates"]),
+            "--limit",
+            "1",
         )
         self._validate_official_configuration(availability)
         available_instances = int(availability["available_instances"])
-        limit = (
-            series_limit
-            if series_limit is not None
-            else available_instances
-            if scope == "m4_daily"
-            else 10
-        )
+        limit = self.configuration.series_count
         if limit > available_instances:
             raise ValueError(
-                f"series_limit {limit} exceeds {available_instances} available M4 Daily instances"
+                f"configured series count {limit} exceeds {available_instances} available M4 Daily instances"
             )
-        requested_scope = (
-            f"series_limit:{limit}" if series_limit is not None else scope
-        )
-        if dry_run and scope == "m4_daily" and series_limit is None:
-            return {
-                "scope": requested_scope,
-                "mode": "dry-run",
-                "series_limit_requested": None,
-                "series_count": available_instances,
-                "forecast_instances": available_instances,
-                "candidate_forecast_rows": expected_task_counts(available_instances)[5],
-                "official_evaluation_rows": expected_task_counts(available_instances)[6],
-                "benchmark_configuration": availability["configuration_name"],
-                "task_counts": {
-                    str(stage): count
-                    for stage, count in expected_task_counts(available_instances).items()
-                },
-                "resource_note": "planning only; no experiment rows were materialised",
-            }
+        requested_scope = f"first_official:{limit}"
         if not dry_run:
             dataset_id = self._dataset_id()
             benchmark_identity = {
@@ -380,8 +371,8 @@ class POC1Coordinator:
                 "configuration": availability["configuration_name"],
             }
             benchmark_id = f"benchmark/{json_fingerprint(benchmark_identity)[:24]}"
-            scientific = scientific_configuration(self.config)
-            configuration_hash = json_fingerprint(scientific)
+            scientific = self.configuration.scientific_configuration
+            configuration_hash = self.configuration.scientific_hash
             experiment_id = f"experiment/{json_fingerprint({'benchmark': benchmark_id, 'dataset': dataset_id, 'configuration': configuration_hash})[:24]}"
             existing_counts = {
                 int(stage): int(count)
@@ -391,15 +382,10 @@ class POC1Coordinator:
                     [experiment_id],
                 ).fetchall()
             }
-            expected_counts = expected_task_counts(limit)
+            expected_counts = expected_task_counts(limit, self.config)
             existing_instances = existing_counts.get(2, 0) // len(
                 self.config["cleaning"]
             )
-            if series_limit is not None and existing_instances > limit:
-                raise ValueError(
-                    f"series_limit {limit} cannot shrink an existing "
-                    f"{existing_instances}-series experiment"
-                )
             existing_scope_row = self.connection.execute(
                 "SELECT scope FROM experiments WHERE experiment_id=?", [experiment_id]
             ).fetchone()
@@ -417,10 +403,21 @@ class POC1Coordinator:
                     * len(self.config["transformations"]),
                     existing_counts,
                     availability["configuration_name"],
-                    series_limit,
                 )
         official = self._gift_bridge(
-            "describe", "--source-root", str(source_root), "--limit", str(limit)
+            "describe",
+            "--source-root",
+            str(source_root),
+            "--dataset-name",
+            self.configuration.resolved["data"]["dataset_name"],
+            "--term",
+            self.configuration.resolved["data"]["benchmark"]["term"],
+            "--domain",
+            self.configuration.resolved["data"]["benchmark"]["domain"],
+            "--num-variates",
+            str(self.configuration.resolved["data"]["benchmark"]["num_variates"]),
+            "--limit",
+            str(limit),
         )
         self._validate_official_configuration(official)
         instances = official["instances"]
@@ -439,19 +436,19 @@ class POC1Coordinator:
             return {
                 "scope": requested_scope,
                 "mode": "dry-run",
-                "series_limit_requested": series_limit,
+                "selection": self.configuration.resolved["data"]["selection"],
                 "series_count": len(set(series_ids)),
                 "forecast_instances": len(instances),
-                "candidate_forecast_rows": expected_task_counts(len(instances))[5],
-                "official_evaluation_rows": expected_task_counts(len(instances))[6],
+                "candidate_forecast_rows": expected_task_counts(len(instances), self.config)[5],
+                "official_evaluation_rows": expected_task_counts(len(instances), self.config)[6],
                 "benchmark_configuration": official["configuration_name"],
                 "task_counts": {
                     str(stage): count
-                    for stage, count in expected_task_counts(len(instances)).items()
+                    for stage, count in expected_task_counts(len(instances), self.config).items()
                 },
                 "resource_note": "planning only; no experiment rows were materialised",
             }
-        expanding_scope = 0 < existing_instances < limit
+        expanding_scope = False
         self.connection.execute("BEGIN TRANSACTION")
         try:
             self.connection.execute(
@@ -481,8 +478,9 @@ class POC1Coordinator:
                 """INSERT INTO experiments (
                     experiment_id, benchmark_configuration_id, dataset_id, name,
                     scientific_configuration, configuration_hash, scope, status,
-                    provisional_candidate
-                ) VALUES (?, ?, ?, 'poc1', ?, ?, ?, 'planned', ?)
+                    provisional_candidate, configuration_version, experiment_date,
+                    description
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'planned', ?, ?, CAST(? AS DATE), ?)
                 ON CONFLICT (experiment_id) DO UPDATE SET
                     scope = excluded.scope,
                     updated_at = now()""",
@@ -490,10 +488,14 @@ class POC1Coordinator:
                     experiment_id,
                     benchmark_id,
                     dataset_id,
+                    self.configuration.name,
                     canonical_json(scientific),
                     configuration_hash,
                     plan_scope,
                     canonical_json(self.config["provisional_candidate"]),
+                    self.configuration.version,
+                    self.configuration.date,
+                    self.configuration.description,
                 ],
             )
             variants = []
@@ -524,7 +526,8 @@ class POC1Coordinator:
         except BaseException:
             self.connection.execute("ROLLBACK")
             raise
-        for instance_batch in _batches(official["instances"], 100):
+        plan_batch_size = int(self.configuration.execution["batch_sizes"]["plan"])
+        for instance_batch in _batches(official["instances"], plan_batch_size):
             self.connection.execute("BEGIN TRANSACTION")
             try:
                 task_rows = []
@@ -666,7 +669,6 @@ class POC1Coordinator:
             len(variants),
             {int(stage): int(count) for stage, count in counts.items()},
             official["configuration_name"],
-            series_limit,
         )
 
     def _register_task(
@@ -768,11 +770,12 @@ class POC1Coordinator:
 
     def _chronos_hardware(self, requested_device: str) -> dict[str, Any]:
         """Probe the Chronos bridge for the requested accelerator and decode its hardware report."""
+        paths = self.configuration.resolved["execution"]["paths"]
         try:
             completed = subprocess.run(
                 [
-                    str(self.root / "environments/chronos-2/.venv/bin/python"),
-                    str(self.root / "src/python/04_forecast_chronos.py"),
+                    str(self.root / paths["chronos_environment"] / "bin/python"),
+                    str(self.root / paths["chronos_worker"]),
                     "hardware",
                     "--device",
                     requested_device,
@@ -843,9 +846,10 @@ class POC1Coordinator:
         if row is None:
             raise RuntimeError("plan the smoke experiment before running Chronos validation")
         chronos = self.config["models"]["chronos_2"]
+        paths = self.configuration.resolved["execution"]["paths"]
         command = [
-            str(self.root / "environments/chronos-2/.venv/bin/python"),
-            str(self.root / "src/python/04_forecast_chronos.py"),
+            str(self.root / paths["chronos_environment"] / "bin/python"),
+            str(self.root / paths["chronos_worker"]),
             "serve",
             "--model",
             chronos["repository"],
@@ -853,17 +857,31 @@ class POC1Coordinator:
             chronos["revision"],
             "--device",
             profile.required_accelerator or "auto",
+            "--dtype",
+            chronos["dtype"],
+            "--internal-cpu-threads",
+            str(self.configuration.execution["thread_limits"]["chronos"]),
         ]
-        with PersistentChronosWorker(command) as worker:
+        with PersistentChronosWorker(
+            command,
+            startup_timeout=float(
+                self.configuration.execution["worker_timeouts_seconds"]["chronos_startup"]
+            ),
+        ) as worker:
             response = worker.request(
                 {
                     "command": "predict",
                     "batch_id": "hardware-validation",
                     "jobs": [{"id": "validation", "context": row[0]}],
                     "horizon": row[1],
-                    "quantile_levels": list(QUANTILES),
+                    "quantile_levels": list(self.quantiles),
                     "inference_batch_size": 1,
-                }
+                    "cross_learning": chronos["cross_learning"],
+                    "predict_batches_jointly": chronos["predict_batches_jointly"],
+                },
+                timeout=float(
+                    self.configuration.execution["worker_timeouts_seconds"]["chronos_request"]
+                ),
             )
             if response.get("type") != "result" or len(response["results"]) != 1:
                 raise RuntimeError(f"Chronos hardware validation failed: {response}")
@@ -952,12 +970,16 @@ class POC1Coordinator:
             self.connection.execute("ROLLBACK")
             raise
 
-    def _r_worker(self, payload: dict[str, Any], timeout: float = 1800.0) -> dict[str, Any]:
+    def _r_worker(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Send cleaning or AutoARIMA jobs to the matching R bridge and decode its response."""
+        paths = self.configuration.resolved["execution"]["paths"]
+        execution = self.configuration.execution
+        timeout = float(execution["worker_timeouts_seconds"]["r"])
+        threads = str(execution["thread_limits"]["r"])
         script = (
-            "src/r/04_forecast_auto_arima.R"
+            paths["r_auto_arima_worker"]
             if payload.get("action") == "forecast"
-            else "src/r/02_preprocess_series.R"
+            else paths["r_preprocess_worker"]
         )
         completed = subprocess.run(
             ["Rscript", str(self.root / script)],
@@ -969,8 +991,8 @@ class POC1Coordinator:
             timeout=timeout,
             env={
                 **os.environ,
-                "OMP_NUM_THREADS": "1",
-                "OPENBLAS_NUM_THREADS": "1",
+                "OMP_NUM_THREADS": threads,
+                "OPENBLAS_NUM_THREADS": threads,
                 "RENV_CONFIG_SYNCHRONIZED_CHECK": "false",
             },
         )
@@ -1001,12 +1023,11 @@ class POC1Coordinator:
         self,
         experiment_id: str,
         stage: int,
-        workers: int = 1,
+        workers: int | None = None,
         device: str = "auto",
-        batch_size: int = 8,
+        batch_size: int | None = None,
         execution: tuple[ExecutionProfile, dict[str, Any]] | None = None,
         execution_settings: ExecutionSettings | None = None,
-        series_limit: int | None = None,
     ) -> dict[str, Any]:
         """Execute one restartable stage and return its invocation/task summary.
 
@@ -1016,24 +1037,21 @@ class POC1Coordinator:
         coordinator, while a failed stage remains retryable and raises
         ``RuntimeError`` after invocation accounting is finalized.
         """
-        if stage not in STAGES or workers < 1 or batch_size < 1:
+        if (
+            stage not in STAGES
+            or (workers is not None and workers < 1)
+            or (batch_size is not None and batch_size < 1)
+        ):
             raise ValueError("stage must be 2..6; workers and batch_size must be positive")
-        legacy_batch_size = batch_size
+        configured_batches = self.configuration.execution["batch_sizes"]
+        preprocess_batch_size = int(batch_size or configured_batches["preprocess"])
         if execution is None:
-            profile, overrides = resolve_execution_profile(
-                "sequential_safe",
-                {
-                    "cleaning_workers": workers,
-                    "transformation_workers": workers,
-                    "autoarima_workers": workers,
-                    "chronos_inference_batch_size": batch_size,
-                    "combination_workers": workers,
-                    "evaluation_workers": workers,
-                },
-            )
+            profile, configured_settings = self._configured_execution()
+            overrides = {}
         else:
             profile, overrides = execution
-        settings = execution_settings or ExecutionSettings()
+            configured_settings = ExecutionSettings()
+        settings = execution_settings or configured_settings
         if settings.mode == "sequential":
             profile = replace(
                 profile,
@@ -1041,7 +1059,6 @@ class POC1Coordinator:
                 transformation_workers=1,
                 autoarima_workers=1,
                 chronos_processes=1,
-                chronos_inference_batch_size=1,
                 combination_workers=1,
                 evaluation_workers=1,
                 cpu_gpu_overlap=False,
@@ -1060,7 +1077,7 @@ class POC1Coordinator:
                     settings.dask_scheduler_address,
                     timeout=f"{settings.dask_timeout_seconds}s",
                 )
-                expected_gpu_name = "NVIDIA GeForce RTX 5090"
+                expected_gpu_name = self.configuration.resolved["execution"]["final_acceptance"]["gpu_name"]
                 resolved_device = "cuda"
             else:
                 dask_client = Client(
@@ -1084,9 +1101,13 @@ class POC1Coordinator:
                     expected_workers=settings.dask_expected_workers,
                     timeout=settings.dask_timeout_seconds,
                     expected_commit=expected_commit,
-                    expected_configuration_hash=json_fingerprint(
-                        scientific_configuration(self.config)
-                    ),
+                    expected_configuration_hash=self.configuration.scientific_hash,
+                    expected_gift_eval_revision=self.configuration.resolved["evaluation"]["gift_eval"]["code_revision"],
+                    expected_chronos_revision=self.config["models"]["chronos_2"]["revision"],
+                    expected_chronos_version=self.config["models"]["chronos_2"]["chronos_forecasting"],
+                    chronos_repository=self.config["models"]["chronos_2"]["repository"],
+                    chronos_environment=self.configuration.resolved["execution"]["paths"]["chronos_environment"],
+                    gift_eval_source_directory=self.configuration.resolved["evaluation"]["gift_eval"]["source_directory"],
                     require_gpu=stage == 4,
                     expected_gpu_name=expected_gpu_name,
                     expected_gpu_workers=settings.dask_expected_gpu_workers,
@@ -1110,19 +1131,26 @@ class POC1Coordinator:
                WHERE t.experiment_id=? AND t.stage=2""",
             [experiment_id],
         ).fetchone()
-        invocation_overrides = dict(overrides)
-        if series_limit is not None:
-            invocation_overrides["selection"] = {
-                "series_limit_requested": series_limit,
+        invocation_overrides = {
+            **overrides,
+            "selection": {
+                **self.configuration.resolved["data"]["selection"],
                 "series_count_actual": int(actual_series),
                 "forecast_instance_count_actual": int(actual_instances),
-            }
+            },
+        }
         invocation = self._begin_invocation(
             experiment_id,
             stage,
             stage_workers,
             resolved_device,
-            profile.chronos_inference_batch_size,
+            {
+                2: preprocess_batch_size,
+                3: int(configured_batches["transform"]),
+                4: int(configured_batches["chronos"]),
+                5: int(configured_batches["combine"]),
+                6: int(configured_batches["gift_eval"]),
+            }[stage],
             profile,
             invocation_overrides,
             {**hardware, "execution_settings": settings.to_dict()},
@@ -1138,7 +1166,7 @@ class POC1Coordinator:
                     rows,
                     attempts,
                     profile.cleaning_workers,
-                    legacy_batch_size if execution is None else 8,
+                    preprocess_batch_size,
                     dask_client,
                     settings,
                 )
@@ -1258,6 +1286,11 @@ class POC1Coordinator:
                 resources={"CPU": 1},
                 max_in_flight=settings.dask_max_in_flight,
                 retries=settings.dask_retries,
+                extra_arguments=(
+                    self.configuration.resolved["execution"]["paths"]["r_preprocess_worker"],
+                    float(self.configuration.execution["worker_timeouts_seconds"]["r"]),
+                    int(self.configuration.execution["thread_limits"]["r"]),
+                ),
             )
             responses = (
                 (
@@ -1399,7 +1432,7 @@ class POC1Coordinator:
         for batch, response in run_batches(
             dask_client,
             transform_batch,
-            _batches(jobs, 32),
+            _batches(jobs, int(self.configuration.execution["batch_sizes"]["transform"])),
             resources={"CPU": 1},
             max_in_flight=settings.dask_max_in_flight,
             retries=settings.dask_retries,
@@ -1463,18 +1496,26 @@ class POC1Coordinator:
                 for job in batch
             ]
             started = time.monotonic()
-            response = self._r_worker({"action": "forecast", "jobs": jobs})
+            response = self._r_worker(
+                {
+                    "action": "forecast",
+                    "settings": self.configuration.auto_arima_settings,
+                    "jobs": jobs,
+                }
+            )
             runtime = time.monotonic() - started
             metadata = {
                 "packages": response["packages"],
-                "settings": self.config["models"]["auto_arima"]["settings"],
+                "settings": self.configuration.auto_arima_settings,
                 "execution_backend": "R/CPU",
                 "runtime_seconds": runtime,
                 "batch_task_count": len(batch),
             }
             return batch, {"results": response["results"], "metadata": metadata}, runtime
 
-        auto_batches = _batches(auto_jobs, 1)
+        auto_batches = _batches(
+            auto_jobs, int(self.configuration.execution["batch_sizes"]["auto_arima"])
+        )
 
         def commit_response(
             batch: list[dict[str, Any]],
@@ -1537,7 +1578,7 @@ class POC1Coordinator:
                             transformation_id,
                             list(mean),
                             list(median),
-                            list(QUANTILES),
+                            list(self.quantiles),
                             [list(values) for values in quantiles],
                             metadata.get("runtime_seconds", 0.0),
                             canonical_json(metadata),
@@ -1573,7 +1614,12 @@ class POC1Coordinator:
                     autoarima_batch,
                     auto_batches,
                     {"CPU": 1},
-                    (self.config["models"]["auto_arima"]["settings"],),
+                    (
+                        self.configuration.auto_arima_settings,
+                        self.configuration.resolved["execution"]["paths"]["r_auto_arima_worker"],
+                        float(self.configuration.execution["worker_timeouts_seconds"]["r"]),
+                        int(self.configuration.execution["thread_limits"]["r"]),
+                    ),
                     settings.dask_max_in_flight,
                 )
             if chronos_jobs:
@@ -1585,8 +1631,20 @@ class POC1Coordinator:
                     (
                         chronos["repository"],
                         chronos["revision"],
-                        list(QUANTILES),
+                        list(self.quantiles),
                         device,
+                        chronos["dtype"],
+                        chronos["cross_learning"],
+                        chronos["predict_batches_jointly"],
+                        self.configuration.execution["thread_limits"]["chronos"],
+                        self.configuration.resolved["execution"]["paths"]["chronos_environment"],
+                        self.configuration.resolved["execution"]["paths"]["chronos_worker"],
+                        float(
+                            self.configuration.execution["worker_timeouts_seconds"]["chronos_startup"]
+                        ),
+                        float(
+                            self.configuration.execution["worker_timeouts_seconds"]["chronos_request"]
+                        ),
                     ),
                     settings.dask_max_in_flight,
                 )
@@ -1622,9 +1680,10 @@ class POC1Coordinator:
             if not chronos_jobs:
                 return
             chronos = self.config["models"]["chronos_2"]
+            paths = self.configuration.resolved["execution"]["paths"]
             command = [
-                str(self.root / "environments/chronos-2/.venv/bin/python"),
-                str(self.root / "src/python/04_forecast_chronos.py"),
+                str(self.root / paths["chronos_environment"] / "bin/python"),
+                str(self.root / paths["chronos_worker"]),
                 "serve",
                 "--model",
                 chronos["repository"],
@@ -1632,6 +1691,10 @@ class POC1Coordinator:
                 chronos["revision"],
                 "--device",
                 device,
+                "--dtype",
+                chronos["dtype"],
+                "--internal-cpu-threads",
+                str(self.configuration.execution["thread_limits"]["chronos"]),
             ]
             pending = deque(
                 _length_aware_batches(
@@ -1645,7 +1708,12 @@ class POC1Coordinator:
                 while pending:
                     validate_system_memory(profile, system_hardware())
                     if worker is None:
-                        worker = PersistentChronosWorker(command)
+                        worker = PersistentChronosWorker(
+                            command,
+                            startup_timeout=float(
+                                self.configuration.execution["worker_timeouts_seconds"]["chronos_startup"]
+                            ),
+                        )
                         ready = worker.start()
                         generation += 1
                         available = ready["accelerator_memory"].get("available_bytes")
@@ -1670,9 +1738,14 @@ class POC1Coordinator:
                             "batch_id": batch_id,
                             "jobs": payload_jobs,
                             "horizon": batch[0]["horizon"],
-                            "quantile_levels": list(QUANTILES),
+                            "quantile_levels": list(self.quantiles),
                             "inference_batch_size": len(batch),
-                        }
+                            "cross_learning": chronos["cross_learning"],
+                            "predict_batches_jointly": chronos["predict_batches_jointly"],
+                        },
+                        timeout=float(
+                            self.configuration.execution["worker_timeouts_seconds"]["chronos_request"]
+                        ),
                     )
                     if response.get("type") == "error":
                         if response.get("error_kind") != "out_of_memory":
@@ -1784,6 +1857,7 @@ class POC1Coordinator:
                     "id": task_id,
                     "left": mapped["auto_arima"],
                     "right": mapped["chronos_2"],
+                    "weights": self.config["combination"]["weights"],
                 }
             )
 
@@ -1799,7 +1873,7 @@ class POC1Coordinator:
             forecast_id = f"forecast/{json_fingerprint({'experiment': experiment_id, 'variant': variant_id, 'instance': instance_id, 'candidate': candidate})[:32]}"
 
             def insert() -> None:
-                """Insert the ensemble forecast and link both components at weight 0.5."""
+                """Insert the ensemble forecast and configured component weights."""
                 self.connection.execute(
                     """INSERT INTO forecasts VALUES
                     (?, ?, ?, ?, 'equal_weight', NULL, NULL, 'original', ?, ?, ?, ?, 0, ?, ?, current_timestamp)
@@ -1811,7 +1885,7 @@ class POC1Coordinator:
                         instance_id,
                         result["mean"],
                         result["median"],
-                        list(QUANTILES),
+                        list(self.quantiles),
                         result["quantiles"],
                         canonical_json(
                             {
@@ -1833,8 +1907,13 @@ class POC1Coordinator:
                 )
                 for name, component in (("auto_arima", components["left"]), ("chronos_2", components["right"])):
                     self.connection.execute(
-                        "INSERT INTO forecast_components VALUES (?, ?, ?, 0.5) ON CONFLICT DO NOTHING",
-                        [forecast_id, component["id"], name],
+                        "INSERT INTO forecast_components VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING",
+                        [
+                            forecast_id,
+                            component["id"],
+                            name,
+                            self.config["combination"]["weights"][name],
+                        ],
                     )
 
             self._commit_task(
@@ -1878,7 +1957,7 @@ class POC1Coordinator:
         for batch, response in run_batches(
             dask_client,
             combine_batch,
-            _batches(jobs, 32),
+            _batches(jobs, int(self.configuration.execution["batch_sizes"]["combine"])),
             resources={"CPU": 1},
             max_in_flight=settings.dask_max_in_flight,
             retries=settings.dask_retries,
@@ -1908,9 +1987,7 @@ class POC1Coordinator:
         workers: int,
     ) -> None:
         """Evaluate complete candidate matrices through GIFT-Eval and persist official metrics."""
-        source_root = Path(
-            os.environ.get("SHAPEFM_GIFT_EVAL_ROOT", self.root / "data/source/gift_eval")
-        )
+        source_root = self.root / self.configuration.source_directory
         benchmark_id = self.connection.execute(
             "SELECT benchmark_configuration_id FROM experiments WHERE experiment_id=?",
             [experiment_id],
@@ -1963,6 +2040,10 @@ class POC1Coordinator:
                     "evaluation_input_count": len(records),
                     "forecast_input_fingerprint": input_fingerprint,
                     "payload": {
+                        "dataset_name": self.configuration.resolved["data"]["dataset_name"],
+                        "term": self.configuration.resolved["data"]["benchmark"]["term"],
+                        "quantile_levels": list(self.quantiles),
+                        "options": self.configuration.evaluation_options,
                         "forecasts": [
                             {"mean": row[2], "quantiles": row[3]} for row in records
                         ]
@@ -1978,7 +2059,14 @@ class POC1Coordinator:
                 path = Path(stream.name)
             try:
                 official = self._gift_bridge(
-                    "evaluate", "--source-root", str(source_root), "--payload", str(path), timeout=600
+                    "evaluate",
+                    "--source-root",
+                    str(source_root),
+                    "--payload",
+                    str(path),
+                    timeout=float(
+                        self.configuration.execution["worker_timeouts_seconds"]["gift_eval"]
+                    ),
                 )
             finally:
                 path.unlink(missing_ok=True)
@@ -2022,9 +2110,7 @@ class POC1Coordinator:
                         candidate,
                         benchmark_id,
                         self.config["benchmark"]["gift_eval_revision"],
-                        canonical_json(
-                            {"axis": None, "mask_invalid_label": True, "allow_nan_forecast": False, "seasonality": "official get_seasonality(freq)"}
-                        ),
+                        canonical_json(self.configuration.evaluation_options),
                         canonical_json(official),
                         evaluation_input_count,
                         forecast_input_fingerprint,
@@ -2060,7 +2146,6 @@ class POC1Coordinator:
                     batch_size,
                     execution,
                     execution_settings,
-                    plan.series_limit,
                 )
             )
         self.connection.execute(
@@ -2136,7 +2221,13 @@ class POC1Coordinator:
             raise RuntimeError("the provisional candidate has not completed official evaluation")
         metrics, configuration, domain, num_variates, variant_id, candidate = row
         metric_values = json.loads(metrics)
-        manifest = self._gift_bridge("manifest", "--root", str(self.root))
+        manifest = self._gift_bridge(
+            "manifest",
+            "--root",
+            str(self.root),
+            "--gift-eval-directory",
+            self.configuration.resolved["evaluation"]["gift_eval"]["source_directory"],
+        )
         missing_configurations = sorted(set(manifest["configurations"]) - {configuration})
         required_metrics = [
             "MSE[mean]", "MSE[0.5]", "MAE[0.5]", "MASE[0.5]", "MAPE[0.5]",
@@ -2266,6 +2357,18 @@ def experiment_status(
             ORDER BY requested_gate, status""",
             [experiment_id],
         ).fetchall()
+        configuration = connection.execute(
+            """SELECT configuration_version, experiment_name,
+                      CAST(experiment_date AS VARCHAR), experiment_description,
+                      reproducibility_seed, scientific_hash,
+                      configuration_integrity_hash
+               FROM experiment_configuration WHERE configuration_key='experiment'"""
+        ).fetchone()
+        processes = connection.execute(
+            """SELECT process_id, process_name, status, CAST(started_at AS VARCHAR),
+                      CAST(completed_at AS VARCHAR), summary, last_error
+               FROM experiment_processes ORDER BY process_id"""
+        ).fetchall()
         return {
             "experiment_id": experiment_id,
             "name": experiment[0],
@@ -2273,6 +2376,27 @@ def experiment_status(
             "status": experiment[2],
             "created_at": experiment[3],
             "updated_at": experiment[4],
+            "configuration": {
+                "version": configuration[0],
+                "name": configuration[1],
+                "date": configuration[2],
+                "description": configuration[3],
+                "seed": configuration[4],
+                "scientific_hash": configuration[5],
+                "configuration_integrity_hash": configuration[6],
+            },
+            "processes": [
+                {
+                    "process_id": row[0],
+                    "name": row[1],
+                    "status": row[2],
+                    "started_at": row[3],
+                    "completed_at": row[4],
+                    "summary": json.loads(row[5]) if row[5] else None,
+                    "error": row[6],
+                }
+                for row in processes
+            ],
             "tasks": [
                 {"stage": row[0], "stage_name": STAGES[row[0]], "status": row[1], "count": row[2]}
                 for row in tasks
@@ -2280,6 +2404,50 @@ def experiment_status(
             "invocations": [
                 {"gate": row[0], "status": row[1], "count": row[2]}
                 for row in invocations
+            ],
+        }
+    finally:
+        connection.close()
+
+
+def configuration_status(database_path: Path) -> dict[str, Any]:
+    """Read stored experiment metadata and Process 01–06 state without opening for writes."""
+    connection = duckdb.connect(str(Path(database_path).resolve()), read_only=True)
+    try:
+        configuration = connection.execute(
+            """SELECT configuration_version, experiment_name,
+                      CAST(experiment_date AS VARCHAR), experiment_description,
+                      reproducibility_seed, scientific_hash,
+                      configuration_integrity_hash, resolved_configuration
+               FROM experiment_configuration WHERE configuration_key='experiment'"""
+        ).fetchone()
+        if configuration is None:
+            raise RuntimeError("database has no authoritative experiment configuration")
+        processes = connection.execute(
+            """SELECT process_id, process_name, status, CAST(started_at AS VARCHAR),
+                      CAST(completed_at AS VARCHAR), summary, last_error
+               FROM experiment_processes ORDER BY process_id"""
+        ).fetchall()
+        return {
+            "configuration_version": configuration[0],
+            "name": configuration[1],
+            "date": configuration[2],
+            "description": configuration[3],
+            "seed": configuration[4],
+            "scientific_hash": configuration[5],
+            "configuration_integrity_hash": configuration[6],
+            "resolved_configuration": json.loads(configuration[7]),
+            "processes": [
+                {
+                    "process_id": row[0],
+                    "name": row[1],
+                    "status": row[2],
+                    "started_at": row[3],
+                    "completed_at": row[4],
+                    "summary": json.loads(row[5]) if row[5] else None,
+                    "error": row[6],
+                }
+                for row in processes
             ],
         }
     finally:

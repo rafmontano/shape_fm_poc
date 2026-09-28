@@ -10,15 +10,15 @@
 """Verify logical-GPU calibration settings, resource validation, telemetry safety decisions, and result equivalence boundaries."""
 
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock
 
 from util.distributed_execution import (
     CHRONOS_GPU_RESOURCE,
-    EXPECTED_CHRONOS_REVISION,
     EXPECTED_DASK_VERSION,
-    EXPECTED_GIFT_EVAL_REVISION,
     validate_cluster,
 )
+from util.configuration import load_experiment_configuration
 from util.gpu_concurrency_calibration import (
     GIB,
     GpuCalibrationSettings,
@@ -31,6 +31,10 @@ from util.gpu_concurrency_calibration import (
 
 class GpuConcurrencyCalibrationTests(unittest.TestCase):
     """Verify calibration settings, cluster capacity, telemetry, and acceptance decisions."""
+    configuration = load_experiment_configuration(
+        Path(__file__).resolve().parents[3]
+        / "config/experiments/poc2_m4_daily_100.json"
+    )
     def test_one_worker_defaults_preserve_existing_calibration_behaviour(self):
         """Control settings retain the single-worker calibration and safety defaults."""
         settings = control_settings()
@@ -59,7 +63,7 @@ class GpuConcurrencyCalibrationTests(unittest.TestCase):
                 "dask_version": EXPECTED_DASK_VERSION,
                 "distributed_version": EXPECTED_DASK_VERSION,
                 "configuration_hash": "configuration",
-                "gift_eval_revision": EXPECTED_GIFT_EVAL_REVISION,
+                "gift_eval_revision": self.configuration.resolved["evaluation"]["gift_eval"]["code_revision"],
                 "resources": {CHRONOS_GPU_RESOURCE: 1},
                 "r_packages": {
                     "R": "4.6.1",
@@ -69,7 +73,7 @@ class GpuConcurrencyCalibrationTests(unittest.TestCase):
                 },
                 "chronos": {
                     "chronos_forecasting": "2.2.2",
-                    "checkpoint_revision": EXPECTED_CHRONOS_REVISION,
+                    "checkpoint_revision": self.configuration.resolved["models"]["chronos_2"]["revision"],
                     "checkpoint_present": True,
                     "cuda_available": True,
                     "cuda_name": "NVIDIA GeForce RTX 5090",
@@ -87,7 +91,14 @@ class GpuConcurrencyCalibrationTests(unittest.TestCase):
                     timeout=1,
                     expected_commit="revision",
                     expected_configuration_hash="configuration",
+                    expected_gift_eval_revision=self.configuration.resolved["evaluation"]["gift_eval"]["code_revision"],
+                    expected_chronos_revision=self.configuration.resolved["models"]["chronos_2"]["revision"],
+                    expected_chronos_version=self.configuration.resolved["models"]["chronos_2"]["chronos_forecasting"],
+                    chronos_repository=self.configuration.resolved["models"]["chronos_2"]["repository"],
+                    chronos_environment=self.configuration.resolved["execution"]["paths"]["chronos_environment"],
+                    gift_eval_source_directory=self.configuration.resolved["evaluation"]["gift_eval"]["source_directory"],
                     require_gpu=True,
+                    expected_gpu_name=self.configuration.resolved["execution"]["final_acceptance"]["gpu_name"],
                 )
             ),
             15,
@@ -101,7 +112,14 @@ class GpuConcurrencyCalibrationTests(unittest.TestCase):
                 timeout=1,
                 expected_commit="revision",
                 expected_configuration_hash="configuration",
+                expected_gift_eval_revision=self.configuration.resolved["evaluation"]["gift_eval"]["code_revision"],
+                expected_chronos_revision=self.configuration.resolved["models"]["chronos_2"]["revision"],
+                expected_chronos_version=self.configuration.resolved["models"]["chronos_2"]["chronos_forecasting"],
+                chronos_repository=self.configuration.resolved["models"]["chronos_2"]["repository"],
+                chronos_environment=self.configuration.resolved["execution"]["paths"]["chronos_environment"],
+                gift_eval_source_directory=self.configuration.resolved["evaluation"]["gift_eval"]["source_directory"],
                 require_gpu=True,
+                expected_gpu_name=self.configuration.resolved["execution"]["final_acceptance"]["gpu_name"],
             )
 
     def test_chronos_queue_requires_one_slot_per_logical_worker(self):

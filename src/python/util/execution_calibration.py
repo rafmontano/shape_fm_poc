@@ -28,7 +28,7 @@ from typing import Any
 
 import duckdb
 
-from .database import DEFAULT_DATABASE
+from .database import DEFAULT_DATABASE, load_database_configuration
 from .execution_profiles import (
     GIB,
     ExecutionProfile,
@@ -36,7 +36,6 @@ from .execution_profiles import (
     system_memory,
 )
 from .import_execution import repository_root
-from .experiment_execution import QUANTILES
 
 
 # Worker counts and Chronos batch sizes benchmarked for each supported host profile.
@@ -50,8 +49,6 @@ CALIBRATION_CANDIDATES = {
         "chronos_batch_sizes": [8, 16, 32, 64],
     },
 }
-
-
 class _MemorySampler:
     """Collect host-memory snapshots before, during, and after a measured block."""
     def __init__(self, interval_seconds: float = 0.25):
@@ -180,6 +177,8 @@ def _chronos_context_responses(
     worker: PersistentChronosWorker,
     contexts: list[dict[str, Any]],
     batch_size: int,
+    horizon: int,
+    quantile_levels: list[float],
 ) -> list[dict[str, Any]]:
     """Request one repeated-job batch per context, stopping after the first worker error."""
     responses = []
@@ -196,8 +195,8 @@ def _chronos_context_responses(
                 "command": "predict",
                 "batch_id": f"calibration/{uuid.uuid4().hex}",
                 "jobs": jobs,
-                "horizon": 14,
-                "quantile_levels": list(QUANTILES),
+                "horizon": horizon,
+                "quantile_levels": quantile_levels,
                 "inference_batch_size": batch_size,
             }
         )
@@ -208,10 +207,15 @@ def _chronos_context_responses(
 
 
 def _chronos_reference_forecasts(
-    worker: PersistentChronosWorker, contexts: list[dict[str, Any]]
+    worker: PersistentChronosWorker,
+    contexts: list[dict[str, Any]],
+    horizon: int,
+    quantile_levels: list[float],
 ) -> dict[str, dict[str, Any]]:
     """Map each context label to its single-job Chronos forecast reference."""
-    responses = _chronos_context_responses(worker, contexts, batch_size=1)
+    responses = _chronos_context_responses(
+        worker, contexts, batch_size=1, horizon=horizon, quantile_levels=quantile_levels
+    )
     if len(responses) != len(contexts):
         raise RuntimeError("Chronos batch-size-1 reference did not cover every context")
     references = {}
@@ -236,6 +240,8 @@ def _chronos_differences(
 
 def representative_contexts(database_path: Path) -> list[dict[str, Any]]:
     """Read the shortest, median-ranked, and longest M4 Daily training contexts."""
+    configuration = load_database_configuration(database_path)
+    dataset_name = configuration.resolved["data"]["dataset_name"]
     connection = duckdb.connect(str(database_path.resolve()), read_only=True)
     try:
         rows = connection.execute(
@@ -245,11 +251,12 @@ def representative_contexts(database_path: Path) -> list[dict[str, Any]]:
                        count(*) OVER () AS total
                 FROM series s JOIN evaluation_windows w USING (dataset_id, series_id)
                 JOIN datasets d USING (dataset_id)
-                WHERE d.dataset_name='m4_daily'
+                WHERE d.dataset_name=?
             )
             SELECT series_id, target[:test_start], test_start
             FROM ranked WHERE position IN (1, CAST(ceil(total / 2.0) AS INTEGER), total)
-            ORDER BY position"""
+            ORDER BY position""",
+            [dataset_name],
         ).fetchall()
     finally:
         connection.close()
@@ -262,12 +269,14 @@ def representative_contexts(database_path: Path) -> list[dict[str, Any]]:
     ]
 
 
-def _r_forecast(root: Path, job: dict[str, Any]) -> dict[str, Any]:
+def _r_forecast(
+    root: Path, job: dict[str, Any], settings: dict[str, Any]
+) -> dict[str, Any]:
     """Run one R forecasting bridge request and return its decoded JSON response."""
     completed = subprocess.run(
         ["Rscript", str(root / "src/r/04_forecast_auto_arima.R")],
         cwd=root,
-        input=json.dumps({"action": "forecast", "jobs": [job]}),
+        input=json.dumps({"action": "forecast", "settings": settings, "jobs": [job]}),
         check=True,
         capture_output=True,
         text=True,
@@ -298,6 +307,10 @@ def calibrate(
     if profile.name not in CALIBRATION_CANDIDATES:
         raise ValueError(f"no calibration grid is defined for {profile.name}")
     root = repository_root()
+    configuration = load_database_configuration(database_path)
+    config = configuration.resolved
+    execution = configuration.execution
+    benchmark = config["data"]["benchmark"]
     contexts = representative_contexts(database_path)
     candidates = CALIBRATION_CANDIDATES[profile.name]
     started = time.monotonic()
@@ -314,8 +327,8 @@ def calibrate(
                 {
                     "id": f"auto-{index}",
                     "context": contexts[index % 3]["context"],
-                    "horizon": 14,
-                    "seasonality": 1,
+                    "horizon": benchmark["prediction_length"],
+                    "seasonality": 1 if benchmark["frequency"] == "D" else None,
                 }
                 for index in range(12)
             ]
@@ -331,7 +344,14 @@ def calibrate(
                     try:
                         with ThreadPoolExecutor(max_workers=workers) as executor:
                             outputs = list(
-                                executor.map(lambda job: _r_forecast(root, job), jobs)
+                                executor.map(
+                                    lambda job: _r_forecast(
+                                        root,
+                                        job,
+                                        config["models"]["auto_arima"]["settings"],
+                                    ),
+                                    jobs,
+                                )
                             )
                     except BaseException as error:
                         failure = f"{type(error).__name__}: {error}"
@@ -393,11 +413,7 @@ def calibrate(
                 )
                 break
 
-        chronos = json.loads(
-            (root / "config/experiments/m4_daily_reference.json").read_text(
-                encoding="utf-8"
-            )
-        )["models"]["chronos_2"]
+        chronos = config["models"]["chronos_2"]
         command = [
             str(root / "environments/chronos-2/.venv/bin/python"),
             str(root / "src/python/04_forecast_chronos.py"),
@@ -410,7 +426,12 @@ def calibrate(
             profile.required_accelerator or "auto",
         ]
         with PersistentChronosWorker(command) as worker:
-            chronos_reference = _chronos_reference_forecasts(worker, contexts)
+            chronos_reference = _chronos_reference_forecasts(
+                worker,
+                contexts,
+                benchmark["prediction_length"],
+                chronos["quantile_levels"],
+            )
             for batch_size in candidates["chronos_batch_sizes"]:
                 responses = []
                 failure = None
@@ -422,7 +443,11 @@ def calibrate(
                     )
                     if preflight_rejection is None:
                         responses = _chronos_context_responses(
-                            worker, contexts, batch_size
+                            worker,
+                            contexts,
+                            batch_size,
+                            benchmark["prediction_length"],
+                            chronos["quantile_levels"],
                         )
                         if responses and responses[-1].get("type") == "error":
                             failure = responses[-1].get("error")
@@ -689,14 +714,17 @@ class _DistributedResourceSampler:
 
 def _distributed_contexts(database_path: Path, count: int = 256) -> list[dict[str, Any]]:
     """Select evenly ranked M4 Daily training contexts and label them by length third."""
+    configuration = load_database_configuration(database_path)
+    dataset_name = configuration.resolved["data"]["dataset_name"]
     connection = duckdb.connect(str(database_path.resolve()), read_only=True)
     try:
         rows = connection.execute(
             """SELECT s.series_id, s.target[:w.test_start], w.test_start
                FROM series s JOIN evaluation_windows w USING (dataset_id, series_id)
                JOIN datasets d USING (dataset_id)
-               WHERE d.dataset_name='m4_daily'
-               ORDER BY s.observation_count, s.series_id"""
+               WHERE d.dataset_name=?
+               ORDER BY s.observation_count, s.series_id""",
+            [dataset_name],
         ).fetchall()
     finally:
         connection.close()
@@ -791,11 +819,9 @@ def calibrate_dask_profile(
     )
 
     root = repository_root()
-    config = json.loads(
-        (root / "config/experiments/m4_daily_reference.json").read_text(
-            encoding="utf-8"
-        )
-    )
+    configuration = load_database_configuration(database_path)
+    config = configuration.resolved
+    execution = configuration.execution
     contexts = _distributed_contexts(database_path)
     client = Client(scheduler_address, timeout="180s")
     client.wait_for_workers(expected_workers, timeout=180)
@@ -826,7 +852,7 @@ def calibrate_dask_profile(
                         "series_id": item["series_id"],
                     }
                     for item in contexts
-                    for method in config["cleaning"]
+                    for method in config["pipeline"]["cleaning"]["methods"]
                 ]
                 cleaned: dict[str, dict[str, Any]] = {}
                 for batch, response in run_batches(
@@ -836,6 +862,11 @@ def calibrate_dask_profile(
                     resources={"CPU": 1},
                     max_in_flight=max_in_flight,
                     retries=2,
+                    extra_arguments=(
+                        config["execution"]["paths"]["r_preprocess_worker"],
+                        float(execution["worker_timeouts_seconds"]["r"]),
+                        int(execution["thread_limits"]["r"]),
+                    ),
                 ):
                     expected = {job["id"] for job in batch}
                     results = {result["id"]: result for result in response["results"]}
@@ -862,7 +893,7 @@ def calibrate_dask_profile(
                         "cleaning": cleaned_job["method"],
                     }
                     for cleaned_job in cleaned.values()
-                    for method in config["transformations"]
+                    for method in config["pipeline"]["transformations"]["methods"]
                 ]
                 transformed: dict[str, dict[str, Any]] = {}
                 for batch, response in run_batches(
@@ -896,7 +927,7 @@ def calibrate_dask_profile(
                     {
                         "id": f"model/auto_arima/{item['id']}",
                         "context": item["context"],
-                        "horizon": 14,
+                        "horizon": config["data"]["benchmark"]["prediction_length"],
                         "seasonality": 1,
                     }
                     for item in transformed.values()
@@ -905,7 +936,7 @@ def calibrate_dask_profile(
                     {
                         "id": f"model/chronos_2/{item['id']}",
                         "context": item["context"],
-                        "horizon": 14,
+                        "horizon": config["data"]["benchmark"]["prediction_length"],
                     }
                     for item in transformed.values()
                 ]
@@ -915,7 +946,12 @@ def calibrate_dask_profile(
                         autoarima_batch,
                         [[job] for job in auto_jobs],
                         {"CPU": 1},
-                        (config["models"]["auto_arima"]["settings"],),
+                        (
+                            configuration.auto_arima_settings,
+                            config["execution"]["paths"]["r_auto_arima_worker"],
+                            float(execution["worker_timeouts_seconds"]["r"]),
+                            int(execution["thread_limits"]["r"]),
+                        ),
                         max_in_flight,
                     ),
                     "chronos_2": (
@@ -925,8 +961,16 @@ def calibrate_dask_profile(
                         (
                             chronos["repository"],
                             chronos["revision"],
-                            list(QUANTILES),
+                            chronos["quantile_levels"],
                             "cuda",
+                            chronos["dtype"],
+                            chronos["cross_learning"],
+                            chronos["predict_batches_jointly"],
+                            execution["thread_limits"]["chronos"],
+                            config["execution"]["paths"]["chronos_environment"],
+                            config["execution"]["paths"]["chronos_worker"],
+                            float(execution["worker_timeouts_seconds"]["chronos_startup"]),
+                            float(execution["worker_timeouts_seconds"]["chronos_request"]),
                         ),
                         1,
                     ),

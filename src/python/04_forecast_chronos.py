@@ -135,6 +135,8 @@ def predict(
     """Run one Chronos batch and return keyed means, medians, quantiles, timing, and memory telemetry."""
     started = time.monotonic()
     jobs = request["jobs"]
+    if request["predict_batches_jointly"] is not False:
+        raise ValueError("Chronos-2 batch-joint prediction must remain disabled")
     levels = request["quantile_levels"]
     inputs = [
         {"target": np.asarray(job["context"], dtype=np.float32)} for job in jobs
@@ -144,7 +146,7 @@ def predict(
         prediction_length=request["horizon"],
         batch_size=request["inference_batch_size"],
         quantile_levels=levels,
-        cross_learning=False,
+        cross_learning=request["cross_learning"],
     )
     results = []
     for job, item_quantiles, item_mean in zip(jobs, quantiles, means, strict=True):
@@ -176,9 +178,11 @@ def serve(args: argparse.Namespace) -> None:
     """Load the pinned Chronos-2 model once and serve predict/shutdown requests until EOF or shutdown."""
     os.environ.setdefault("OMP_NUM_THREADS", "1")
     os.environ.setdefault("MKL_NUM_THREADS", "1")
-    torch.set_num_threads(1)
+    torch.set_num_threads(args.internal_cpu_threads)
     device = select_device(args.device)
     model_started = time.monotonic()
+    if args.dtype != "float32":
+        raise ValueError("only the configured float32 Chronos dtype is supported")
     pipeline = BaseChronosPipeline.from_pretrained(
         args.model,
         revision=args.revision,
@@ -193,7 +197,7 @@ def serve(args: argparse.Namespace) -> None:
             "type": "ready",
             "model": args.model,
             "revision": args.revision,
-            "dtype": "float32",
+            "dtype": args.dtype,
             "cache_location": str(
                 Path(os.environ.get("HF_HOME", Path.home() / ".cache/huggingface"))
             ),
@@ -233,6 +237,8 @@ def main() -> None:
     serve_parser.add_argument("--model", required=True)
     serve_parser.add_argument("--revision", required=True)
     serve_parser.add_argument("--device", default="auto")
+    serve_parser.add_argument("--dtype", required=True)
+    serve_parser.add_argument("--internal-cpu-threads", type=int, required=True)
     args = parser.parse_args()
     if args.command == "hardware":
         emit(hardware(args.device))

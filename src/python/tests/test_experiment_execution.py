@@ -17,6 +17,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from util.configuration import json_fingerprint
+from util.database import initialize_experiment_database
 from util.execution_profiles import resolve_execution_profile
 from util.experiment_execution import (
     POC1Coordinator,
@@ -33,6 +34,14 @@ from util.transformations import inverse, transform
 
 # Expected task rows per stage for 100 series across preprocessing and model variants.
 EXPECTED_100_TASK_COUNTS = {2: 200, 3: 400, 4: 800, 5: 1_200, 6: 12}
+
+
+def initialize_test_database(path: Path) -> None:
+    """Create a configured database for experiment coordinator tests."""
+    initialize_experiment_database(
+        path,
+        Path(__file__).resolve().parents[3] / "config/experiments/poc2_m4_daily_100.json",
+    )
 
 
 class TransformationTests(unittest.TestCase):
@@ -103,6 +112,7 @@ class ExternalBatchTests(unittest.TestCase):
                     "median": [8.0],
                     "quantiles": [[9.0], [3.0], [7.0]],
                 },
+                "weights": {"auto_arima": 0.5, "chronos_2": 0.5},
             }
         )
         self.assertEqual(result["mean"], [6.0])
@@ -124,6 +134,7 @@ class ExternalBatchTests(unittest.TestCase):
                     "median": [4.0],
                     "quantiles": [[3.0], [4.0], [5.0]],
                 },
+                "weights": {"auto_arima": 0.5, "chronos_2": 0.5},
             }
         )
         self.assertEqual(result["quantiles"], [[2.0], [3.0], [4.0]])
@@ -210,6 +221,7 @@ class TransactionTests(unittest.TestCase):
     def setUp(self):
         """Create a coordinator backed by a test-owned temporary database."""
         self.directory = Path(tempfile.mkdtemp())
+        initialize_test_database(self.directory / "poc1.duckdb")
         self.coordinator = POC1Coordinator(self.directory / "poc1.duckdb")
 
     def tearDown(self):
@@ -347,11 +359,14 @@ class TransactionTests(unittest.TestCase):
         ).fetchall()
         invocation = next(
             row for row in invocations
-            if json.loads(row[2]) == {"cleaning_workers": 2}
+            if json.loads(row[2]).get("cleaning_workers") == 2
         )
         self.assertEqual(invocation[0], "sequential_safe")
         self.assertEqual(json.loads(invocation[1])["cleaning_workers"], 2)
-        self.assertEqual(json.loads(invocation[2]), {"cleaning_workers": 2})
+        self.assertEqual(json.loads(invocation[2])["cleaning_workers"], 2)
+        self.assertEqual(
+            json.loads(invocation[2])["selection"]["count"], 100
+        )
         self.assertIn("logical_cpu_count", json.loads(invocation[3]))
         self.assertEqual(
             connection.execute("SELECT task_id FROM experiment_tasks ORDER BY task_id").fetchall(),
@@ -387,11 +402,13 @@ class TransactionTests(unittest.TestCase):
                 [f"task-{index}", f"instance-{index}"],
             )
         calls = 0
+        received_settings = []
 
         def worker(payload):
             """Return a constant forecast except for a simulated second-batch failure."""
             nonlocal calls
             calls += 1
+            received_settings.append(payload["settings"])
             if calls == 2:
                 raise RuntimeError("second external batch failed")
             job = payload["jobs"][0]
@@ -407,6 +424,11 @@ class TransactionTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Stage 4 failed"):
             self.coordinator.run_gate("experiment", 4, workers=1, batch_size=1)
         self.assertEqual(connection.execute("SELECT count(*) FROM forecasts").fetchone()[0], 1)
+        self.assertTrue(received_settings)
+        self.assertTrue(all(
+            settings == self.coordinator.configuration.auto_arima_settings
+            for settings in received_settings
+        ))
         self.coordinator._r_worker = lambda payload: {
             "results": [
                 {
@@ -462,10 +484,14 @@ class TransactionTests(unittest.TestCase):
             """Simulate one OOM followed by successful constant forecasts; track calls."""
             starts = 0
             requests = 0
+            commands = []
+            payloads = []
 
-            def __init__(self, command):
+            def __init__(self, command, startup_timeout):
                 """Retain the worker command supplied by the coordinator."""
                 self.command = command
+                self.startup_timeout = startup_timeout
+                type(self).commands.append(command)
 
             def start(self):
                 """Count a start and report deterministic accelerator readiness metadata."""
@@ -478,9 +504,10 @@ class TransactionTests(unittest.TestCase):
                     "model_load_seconds": 0.01,
                 }
 
-            def request(self, payload):
+            def request(self, payload, timeout):
                 """Return OOM once, then one constant forecast for every requested job."""
                 type(self).requests += 1
+                type(self).payloads.append(payload)
                 if type(self).requests == 1:
                     return {
                         "type": "error",
@@ -521,6 +548,20 @@ class TransactionTests(unittest.TestCase):
             result = self.coordinator.run_gate("experiment", 4, execution=execution)
         self.assertEqual(result["counts"], {"completed": 2})
         self.assertEqual(OOMThenSuccessWorker.starts, 2)
+        chronos = self.coordinator.config["models"]["chronos_2"]
+        self.assertTrue(all(
+            payload["quantile_levels"] == list(self.coordinator.quantiles)
+            and payload["cross_learning"] == chronos["cross_learning"]
+            and payload["predict_batches_jointly"] == chronos["predict_batches_jointly"]
+            for payload in OOMThenSuccessWorker.payloads
+        ))
+        self.assertTrue(all(
+            chronos["revision"] in command
+            and chronos["dtype"] in command
+            and str(self.coordinator.configuration.execution["thread_limits"]["chronos"])
+            in command
+            for command in OOMThenSuccessWorker.commands
+        ))
         self.assertEqual(connection.execute("SELECT count(*) FROM forecasts").fetchone()[0], 2)
         metadata = [
             json.loads(row[0])
@@ -530,11 +571,12 @@ class TransactionTests(unittest.TestCase):
         self.assertTrue(all(value["effective_batch_size"] == 1 for value in metadata))
 
 
-class ScopeExpansionTests(unittest.TestCase):
-    """Exercise smoke, limited, and full planning against seeded dataset state."""
+class ConfiguredPlanningTests(unittest.TestCase):
+    """Exercise authoritative 100-series planning against seeded dataset state."""
     def setUp(self):
         """Create a coordinator and seed the dataset referenced by generated descriptions."""
         self.directory = Path(tempfile.mkdtemp())
+        initialize_test_database(self.directory / "poc1.duckdb")
         self.coordinator = POC1Coordinator(self.directory / "poc1.duckdb")
         self.coordinator.connection.execute(
             """INSERT INTO datasets
@@ -584,15 +626,11 @@ class ScopeExpansionTests(unittest.TestCase):
         limit = int(arguments[arguments.index("--limit") + 1])
         return self._description(limit)
 
-    def test_series_limit_dry_plan_selects_exact_official_prefix(self):
-        """A 100-series dry plan reports the exact prefix and derived task counts."""
+    def test_dry_plan_selects_configured_official_prefix(self):
+        """The dry plan reports the configured prefix and configuration-derived counts."""
         self.coordinator._gift_bridge = self._gift_bridge
-
-        plan = self.coordinator.plan(
-            "m4_daily", dry_run=True, series_limit=100
-        )
-
-        self.assertEqual(plan["series_limit_requested"], 100)
+        plan = self.coordinator.plan(dry_run=True)
+        self.assertEqual(plan["selection"], {"method": "first_official", "count": 100})
         self.assertEqual(plan["series_count"], 100)
         self.assertEqual(plan["forecast_instances"], 100)
         self.assertEqual(plan["candidate_forecast_rows"], 1_200)
@@ -602,16 +640,8 @@ class ScopeExpansionTests(unittest.TestCase):
             {"2": 200, "3": 400, "4": 800, "5": 1_200, "6": 12},
         )
 
-    def test_series_limit_rejects_invalid_unavailable_and_inconsistent_values(self):
-        """Planning rejects invalid limits, unavailable rows, and duplicate prefix series."""
-        self.coordinator._gift_bridge = self._gift_bridge
-        for value in (0, -1, True, 1.5):
-            with self.subTest(value=value):
-                with self.assertRaisesRegex(ValueError, "positive integer"):
-                    self.coordinator.plan("m4_daily", series_limit=value)
-        with self.assertRaisesRegex(ValueError, "exceeds 4227"):
-            self.coordinator.plan("m4_daily", series_limit=4_228)
-
+    def test_plan_rejects_duplicate_official_series(self):
+        """Planning rejects a bridge response that duplicates one configured prefix series."""
         def duplicate_bridge(*arguments, **_kwargs):
             """Duplicate the final item in the 100-series bridge response."""
             result = self._gift_bridge(*arguments, **_kwargs)
@@ -621,171 +651,25 @@ class ScopeExpansionTests(unittest.TestCase):
 
         self.coordinator._gift_bridge = duplicate_bridge
         with self.assertRaisesRegex(RuntimeError, "99 distinct series"):
-            self.coordinator.plan("m4_daily", dry_run=True, series_limit=100)
+            self.coordinator.plan(dry_run=True)
 
-    def test_series_limit_expands_smoke_and_replans_without_duplicate_tasks(self):
-        """Limited replanning reuses smoke work, adds tasks once, and records selection."""
+    def test_replanning_configured_experiment_does_not_duplicate_tasks(self):
+        """Repeated planning returns one identity and one deterministic task graph."""
         self.coordinator._gift_bridge = self._gift_bridge
-        smoke = self.coordinator.plan("smoke")
-        self.coordinator.connection.execute(
-            """UPDATE experiment_tasks SET status='completed'
-               WHERE experiment_id=? AND stage BETWEEN 2 AND 5""",
-            [smoke.experiment_id],
-        )
-
-        expanded = self.coordinator.plan("m4_daily", series_limit=100)
-        repeated = self.coordinator.plan("m4_daily", series_limit=100)
-
-        self.assertEqual(expanded.experiment_id, smoke.experiment_id)
-        self.assertEqual(expanded.scope, "series_limit:100")
-        self.assertEqual(expanded.instance_count, 100)
-        self.assertEqual(expanded.task_counts, EXPECTED_100_TASK_COUNTS)
+        planned = self.coordinator.plan()
+        repeated = self.coordinator.plan()
+        self.assertEqual(planned.experiment_id, repeated.experiment_id)
+        self.assertEqual(planned.scope, "first_official:100")
+        self.assertEqual(planned.instance_count, 100)
+        self.assertEqual(planned.task_counts, EXPECTED_100_TASK_COUNTS)
         self.assertEqual(repeated.task_counts, EXPECTED_100_TASK_COUNTS)
         self.assertEqual(
             self.coordinator.connection.execute(
                 "SELECT count(*) FROM experiment_tasks WHERE experiment_id=?",
-                [expanded.experiment_id],
+                [planned.experiment_id],
             ).fetchone()[0],
             sum(EXPECTED_100_TASK_COUNTS.values()),
         )
-        for stage, expected in ((2, 20), (3, 40), (4, 80), (5, 120)):
-            completed = self.coordinator.connection.execute(
-                """SELECT count(*) FROM experiment_tasks
-                   WHERE experiment_id=? AND stage=? AND status='completed'""",
-                [expanded.experiment_id, stage],
-            ).fetchone()[0]
-            self.assertEqual(completed, expected)
-        self.assertEqual(
-            self.coordinator.connection.execute(
-                """SELECT status, count(*) FROM experiment_tasks
-                   WHERE experiment_id=? AND stage=6 GROUP BY status""",
-                [expanded.experiment_id],
-            ).fetchall(),
-            [("pending", 12)],
-        )
-
-        row = self.coordinator._pending(expanded.experiment_id, 6)[0]
-        with self.assertRaisesRegex(RuntimeError, "exactly 100 unique forecasts"):
-            self.coordinator._stage6(expanded.experiment_id, [row], {row[0]: 1}, 1)
-
-        self.coordinator.connection.execute(
-            """UPDATE experiment_tasks SET status='completed'
-               WHERE experiment_id=? AND stage=2""",
-            [expanded.experiment_id],
-        )
-        self.coordinator.run_gate(expanded.experiment_id, 2, series_limit=100)
-        selection = json.loads(
-            self.coordinator.connection.execute(
-                """SELECT execution_overrides FROM experiment_invocations
-                   WHERE experiment_id=? AND requested_gate='preprocess'
-                   ORDER BY started_at DESC LIMIT 1""",
-                [expanded.experiment_id],
-            ).fetchone()[0]
-        )["selection"]
-        self.assertEqual(
-            selection,
-            {
-                "series_limit_requested": 100,
-                "series_count_actual": 100,
-                "forecast_instance_count_actual": 100,
-            },
-        )
-
-    def test_smoke_to_full_preserves_upstream_and_invalidates_evaluation(self):
-        """Full expansion preserves upstream completions but invalidates partial evaluations."""
-        self.coordinator._gift_bridge = self._gift_bridge
-        smoke = self.coordinator.plan("smoke")
-        connection = self.coordinator.connection
-        connection.execute(
-            "UPDATE experiment_tasks SET status='completed', completed_at=current_timestamp WHERE experiment_id=?",
-            [smoke.experiment_id],
-        )
-        connection.execute(
-            "UPDATE experiments SET status='completed' WHERE experiment_id=?",
-            [smoke.experiment_id],
-        )
-        stage6 = connection.execute(
-            """SELECT variant_id, candidate FROM experiment_tasks
-               WHERE experiment_id=? AND stage=6 ORDER BY task_id""",
-            [smoke.experiment_id],
-        ).fetchall()
-        benchmark_id = connection.execute(
-            "SELECT benchmark_configuration_id FROM experiments WHERE experiment_id=?",
-            [smoke.experiment_id],
-        ).fetchone()[0]
-        for index, (variant_id, candidate) in enumerate(stage6):
-            connection.execute(
-                """INSERT INTO official_evaluations
-                (evaluation_id, experiment_id, variant_id, candidate,
-                 benchmark_configuration_id, evaluator, evaluator_revision,
-                 options, metrics, evaluation_input_count,
-                 forecast_input_fingerprint, is_complete_manifest,
-                 is_submittable)
-                VALUES (?, ?, ?, ?, ?, 'test', 'test', '{}', '{}', 10,
-                        'smoke-fingerprint', false, false)""",
-                [
-                    f"evaluation-{index}",
-                    smoke.experiment_id,
-                    variant_id,
-                    candidate,
-                    benchmark_id,
-                ],
-            )
-        connection.execute(
-            """INSERT INTO submission_exports
-            (export_id, experiment_id, model_name, output_directory,
-             manifest_revision, validation, is_submittable)
-            VALUES ('smoke-export', ?, 'test', 'results/test', 'test', '{}', false)""",
-            [smoke.experiment_id],
-        )
-
-        full = self.coordinator.plan("m4_daily")
-
-        self.assertEqual(full.experiment_id, smoke.experiment_id)
-        self.assertEqual(full.instance_count, 4_227)
-        self.assertEqual(
-            full.task_counts,
-            {2: 8_454, 3: 16_908, 4: 33_816, 5: 50_724, 6: 12},
-        )
-        for stage, expected in ((2, 20), (3, 40), (4, 80), (5, 120)):
-            completed = connection.execute(
-                """SELECT count(*) FROM experiment_tasks
-                   WHERE experiment_id=? AND stage=? AND status='completed'""",
-                [full.experiment_id, stage],
-            ).fetchone()[0]
-            self.assertEqual(completed, expected)
-        self.assertEqual(
-            connection.execute(
-                """SELECT status, count(*) FROM experiment_tasks
-                   WHERE experiment_id=? AND stage=6 GROUP BY status""",
-                [full.experiment_id],
-            ).fetchall(),
-            [("pending", 12)],
-        )
-        self.assertEqual(
-            connection.execute(
-                "SELECT count(*) FROM official_evaluations WHERE experiment_id=?",
-                [full.experiment_id],
-            ).fetchone()[0],
-            0,
-        )
-        self.assertEqual(
-            connection.execute(
-                "SELECT count(*) FROM submission_exports WHERE experiment_id=?",
-                [full.experiment_id],
-            ).fetchone()[0],
-            0,
-        )
-        self.assertEqual(
-            connection.execute(
-                "SELECT scope, status FROM experiments WHERE experiment_id=?",
-                [full.experiment_id],
-            ).fetchone(),
-            ("m4_daily", "planned"),
-        )
-        row = self.coordinator._pending(full.experiment_id, 6)[0]
-        with self.assertRaisesRegex(RuntimeError, "exactly 4227 unique forecasts"):
-            self.coordinator._stage6(full.experiment_id, [row], {row[0]: 1}, 1)
 
 
 if __name__ == "__main__":

@@ -35,6 +35,7 @@ from util.execution_profiles import (
     resolve_execution_profile,
     system_hardware,
 )
+from util.configuration import load_experiment_configuration
 from util.experiment_execution import (
     POC1Coordinator,
     _length_aware_batches,
@@ -129,7 +130,10 @@ class ExecutionProfileTests(unittest.TestCase):
         """The Dask run gate passes its expected GPU count to cluster validation."""
         coordinator = object.__new__(POC1Coordinator)
         coordinator.root = Path(__file__).resolve().parents[3]
-        coordinator.config = {}
+        coordinator.configuration = load_experiment_configuration(
+            coordinator.root / "config/experiments/poc2_m4_daily_100.json"
+        )
+        coordinator.config = coordinator.configuration.workflow
         coordinator.execution_hardware = MagicMock(return_value={})
         profile = resolve_execution_profile("sequential_safe")
         settings = ExecutionSettings(
@@ -162,7 +166,11 @@ class ExecutionProfileTests(unittest.TestCase):
 
     def test_full_m4_daily_task_counts(self) -> None:
         """A 4,227-series M4 Daily run expands to the expected tasks per stage."""
-        counts = expected_task_counts(4_227)
+        workflow = load_experiment_configuration(
+            Path(__file__).resolve().parents[3]
+            / "config/experiments/poc2_m4_daily_100.json"
+        ).workflow
+        counts = expected_task_counts(4_227, workflow)
         self.assertEqual(
             counts,
             {2: 8_454, 3: 16_908, 4: 33_816, 5: 50_724, 6: 12},
@@ -226,6 +234,9 @@ class PersistentWorkerTests(unittest.TestCase):
         }
         forecast_payload = {
             "action": "forecast",
+            "settings": load_experiment_configuration(
+                root / "config/experiments/poc2_m4_daily_100.json"
+            ).workflow["models"]["auto_arima"]["settings"],
             "jobs": [
                 {
                     "id": "forecast",
@@ -503,13 +514,22 @@ class CalibrationSafetyTests(unittest.TestCase):
                 }
 
         worker = FakeWorker()
-        references = _chronos_reference_forecasts(worker, contexts)
+        quantile_levels = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+        references = _chronos_reference_forecasts(
+            worker, contexts, horizon=14, quantile_levels=quantile_levels
+        )
         candidates = CALIBRATION_CANDIDATES[
             "ubuntu_3950x_16core_128gb_rtx5090"
         ]["chronos_batch_sizes"]
         comparisons = {}
         for batch_size in candidates:
-            responses = _chronos_context_responses(worker, contexts, batch_size)
+            responses = _chronos_context_responses(
+                worker,
+                contexts,
+                batch_size,
+                horizon=14,
+                quantile_levels=quantile_levels,
+            )
             comparisons[batch_size] = _chronos_differences(
                 contexts, responses, references
             )

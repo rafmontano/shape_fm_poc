@@ -37,23 +37,26 @@ sys.path.insert(0, str(ROOT / "src/python"))
 import duckdb
 from distributed import Client, Future, as_completed
 
-from util.configuration import json_fingerprint
+from util.configuration import load_experiment_configuration
 from util.distributed_execution import (
     CHRONOS_GPU_RESOURCE,
     chronos_batch,
     validate_cluster,
 )
 from util.execution_calibration import _scientific_comparison
-from util.experiment_execution import (
-    QUANTILES,
-    _length_aware_batches,
-    scientific_configuration,
-)
+from util.experiment_execution import _length_aware_batches
 from util.transformations import inverse
 
 
 # Repository revision required by the accepted POC2 baseline report.
 ACCEPTED_REVISION = "597232a2b9e0ad67550480607b44ec4cbe542f43"
+# Candidate settings used only by this developer calibration workload.
+CALIBRATION_CONFIGURATION = load_experiment_configuration(
+    ROOT / "config/experiments/poc2_m4_daily_100.json"
+)
+QUANTILES = tuple(
+    CALIBRATION_CONFIGURATION.resolved["models"]["chronos_2"]["quantile_levels"]
+)
 # Chronos tasks loaded from the completed 100-series acceptance run.
 EXPECTED_TASKS = 400
 # Timed repetitions after model warm-up used for latency and throughput quantiles.
@@ -573,11 +576,6 @@ class _GpuCluster:
             "echo $! >data/dask/gpu-concurrency.pid"
         )
         client = Client(self.scheduler_address, timeout="180s")
-        config = json.loads(
-            (ROOT / "config/experiments/m4_daily_reference.json").read_text(
-                encoding="utf-8"
-            )
-        )
         try:
             reports = validate_cluster(
                 client,
@@ -585,10 +583,15 @@ class _GpuCluster:
                 expected_gpu_workers=self.settings.gpu_worker_processes,
                 timeout=180,
                 expected_commit=_git("rev-parse", "HEAD"),
-                expected_configuration_hash=json_fingerprint(
-                    scientific_configuration(config)
-                ),
+                expected_configuration_hash=CALIBRATION_CONFIGURATION.scientific_hash,
+                expected_gift_eval_revision=CALIBRATION_CONFIGURATION.resolved["evaluation"]["gift_eval"]["code_revision"],
+                expected_chronos_revision=CALIBRATION_CONFIGURATION.resolved["models"]["chronos_2"]["revision"],
+                expected_chronos_version=CALIBRATION_CONFIGURATION.resolved["models"]["chronos_2"]["chronos_forecasting"],
+                chronos_repository=CALIBRATION_CONFIGURATION.resolved["models"]["chronos_2"]["repository"],
+                chronos_environment=CALIBRATION_CONFIGURATION.resolved["execution"]["paths"]["chronos_environment"],
+                gift_eval_source_directory=CALIBRATION_CONFIGURATION.resolved["evaluation"]["gift_eval"]["source_directory"],
                 require_gpu=True,
+                expected_gpu_name=CALIBRATION_CONFIGURATION.resolved["execution"]["final_acceptance"]["gpu_name"],
             )
             if any(
                 report["hostname"] == socket.gethostname()
@@ -781,10 +784,22 @@ def _run_repetition(
         future = client.submit(
             chronos_batch,
             batch,
-            "amazon/chronos-2",
-            "29ec3766d36d6f73f0696f85560a422f50e8498c",
+            CALIBRATION_CONFIGURATION.resolved["models"]["chronos_2"]["repository"],
+            CALIBRATION_CONFIGURATION.resolved["models"]["chronos_2"]["revision"],
             list(QUANTILES),
             "cuda",
+            CALIBRATION_CONFIGURATION.resolved["models"]["chronos_2"]["dtype"],
+            CALIBRATION_CONFIGURATION.resolved["models"]["chronos_2"]["cross_learning"],
+            CALIBRATION_CONFIGURATION.resolved["models"]["chronos_2"]["predict_batches_jointly"],
+            CALIBRATION_CONFIGURATION.execution["thread_limits"]["chronos"],
+            CALIBRATION_CONFIGURATION.resolved["execution"]["paths"]["chronos_environment"],
+            CALIBRATION_CONFIGURATION.resolved["execution"]["paths"]["chronos_worker"],
+            float(
+                CALIBRATION_CONFIGURATION.execution["worker_timeouts_seconds"]["chronos_startup"]
+            ),
+            float(
+                CALIBRATION_CONFIGURATION.execution["worker_timeouts_seconds"]["chronos_request"]
+            ),
             0,
             key=key,
             resources={CHRONOS_GPU_RESOURCE: 1},
@@ -1057,19 +1072,16 @@ def _run_configuration(
 
 def _environment_identity(root: Path) -> dict[str, Any]:
     """Record Git revisions, scientific configuration hash, model identity, and Python version."""
-    config = json.loads(
-        (root / "config/experiments/m4_daily_reference.json").read_text(
-            encoding="utf-8"
-        )
+    configuration = load_experiment_configuration(
+        root / "config/experiments/poc2_m4_daily_100.json"
     )
+    config = configuration.resolved
     return {
         "git_revision": _git("rev-parse", "HEAD"),
         "gift_eval_revision": _git(
             "-C", "external/gift-eval", "rev-parse", "HEAD"
         ),
-        "scientific_configuration_hash": json_fingerprint(
-            scientific_configuration(config)
-        ),
+        "scientific_configuration_hash": configuration.scientific_hash,
         "model_repository": config["models"]["chronos_2"]["repository"],
         "model_revision": config["models"]["chronos_2"]["revision"],
         "python": sys.version,

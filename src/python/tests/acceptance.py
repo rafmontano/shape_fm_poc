@@ -27,47 +27,91 @@ from typing import Any, Callable
 
 import duckdb
 
-from util.configuration import load_config
+from util.configuration import ExperimentConfiguration, canonical_json
+from util.database import initialize_experiment_database, load_database_configuration
 from util.distributed_execution import (
     CHRONOS_GPU_RESOURCE,
     worker_resource_snapshot,
 )
-from util.execution_profiles import ExecutionSettings, resolve_execution_profile
-from util.experiment_execution import POC1Coordinator, expected_task_counts
+from util.execution_profiles import ExecutionProfile, ExecutionSettings
+from util.experiment_execution import POC1Coordinator
 from util.import_execution import ImportCoordinator
 
 
-# M4 Daily series included in the acceptance workload.
-SERIES_LIMIT = 100
-# Expected task totals by stage for that workload and its configured variants.
-EXPECTED_TASK_COUNTS = expected_task_counts(SERIES_LIMIT)
-# Forecast and evaluation row counts required for a successful run.
-EXPECTED_FORECASTS = 1_200
-EXPECTED_EVALUATIONS = 12
-# Chronos tasks expected across 100 series and four preprocessing variants.
-EXPECTED_CHRONOS_TASKS = 400
-# Required logical workers by host and resource type.
-MAC_CPU_WORKERS = 5
-UBUNTU_CPU_WORKERS = 15
-UBUNTU_GPU_WORKERS = 15
-# All logical GPU workers share one physical RTX 5090.
-PHYSICAL_GPU_COUNT = 1
-# Total logical Dask workers required before execution starts.
-EXPECTED_WORKERS = MAC_CPU_WORKERS + UBUNTU_CPU_WORKERS + UBUNTU_GPU_WORKERS
-# Maximum submitted but unfinished Dask batches.
-MAX_IN_FLIGHT = 32
+# Runtime acceptance values are activated from the new JSON or existing DuckDB authority.
+SERIES_LIMIT = 0
+EXPECTED_TASK_COUNTS: dict[int, int] = {}
+EXPECTED_FORECASTS = 0
+EXPECTED_EVALUATIONS = 0
+EXPECTED_CHRONOS_TASKS = 0
+MAC_CPU_WORKERS = 0
+UBUNTU_CPU_WORKERS = 0
+UBUNTU_GPU_WORKERS = 0
+PHYSICAL_GPU_COUNT = 0
+EXPECTED_WORKERS = 0
+MAX_IN_FLIGHT = 0
+MAC_SYSTEM_MEMORY_BYTES = 0
+UBUNTU_SYSTEM_MEMORY_BYTES = 0
+# Active contract is set exactly once per acceptance invocation from JSON or DuckDB.
+_ACTIVE_CONFIGURATION: ExperimentConfiguration | None = None
 # Bytes per gibibyte for worker limits and safety thresholds.
 GIB = 1024**3
 # Minimum free host and GPU memory accepted by telemetry checks.
-MAC_MEMORY_HEADROOM_BYTES = 3 * GIB
-UBUNTU_MEMORY_HEADROOM_BYTES = 16 * GIB
-GPU_MEMORY_HEADROOM_BYTES = 4 * GIB
+MAC_MEMORY_HEADROOM_BYTES = 0
+UBUNTU_MEMORY_HEADROOM_BYTES = 0
+GPU_MEMORY_HEADROOM_BYTES = 0
 # Per-worker Dask memory limits in GiB.
-MAC_CPU_MEMORY_GIB = 2
-UBUNTU_CPU_MEMORY_GIB = 2
-UBUNTU_GPU_MEMORY_GIB = 4
+MAC_CPU_MEMORY_GIB = 0
+UBUNTU_CPU_MEMORY_GIB = 0
+UBUNTU_GPU_MEMORY_GIB = 0
 # Consecutive unsafe samples that trigger controlled cluster shutdown.
-PERSISTENT_UNSAFE_SAMPLES = 3
+PERSISTENT_UNSAFE_SAMPLES = 0
+
+
+def _activate_configuration(configuration: ExperimentConfiguration) -> None:
+    """Resolve all acceptance expectations from one authoritative configuration object."""
+    global SERIES_LIMIT, EXPECTED_TASK_COUNTS, EXPECTED_FORECASTS
+    global EXPECTED_EVALUATIONS, EXPECTED_CHRONOS_TASKS, MAC_CPU_WORKERS
+    global UBUNTU_CPU_WORKERS, UBUNTU_GPU_WORKERS, PHYSICAL_GPU_COUNT
+    global EXPECTED_WORKERS, MAX_IN_FLIGHT, MAC_CPU_MEMORY_GIB
+    global UBUNTU_CPU_MEMORY_GIB, UBUNTU_GPU_MEMORY_GIB
+    global MAC_SYSTEM_MEMORY_BYTES, UBUNTU_SYSTEM_MEMORY_BYTES
+    global MAC_MEMORY_HEADROOM_BYTES, UBUNTU_MEMORY_HEADROOM_BYTES
+    global GPU_MEMORY_HEADROOM_BYTES, PERSISTENT_UNSAFE_SAMPLES
+    global _ACTIVE_CONFIGURATION
+    _ACTIVE_CONFIGURATION = configuration
+    resolved = configuration.resolved
+    derived = resolved["derived"]
+    acceptance = resolved["execution"]["final_acceptance"]
+    workers = acceptance["workers"]
+    memory = acceptance["worker_memory_gib"]
+    safety = acceptance["resource_safety"]
+    SERIES_LIMIT = configuration.series_count
+    EXPECTED_TASK_COUNTS = {
+        int(stage): int(count)
+        for stage, count in derived["expected_task_counts"].items()
+        if int(stage) >= 2
+    }
+    EXPECTED_FORECASTS = int(derived["expected_forecast_rows"])
+    EXPECTED_EVALUATIONS = int(derived["expected_evaluation_rows"])
+    EXPECTED_CHRONOS_TASKS = (
+        SERIES_LIMIT * int(derived["variant_count"])
+    )
+    MAC_CPU_WORKERS = int(workers["mac_cpu"])
+    UBUNTU_CPU_WORKERS = int(workers["ubuntu_cpu"])
+    UBUNTU_GPU_WORKERS = int(workers["ubuntu_gpu"])
+    PHYSICAL_GPU_COUNT = int(acceptance["physical_gpu_count"])
+    EXPECTED_WORKERS = int(workers["total"])
+    MAX_IN_FLIGHT = int(resolved["execution"]["default"]["dask_max_in_flight"])
+    MAC_CPU_MEMORY_GIB = int(memory["mac_cpu"])
+    UBUNTU_CPU_MEMORY_GIB = 0
+    UBUNTU_GPU_MEMORY_GIB = int(memory["ubuntu_gpu"])
+    MAC_SYSTEM_MEMORY_BYTES = int(safety["mac_system_memory_bytes"])
+    UBUNTU_SYSTEM_MEMORY_BYTES = int(safety["ubuntu_system_memory_bytes"])
+    MAC_MEMORY_HEADROOM_BYTES = int(safety["mac_min_available_gib"]) * GIB
+    UBUNTU_MEMORY_HEADROOM_BYTES = int(safety["ubuntu_min_available_gib"]) * GIB
+    GPU_MEMORY_HEADROOM_BYTES = int(safety["gpu_min_available_gib"]) * GIB
+    PERSISTENT_UNSAFE_SAMPLES = int(safety["persistent_unsafe_samples"])
 
 
 def _utc_now() -> str:
@@ -75,10 +119,35 @@ def _utc_now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def _mark_process(
+    connection: duckdb.DuckDBPyConnection,
+    process_id: int,
+    status: str,
+    summary: dict[str, Any] | None = None,
+    error: str | None = None,
+) -> None:
+    """Record acceptance Process 01–06 state through the active coordinator connection."""
+    connection.execute(
+        """UPDATE experiment_processes SET status=?,
+           started_at=CASE WHEN ?='running' THEN current_timestamp ELSE started_at END,
+           completed_at=CASE WHEN ?='completed' THEN current_timestamp ELSE NULL END,
+           updated_at=current_timestamp, summary=?, last_error=?
+           WHERE process_id=?""",
+        [
+            status,
+            status,
+            status,
+            canonical_json(summary) if summary is not None else None,
+            error,
+            process_id,
+        ],
+    )
+
+
 def _memory_budget() -> dict[str, Any]:
     """Describe worker ceilings and required host-memory headroom."""
-    mac_total = 16 * GIB
-    ubuntu_total = 128_000_000_000
+    mac_total = MAC_SYSTEM_MEMORY_BYTES
+    ubuntu_total = UBUNTU_SYSTEM_MEMORY_BYTES
     mac_workers = MAC_CPU_WORKERS * MAC_CPU_MEMORY_GIB * GIB
     ubuntu_workers = (
         UBUNTU_CPU_WORKERS * UBUNTU_CPU_MEMORY_GIB
@@ -103,22 +172,43 @@ def _memory_budget() -> dict[str, Any]:
             ),
         },
         "rationale": (
-            "Configured Mac worker ceilings total 10 GiB, leaving 6 GiB outside "
-            "worker ceilings on the 16 GiB Mac. Configured Ubuntu worker ceilings "
-            "total 90 GiB (96.6 GB), leaving about 31.4 GB outside worker ceilings "
-            "on the stated 128 GB system, above the 16 GiB threshold."
+            "Worker ceilings and topology are resolved from the stored experiment "
+            "configuration; host headroom remains enforced by resource telemetry."
         ),
     }
 
 
 def _resolve_acceptance_profile():
-    """Resolve the two-machine profile with the acceptance worker and queue limits."""
+    """Build the Dask execution profile from the active authoritative configuration."""
+    if _ACTIVE_CONFIGURATION is None:
+        raise RuntimeError("acceptance configuration has not been activated")
+    values = _ACTIVE_CONFIGURATION.resolved["execution"]["default"]
+    process_workers = values["process_workers"]
     overrides = {
         "dask_mac_cpu_workers": MAC_CPU_WORKERS,
         "dask_ubuntu_cpu_workers": UBUNTU_CPU_WORKERS,
         "dask_max_in_flight": MAX_IN_FLIGHT,
     }
-    return resolve_execution_profile("two_machine_dask", overrides)
+    return (
+        ExecutionProfile(
+            name="stored_final_acceptance",
+            required_accelerator=None,
+            expected_accelerator_name=None,
+            cleaning_workers=int(process_workers["2"]),
+            transformation_workers=int(process_workers["3"]),
+            autoarima_workers=int(process_workers["4"]),
+            chronos_processes=1,
+            chronos_inference_batch_size=int(values["batch_sizes"]["chronos"]),
+            combination_workers=int(process_workers["5"]),
+            evaluation_workers=int(process_workers["6"]),
+            cpu_gpu_overlap=bool(values["cpu_gpu_overlap"]),
+            system_memory_min_available_gib=float(values["system_memory_min_available_gib"]),
+            accelerator_memory_min_available_gib=float(values["accelerator_memory_min_available_gib"]),
+            database_writers=int(values["database_writers"]),
+            **overrides,
+        ),
+        overrides,
+    )
 
 
 def _run(
@@ -157,8 +247,12 @@ def _python_environment_identity(
     ).stdout.strip()
 
 
-def _local_environment_identity(root: Path) -> dict[str, str]:
-    """Verify locked local Python and R versions and return their identities."""
+def _local_environment_identity(
+    root: Path, configuration: ExperimentConfiguration
+) -> dict[str, str]:
+    """Verify configured locked Python environments and local R package versions."""
+    paths = configuration.resolved["execution"]["paths"]
+    gift_environment = configuration.resolved["evaluation"]["gift_eval"]["environment"]
     r = _run(
         [
             "Rscript",
@@ -170,17 +264,17 @@ def _local_environment_identity(root: Path) -> dict[str, str]:
     ).stdout.strip()
     identity = {
         "project": _python_environment_identity(
-            root / ".venv/bin/python",
+            root / paths["project_environment"] / "bin/python",
             ("dask", "distributed", "duckdb", "pyarrow"),
             root,
         ),
         "gift_eval": _python_environment_identity(
-            root / "environments/gift-eval/.venv/bin/python",
+            root / gift_environment / "bin/python",
             ("gluonts", "datasets", "pyarrow"),
             root,
         ),
         "chronos": _python_environment_identity(
-            root / "environments/chronos-2/.venv/bin/python",
+            root / paths["chronos_environment"] / "bin/python",
             ("chronos-forecasting", "torch"),
             root,
         ),
@@ -213,14 +307,19 @@ def _sha256(value: Any) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _require_existing_environment(root: Path) -> dict[str, str]:
-    """Require provisioned tools, environments, and source data without installing them."""
+def _require_existing_environment(
+    root: Path, configuration: ExperimentConfiguration
+) -> dict[str, str]:
+    """Require configured environments and source data without installing anything."""
+    paths_config = configuration.resolved["execution"]["paths"]
+    evaluation = configuration.resolved["evaluation"]["gift_eval"]
+    data = configuration.resolved["data"]
     paths = {
         "uv": root / ".tools/uv/uv",
-        "project_python": root / ".venv/bin/python",
-        "gift_eval_python": root / "environments/gift-eval/.venv/bin/python",
-        "chronos_python": root / "environments/chronos-2/.venv/bin/python",
-        "gift_eval_source": root / "data/source/gift_eval/m4_daily",
+        "project_python": root / paths_config["project_environment"] / "bin/python",
+        "gift_eval_python": root / evaluation["environment"] / "bin/python",
+        "chronos_python": root / paths_config["chronos_environment"] / "bin/python",
+        "gift_eval_source": root / data["source"]["directory"] / data["dataset_name"],
     }
     missing = [name for name, path in paths.items() if not path.exists()]
     if missing:
@@ -485,7 +584,7 @@ class _ResourceSampler:
 class _TwoMachineCluster:
     """Manage the acceptance scheduler and fixed Mac/Ubuntu worker topology."""
 
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, configuration: ExperimentConfiguration):
         """Configure cluster commands and runtime paths beneath repository `root`.
 
         Host names, roots, bind addresses, and scheduler addresses may come from
@@ -493,6 +592,8 @@ class _TwoMachineCluster:
         cleanup; no cluster process is started by construction.
         """
         self.root = root
+        self.configuration = configuration
+        self.configuration_hash = configuration.scientific_hash
         self.ubuntu_host = os.environ.get(
             "SHAPEFM_UBUNTU_HOST", "rafmontano@WSUbuntu1.local"
         )
@@ -562,20 +663,26 @@ class _TwoMachineCluster:
             raise RuntimeError(
                 "stale Mac acceptance process found:\n" + stale_local.stdout.strip()
             )
+        resolved = self.configuration.resolved
+        acceptance = resolved["execution"]["final_acceptance"]
+        paths = resolved["execution"]["paths"]
+        evaluation = resolved["evaluation"]["gift_eval"]
+        data = resolved["data"]
         local_revision = _run(
-            ["git", "-C", "external/gift-eval", "rev-parse", "HEAD"], root=self.root
+            ["git", "-C", evaluation["source_directory"], "rev-parse", "HEAD"],
+            root=self.root,
         ).stdout.strip()
         _run(
             [
                 "env",
                 "PYTHONPATH=src/python",
-                str(self.root / ".venv/bin/python"),
+                str(self.root / paths["project_environment"] / "bin/python"),
                 "-c",
                 "import util.experiment_execution, util.distributed_execution",
             ],
             root=self.root,
         )
-        local_environment = _local_environment_identity(self.root)
+        local_environment = _local_environment_identity(self.root, self.configuration)
         project_script = shlex.quote(
             _python_identity_script(("dask", "distributed", "duckdb", "pyarrow"))
         )
@@ -593,29 +700,30 @@ class _TwoMachineCluster:
             "set -eu; "
             f"cd {shlex.quote(self.ubuntu_root)}; "
             "test -z \"$(git status --porcelain --untracked-files=all)\"; "
-            "test -x .tools/uv/uv; test -x .venv/bin/python; "
-            "test -x environments/gift-eval/.venv/bin/python; "
-            "test -x environments/chronos-2/.venv/bin/python; "
-            "test -d data/source/gift_eval/m4_daily; "
+            "test -x .tools/uv/uv; "
+            f"test -x {shlex.quote(paths['project_environment'] + '/bin/python')}; "
+            f"test -x {shlex.quote(evaluation['environment'] + '/bin/python')}; "
+            f"test -x {shlex.quote(paths['chronos_environment'] + '/bin/python')}; "
+            f"test -d {shlex.quote(data['source']['directory'] + '/' + data['dataset_name'])}; "
             "test ! -e data/dask/acceptance-ubuntu-cpu.pid; "
             "test ! -e data/dask/acceptance-ubuntu-gpu.pid; "
             "! pgrep -f '[a]cceptance-ubuntu-cpu' >/dev/null; "
             "! pgrep -f '[a]cceptance-ubuntu-gpu' >/dev/null; "
             "! ss -ltn | grep -Eq ':(8786|8787)[[:space:]]'; "
             "printf '%s\\n%s\\n%s\\n' \"$(git rev-parse HEAD)\" "
-            "\"$(git -C external/gift-eval rev-parse HEAD)\" \"$(hostname)\"; "
+            f"\"$(git -C {shlex.quote(evaluation['source_directory'])} rev-parse HEAD)\" \"$(hostname)\"; "
             "nvidia-smi --query-gpu=name --format=csv,noheader; "
-            "PYTHONPATH=src/python .venv/bin/python -c "
+            f"PYTHONPATH=src/python {shlex.quote(paths['project_environment'] + '/bin/python')} -c "
             "'import util.experiment_execution, util.distributed_execution'; "
-            f".venv/bin/python -c {project_script}; "
-            f"environments/gift-eval/.venv/bin/python -c {gift_script}; "
-            f"environments/chronos-2/.venv/bin/python -c {chronos_script}; "
+            f"{shlex.quote(paths['project_environment'] + '/bin/python')} -c {project_script}; "
+            f"{shlex.quote(evaluation['environment'] + '/bin/python')} -c {gift_script}; "
+            f"{shlex.quote(paths['chronos_environment'] + '/bin/python')} -c {chronos_script}; "
             f"RENV_CONFIG_SYNCHRONIZED_CHECK=false Rscript -e {r_script}"
         ).splitlines()
         if (
             remote[:2] != [commit, local_revision]
             or len(remote) != 8
-            or remote[3] != "NVIDIA GeForce RTX 5090"
+            or remote[3] != acceptance["gpu_name"]
         ):
             raise RuntimeError(
                 "Mac/Ubuntu revision or connectivity preflight failed: "
@@ -667,6 +775,10 @@ class _TwoMachineCluster:
         """Start all scheduler and worker processes, validate topology, and return worker reports."""
         commit = preflight["repository_revision"]
         self.runtime.mkdir(parents=True, exist_ok=True)
+        thread_limit = str(
+            self.configuration.execution["thread_limits"]["dask_worker"]
+        )
+        dask_timeout = float(self.configuration.execution["dask_timeout_seconds"])
         uv = str(self.root / ".tools/uv/uv")
         self._start_local(
             [
@@ -698,7 +810,7 @@ class _TwoMachineCluster:
                 "--nworkers",
                 str(MAC_CPU_WORKERS),
                 "--nthreads",
-                "1",
+                thread_limit,
                 "--name",
                 "acceptance-mac-cpu",
                 "--host",
@@ -713,21 +825,25 @@ class _TwoMachineCluster:
         )
         remote_root = shlex.quote(self.ubuntu_root)
         worker_address = shlex.quote(self.worker_address)
+        ubuntu_cpu = ""
+        if UBUNTU_CPU_WORKERS:
+            ubuntu_cpu = (
+                "nohup env PYTHONPATH=src/python RENV_CONFIG_SYNCHRONIZED_CHECK=false "
+                ".tools/uv/uv run --locked --no-sync "
+                f"dask worker {worker_address} --nworkers {UBUNTU_CPU_WORKERS} --nthreads {thread_limit} "
+                "--name acceptance-ubuntu-cpu --resources CPU=1 "
+                f"--memory-limit {UBUNTU_CPU_MEMORY_GIB}GiB --no-dashboard "
+                ">data/dask/acceptance-ubuntu-cpu.log 2>&1 </dev/null & "
+                "echo $! >data/dask/acceptance-ubuntu-cpu.pid; "
+            )
         self._ssh(
             "set -eu; "
             f"cd {remote_root}; mkdir -p data/dask; "
-            "nohup env PYTHONPATH=src/python RENV_CONFIG_SYNCHRONIZED_CHECK=false "
-            ".tools/uv/uv run --locked --no-sync "
-            f"dask worker {worker_address} "
-            f"--nworkers {UBUNTU_CPU_WORKERS} --nthreads 1 "
-            "--name acceptance-ubuntu-cpu --resources CPU=1 "
-            f"--memory-limit {UBUNTU_CPU_MEMORY_GIB}GiB --no-dashboard "
-            ">data/dask/acceptance-ubuntu-cpu.log 2>&1 </dev/null & "
-            "echo $! >data/dask/acceptance-ubuntu-cpu.pid; "
-            "nohup env CUDA_VISIBLE_DEVICES=0 PYTHONPATH=src/python "
+            + ubuntu_cpu
+            + "nohup env CUDA_VISIBLE_DEVICES=0 PYTHONPATH=src/python "
             "RENV_CONFIG_SYNCHRONIZED_CHECK=false "
             ".tools/uv/uv run --locked --no-sync dask worker "
-            f"{worker_address} --nworkers {UBUNTU_GPU_WORKERS} --nthreads 1 "
+            f"{worker_address} --nworkers {UBUNTU_GPU_WORKERS} --nthreads {thread_limit} "
             "--name acceptance-ubuntu-gpu "
             f"--resources {CHRONOS_GPU_RESOURCE}=1 "
             f"--memory-limit {UBUNTU_GPU_MEMORY_GIB}GiB --no-dashboard "
@@ -736,26 +852,24 @@ class _TwoMachineCluster:
         )
         from distributed import Client
 
-        from util.configuration import json_fingerprint
         from util.distributed_execution import validate_cluster
-        from util.experiment_execution import scientific_configuration
 
-        client = Client(self.scheduler_address, timeout="180s")
+        client = Client(self.scheduler_address, timeout=f"{dask_timeout}s")
         try:
-            config = json.loads(
-                (self.root / "config/experiments/m4_daily_reference.json").read_text(
-                    encoding="utf-8"
-                )
-            )
             reports = validate_cluster(
                 client,
                 expected_workers=EXPECTED_WORKERS,
-                timeout=180,
+                timeout=dask_timeout,
                 expected_commit=commit,
-                expected_configuration_hash=json_fingerprint(
-                    scientific_configuration(config)
-                ),
+                expected_configuration_hash=self.configuration_hash,
+                expected_gift_eval_revision=_ACTIVE_CONFIGURATION.resolved["evaluation"]["gift_eval"]["code_revision"],
+                expected_chronos_revision=_ACTIVE_CONFIGURATION.resolved["models"]["chronos_2"]["revision"],
+                expected_chronos_version=_ACTIVE_CONFIGURATION.resolved["models"]["chronos_2"]["chronos_forecasting"],
+                chronos_repository=_ACTIVE_CONFIGURATION.resolved["models"]["chronos_2"]["repository"],
+                chronos_environment=_ACTIVE_CONFIGURATION.resolved["execution"]["paths"]["chronos_environment"],
+                gift_eval_source_directory=_ACTIVE_CONFIGURATION.resolved["evaluation"]["gift_eval"]["source_directory"],
                 require_gpu=True,
+                expected_gpu_name=_ACTIVE_CONFIGURATION.resolved["execution"]["final_acceptance"]["gpu_name"],
                 expected_gpu_workers=UBUNTU_GPU_WORKERS,
             )
             local_host = socket.gethostname()
@@ -1076,7 +1190,6 @@ def _contribution_checks(
         "all_logical_gpu_workers_contributed": all_gpu_workers_contributed,
         "passed": (
             mac_cpu_tasks >= 1
-            and ubuntu_cpu_tasks >= 1
             and chronos_tasks == EXPECTED_CHRONOS_TASKS
             and chronos_only_on_gpu_workers
             and all_gpu_workers_contributed
@@ -1235,7 +1348,6 @@ def run_acceptance(
     authoritative = (root / "data/shapefm.duckdb").resolve()
     if database == authoritative:
         raise ValueError("acceptance test refuses to write to data/shapefm.duckdb")
-    environments = _require_existing_environment(root)
     database_was_fresh = not database.exists()
     previous = None
     if report_path.exists():
@@ -1258,25 +1370,25 @@ def run_acceptance(
             "matching acceptance report marks this database as non-reusable; "
             "use a fresh database and report"
         )
-    cluster = _TwoMachineCluster(root)
-    preflight = cluster.preflight()
-    dependency = json.loads(
-        (root / "config/dependencies/gift_eval.json").read_text(encoding="utf-8")
-    )
-    experiment_config = json.loads(
-        (root / "config/experiments/m4_daily_reference.json").read_text(
-            encoding="utf-8"
+    if database_was_fresh:
+        configuration = initialize_experiment_database(
+            database, root / "config/experiments/poc2_m4_daily_100.json"
         )
-    )
+    else:
+        configuration = load_database_configuration(database)
+    _activate_configuration(configuration)
+    environments = _require_existing_environment(root, configuration)
+    cluster = _TwoMachineCluster(root, configuration)
+    preflight = cluster.preflight()
     report = _report_document(
         previous if previous_matches_database else None,
         database=database,
         entry_invocation=entry_invocation,
         metadata={
             "series_limit_requested": SERIES_LIMIT,
-            "source_revision": dependency["dataset"]["revision"],
-            "gift_eval_revision": experiment_config["benchmark"]["gift_eval_revision"],
-            "model_revision": experiment_config["models"]["chronos_2"]["revision"],
+            "source_revision": configuration.resolved["data"]["source"]["revision"],
+            "gift_eval_revision": configuration.resolved["evaluation"]["gift_eval"]["code_revision"],
+            "model_revision": configuration.resolved["models"]["chronos_2"]["revision"],
             "environments": environments,
             "preflight": preflight,
             "memory_budget": _memory_budget(),
@@ -1286,8 +1398,6 @@ def run_acceptance(
     run_kind = "restart" if initial_run.get("scientific_run_complete") else "initial"
     database.parent.mkdir(parents=True, exist_ok=True)
     report_path.parent.mkdir(parents=True, exist_ok=True)
-    import_config = load_config(root / "config/imports/m4_daily.json", SERIES_LIMIT)
-    source = root / dependency["dataset"]["default_local_source_directory"] / "m4_daily"
     started_at = _utc_now()
     started = time.monotonic()
     phase = "import"
@@ -1304,12 +1414,13 @@ def run_acceptance(
     try:
         database_work_started = True
         with ImportCoordinator(database) as coordinator:
-            imported = coordinator.import_m4_daily(
-                source,
-                import_config,
-                dependency["dataset"]["revision"],
-                workers=1,
-            )
+            _mark_process(coordinator.connection, 1, "running")
+            try:
+                imported = coordinator.import_configured()
+            except BaseException as exc:
+                _mark_process(coordinator.connection, 1, "failed", error=str(exc))
+                raise
+            _mark_process(coordinator.connection, 1, "completed", imported)
         if (
             imported["selected_series"] != SERIES_LIMIT
             or imported["series_count"] != SERIES_LIMIT
@@ -1318,7 +1429,7 @@ def run_acceptance(
 
         phase = "plan"
         with POC1Coordinator(database) as coordinator:
-            plan = coordinator.plan("m4_daily", series_limit=SERIES_LIMIT)
+            plan = coordinator.plan()
             if (
                 plan.instance_count != SERIES_LIMIT
                 or plan.task_counts != EXPECTED_TASK_COUNTS
@@ -1350,21 +1461,45 @@ def run_acceptance(
         settings = ExecutionSettings(
             mode="dask",
             dask_scheduler_address=cluster.scheduler_address,
-            dask_timeout_seconds=180,
+            dask_timeout_seconds=configuration.resolved["execution"]["default"]["dask_timeout_seconds"],
             dask_expected_workers=EXPECTED_WORKERS,
             dask_expected_gpu_workers=UBUNTU_GPU_WORKERS,
             dask_max_in_flight=profile.dask_max_in_flight or MAX_IN_FLIGHT,
-            dask_retries=2,
+            dask_retries=configuration.resolved["execution"]["default"]["dask_retries"],
         )
         phase = "scientific_execution"
         sampler = _ResourceSampler(cluster.scheduler_address, topology, cluster.stop)
         try:
             with sampler:
                 with POC1Coordinator(database) as coordinator:
-                    execution = coordinator.run_all(
-                        plan,
-                        execution=(profile, profile_overrides),
-                        execution_settings=settings,
+                    execution = []
+                    for process_id in range(2, 7):
+                        _mark_process(coordinator.connection, process_id, "running")
+                        try:
+                            result = coordinator.run_gate(
+                                plan.experiment_id,
+                                process_id,
+                                execution=(profile, profile_overrides),
+                                execution_settings=settings,
+                            )
+                        except BaseException as exc:
+                            _mark_process(
+                                coordinator.connection,
+                                process_id,
+                                "failed",
+                                error=str(exc),
+                            )
+                            raise
+                        _mark_process(
+                            coordinator.connection,
+                            process_id,
+                            "completed",
+                            result,
+                        )
+                        execution.append(result)
+                    coordinator.connection.execute(
+                        "UPDATE experiments SET status='completed', updated_at=current_timestamp WHERE experiment_id=?",
+                        [plan.experiment_id],
                     )
         finally:
             resources = sampler.summary()

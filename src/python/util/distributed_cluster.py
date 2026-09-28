@@ -11,27 +11,18 @@
 
 from __future__ import annotations
 
-import json
 import subprocess
+from pathlib import Path
 
 from distributed import Client
 
-from .configuration import json_fingerprint
+from .database import load_database_configuration
 from .distributed_execution import ROOT, validate_cluster
 
 
-def _configuration_hash() -> str:
-    """Return the reference experiment's scientific configuration SHA-256 digest."""
-    config = json.loads(
-        (ROOT / "config/experiments/m4_daily_reference.json").read_text()
-    )
-    return json_fingerprint(
-        {
-            key: value
-            for key, value in config.items()
-            if key not in {"provisional_candidate", "submission_metadata"}
-        }
-    )
+def _configuration_hash(database: Path) -> str:
+    """Return the authoritative scientific hash from an existing experiment database."""
+    return load_database_configuration(database).scientific_hash
 
 
 def _commit() -> str:

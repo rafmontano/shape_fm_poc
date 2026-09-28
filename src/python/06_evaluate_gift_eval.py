@@ -40,8 +40,6 @@ from gluonts.model.forecast import QuantileForecast
 from gluonts.time_feature import get_seasonality
 
 
-# QUANTILES: allowed forecast probability levels, ordered from 0.1 through 0.9.
-QUANTILES = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
 # REQUIRED_RESULT_COLUMNS: official evaluation columns required in exported result order.
 REQUIRED_RESULT_COLUMNS = [
     "dataset",
@@ -63,11 +61,12 @@ REQUIRED_RESULT_COLUMNS = [
 
 
 class ShapeFMPredictor:
-    """GluonTS adapter used by ``evaluate``; ``records`` retains ordered ShapeFM mean/quantile forecasts for conversion to ``QuantileForecast`` objects."""
+    """Convert ordered ShapeFM forecasts to GluonTS objects at configured levels."""
 
-    def __init__(self, records: list[dict]):
-        """Retain ShapeFM mean and quantile records in official dataset order."""
+    def __init__(self, records: list[dict], quantile_levels: list[float]):
+        """Retain ordered forecast records and their explicitly configured levels."""
         self.records = records
+        self.quantile_levels = quantile_levels
 
     def predict(self, test_data_input):
         """Yield GluonTS forecasts aligned to each context's item identity and forecast start."""
@@ -75,14 +74,14 @@ class ShapeFMPredictor:
             arrays = np.asarray([item["mean"], *item["quantiles"]], dtype=np.float64)
             yield QuantileForecast(
                 forecast_arrays=arrays,
-                forecast_keys=["mean", *[str(value) for value in QUANTILES]],
+                forecast_keys=["mean", *[str(value) for value in self.quantile_levels]],
                 start_date=context["start"] + len(context["target"]),
                 item_id=str(context["item_id"]),
             )
 
 
-def metrics():
-    """Return the eleven official GIFT-Eval point, scaled, interval, and quantile metrics."""
+def metrics(quantile_levels: list[float]):
+    """Build the official metric set using task-supplied quantile levels."""
     return [
         MSE(forecast_type="mean"),
         MSE(forecast_type=0.5),
@@ -94,14 +93,14 @@ def metrics():
         RMSE(),
         NRMSE(),
         ND(),
-        MeanWeightedSumQuantileLoss(quantile_levels=QUANTILES),
+        MeanWeightedSumQuantileLoss(quantile_levels=quantile_levels),
     ]
 
 
-def official_dataset(source_root: str) -> Dataset:
-    """Point GIFT-Eval at the pinned source and open its M4 Daily short-term dataset."""
+def official_dataset(source_root: str, dataset_name: str, term: str) -> Dataset:
+    """Point GIFT-Eval at the pinned source and open the task-selected dataset."""
     os.environ["GIFT_EVAL"] = source_root
-    return Dataset("m4_daily", term="short", to_univariate=False)
+    return Dataset(dataset_name, term=term, to_univariate=False)
 
 
 def require_single_window(dataset: Dataset) -> None:
@@ -113,10 +112,21 @@ def require_single_window(dataset: Dataset) -> None:
         )
 
 
-def describe(source_root: str, limit: int) -> dict:
-    """Return metadata and the requested official prefix of context/label forecast instances."""
-    dataset = official_dataset(source_root)
+def describe(
+    source_root: str,
+    dataset_name: str,
+    term: str,
+    domain: str,
+    num_variates: int,
+    limit: int,
+) -> dict:
+    """Return metadata and an explicitly selected official instance prefix."""
+    dataset = official_dataset(source_root, dataset_name, term)
     require_single_window(dataset)
+    if dataset.target_dim != num_variates:
+        raise ValueError(
+            f"configured num_variates={num_variates} does not match source {dataset.target_dim}"
+        )
     entries = []
     pairs = itertools.islice(zip(dataset.test_data.input, dataset.test_data.label), limit)
     for position, (context, label) in enumerate(pairs):
@@ -125,7 +135,7 @@ def describe(source_root: str, limit: int) -> dict:
                 "official_position": position,
                 "item_id": str(context["item_id"]),
                 "variate_id": "0",
-                "window_id": "short/000",
+                "window_id": f"{term}/000",
                 "start": str(context["start"]),
                 "forecast_start": str(context["start"] + len(context["target"])),
                 "context": np.asarray(context["target"], dtype=np.float32).tolist(),
@@ -133,25 +143,43 @@ def describe(source_root: str, limit: int) -> dict:
             }
         )
     return {
-        "configuration_name": "m4_daily/D/short",
+        "configuration_name": f"{dataset.name}/{dataset.freq}/{dataset.term.value}",
         "dataset_name": dataset.name,
         "frequency": dataset.freq,
         "term": dataset.term.value,
         "prediction_length": dataset.prediction_length,
         "window_count": dataset.windows,
         "seasonality": get_seasonality(dataset.freq),
-        "domain": "Econ/Fin",
-        "num_variates": dataset.target_dim,
+        "domain": domain,
+        "num_variates": num_variates,
         "available_instances": len(dataset.test_data),
         "instances": entries,
     }
 
 
 def evaluate(source_root: str, payload_path: Path) -> dict:
-    """Score persisted ShapeFM forecasts with the official one-window GIFT-Eval procedure."""
+    """Score forecasts using only dataset, quantile, and evaluator settings in the payload."""
     payload = json.loads(payload_path.read_text(encoding="utf-8"))
-    dataset = official_dataset(source_root)
+    dataset = official_dataset(
+        source_root, payload["dataset_name"], payload["term"]
+    )
     require_single_window(dataset)
+    quantile_levels = payload["quantile_levels"]
+    options = payload["options"]
+    expected_options = {
+        "axis": None,
+        "mask_invalid_label": True,
+        "allow_nan_forecast": False,
+        "seasonality": "official get_seasonality(freq)",
+    }
+    if (
+        {key: value for key, value in options.items() if key != "batch_size"}
+        != expected_options
+        or isinstance(options.get("batch_size"), bool)
+        or not isinstance(options.get("batch_size"), int)
+        or options["batch_size"] < 1
+    ):
+        raise ValueError("unsupported task-supplied GIFT-Eval options")
     count = len(payload["forecasts"])
     original = list(itertools.islice(dataset.gluonts_dataset, count))
     _, template = split(original, offset=-dataset.prediction_length * dataset.windows)
@@ -160,26 +188,27 @@ def evaluate(source_root: str, payload_path: Path) -> dict:
         windows=dataset.windows,
         distance=dataset.prediction_length,
     )
-    predictor = ShapeFMPredictor(payload["forecasts"])
+    predictor = ShapeFMPredictor(payload["forecasts"], quantile_levels)
     forecasts = predictor.predict(test_data.input)
     result = evaluate_forecasts(
         forecasts,
         test_data=test_data,
-        metrics=metrics(),
-        batch_size=1024,
-        axis=None,
-        mask_invalid_label=True,
-        allow_nan_forecast=False,
+        metrics=metrics(quantile_levels),
+        batch_size=options["batch_size"],
+        axis=options["axis"],
+        mask_invalid_label=options["mask_invalid_label"],
+        allow_nan_forecast=options["allow_nan_forecast"],
         seasonality=get_seasonality(dataset.freq),
     ).reset_index(drop=True)
     return {key: float(value) for key, value in result.iloc[0].to_dict().items()}
 
 
-def manifest(root: Path) -> dict:
-    """Read and validate the pinned framework's complete qualified manifest."""
-    csv_path = root / "external/gift-eval/results/chronos-2/all_results.csv"
-    results_root = root / "external/gift-eval/results"
-    properties_path = root / "external/gift-eval/notebooks/dataset_properties.json"
+def manifest(root: Path, gift_eval_directory: str) -> dict:
+    """Read and validate the task-selected framework's qualified result manifest."""
+    gift_eval_root = root / gift_eval_directory
+    csv_path = gift_eval_root / "results/chronos-2/all_results.csv"
+    results_root = gift_eval_root / "results"
+    properties_path = gift_eval_root / "notebooks/dataset_properties.json"
     properties = json.loads(properties_path.read_text(encoding="utf-8"))
     with csv_path.open(newline="", encoding="utf-8") as stream:
         reader = csv.DictReader(stream)
@@ -293,19 +322,31 @@ def main() -> None:
     subparsers = parser.add_subparsers(dest="command", required=True)
     describe_parser = subparsers.add_parser("describe")
     describe_parser.add_argument("--source-root", required=True)
+    describe_parser.add_argument("--dataset-name", required=True)
+    describe_parser.add_argument("--term", required=True)
+    describe_parser.add_argument("--domain", required=True)
+    describe_parser.add_argument("--num-variates", type=int, required=True)
     describe_parser.add_argument("--limit", type=int, required=True)
     evaluate_parser = subparsers.add_parser("evaluate")
     evaluate_parser.add_argument("--source-root", required=True)
     evaluate_parser.add_argument("--payload", type=Path, required=True)
     manifest_parser = subparsers.add_parser("manifest")
     manifest_parser.add_argument("--root", type=Path, required=True)
+    manifest_parser.add_argument("--gift-eval-directory", required=True)
     args = parser.parse_args()
     if args.command == "describe":
-        result = describe(args.source_root, args.limit)
+        result = describe(
+            args.source_root,
+            args.dataset_name,
+            args.term,
+            args.domain,
+            args.num_variates,
+            args.limit,
+        )
     elif args.command == "evaluate":
         result = evaluate(args.source_root, args.payload)
     else:
-        result = manifest(args.root)
+        result = manifest(args.root, args.gift_eval_directory)
     print(json.dumps(result, separators=(",", ":"), allow_nan=False))
 
 

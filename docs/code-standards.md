@@ -44,6 +44,7 @@ The entry point exposes only the actions with demonstrated researcher workflows:
 
 ```text
 python src/python/00_main.py plan
+python src/python/00_main.py run
 python src/python/00_main.py status
 python src/python/00_main.py results
 python src/python/00_main.py test
@@ -51,6 +52,56 @@ python src/python/00_main.py test
 
 There is no implicit default that starts an experiment, installs software, or
 modifies data. A mutating action must be explicit.
+
+## Experiment configuration evolution
+
+One complete, versioned JSON document is the only creation-time experiment
+definition. Database creation validates and stores both the original and
+resolved documents. Thereafter DuckDB is authoritative and the source JSON is
+neither required nor accepted for resume.
+
+Any later POC that adds or changes a scientific or operational workflow field
+must update together: the JSON contract, validation, configuration version,
+stored schema/configuration, typed Python interface, affected coordinator and
+task payloads, Python/R consumers, tests, architecture, and researcher
+documentation. Machine addresses and credentials remain environment settings;
+protocol and schema constants remain code constants. An incompatible scientific
+change starts a new experiment database and never mutates an existing one.
+
+## Global settings
+
+A global setting is a value that is used by more than one function or script,
+changes the scope of an experiment, changes how the workflow executes, or must
+remain consistent across machines, processes, tasks, or restarts.
+
+Every active production global setting belongs to one of four classes:
+
+1. **Experiment global.** Affects scientific scope or intended results. It is
+   defined in the experiment JSON, stored in DuckDB, and immutable after the
+   experiment database is created.
+2. **Execution global.** Affects how work is performed but not the intended
+   scientific result. Its creation default is defined centrally and the value
+   actually used is recorded with the DuckDB execution event. Approved
+   execution globals may change when an experiment resumes.
+3. **Machine environment.** Identifies a host, address, port, installation,
+   device, or cache. It remains in a machine profile or environment variable;
+   its effective non-secret value is recorded as execution evidence.
+4. **Code constant.** Defines a local implementation, schema, or protocol and
+   is not a researcher-controlled setting. It remains documented in code.
+
+Derived values are calculated from authoritative configuration and are not
+additional editable settings. Test fixtures and calibration search grids are
+not production globals unless the researcher-facing workflow uses them.
+
+Do not copy every third-party library default into the experiment JSON. A
+default remains governed by the pinned dependency and implementation version
+until ShapeFM deliberately chooses to control it. When a later POC or imported
+script needs that value to be shared or varied, promote it through the complete
+JSON → validation → DuckDB → configuration interface → consumer path.
+
+No production script may maintain a competing copy, hidden override, or
+fallback for an authoritative global setting. Each process and worker receives
+only the settings it needs.
 
 The README documents only this entry point. R files, supporting Python files,
 shell commands, and internal command functions are implementation details and
@@ -213,10 +264,9 @@ The acceptance case uses:
 - the first 100 official time series in deterministic GIFT-Eval order;
 - a fresh isolated DuckDB database;
 - the complete import-to-evaluation pipeline;
-- five Mac CPU workers;
-- fifteen Ubuntu CPU workers;
-- fifteen logical Ubuntu GPU workers sharing one physical RTX 5090;
-- 35 Dask workers in total;
+- one Mac CPU worker;
+- one Ubuntu GPU worker on the physical RTX 5090;
+- two Dask workers in total; the scheduler is not a worker;
 - official GIFT-Eval evaluation;
 - a restart run that proves completed work is skipped;
 - recorded task counts, row counts, fingerprints, provenance, host
@@ -293,9 +343,11 @@ Folders remain flat until their contents create a real navigation problem.
 Environment subfolders are allowed when incompatible or separately locked
 environments require them.
 
-## POC2 implementation sequence
+## POC2 objectives and definition of done
 
-POC2 has two successive parts.
+POC2 has two objectives. Objective 1 is approved below. Objective 2 has only
+provisional high-level approval; its detailed scope, target results, comparison
+rules, and completion criteria require later Chief Developer approval.
 
 ### Preparation
 
@@ -309,14 +361,40 @@ POC2 has two successive parts.
 
 Preparation changes structure and interfaces, not scientific mathematics.
 
-### Import
+### Objective 1: centralised research workflow
 
-1. Define the exact M4 Daily result required from `m4_tsc_fmts_2026`.
-2. Identify only the components necessary for that result.
-3. Import one component at a time into its final process-specific or utility
-   location.
-4. Run the same end-to-end acceptance path after each component is integrated.
-5. Compare results with the previous project before importing the next item.
+Objective 1 is complete when:
+
+1. One readable, versioned JSON document is the only creation-time experiment
+   authority.
+2. DuckDB is the experiment authority after creation and the source JSON is not
+   required for resume.
+3. Every active production global affecting scope or execution is centrally
+   configured, machine-environment controlled, or documented as a code
+   constant.
+4. No production script maintains a competing value.
+5. The coordinator gives every process and task only the settings it needs.
+6. Processes 01–03 can execute first and Processes 04–06 can resume later in
+   the same database.
+7. Restart repeats no completed valid scientific work.
+8. Configuration, process status, execution evidence, and results remain
+   queryable for later research review.
+9. The deterministic 100-series M4 Daily experiment completes with AutoARIMA
+   and Chronos-2 using one Mac CPU worker and one Ubuntu GPU worker.
+10. A documented configuration-evolution procedure governs every later POC
+    and imported script.
+
+### Objective 2: selected previous-project reproduction
+
+The approved direction is to reproduce only relevant M4 Daily results from
+`m4_tsc_fmts_2026` under the ShapeFM architecture and code standards, importing
+and validating one necessary component at a time. Irrelevant previous-project
+methods are not imported merely for completeness.
+
+This direction is not yet a definition of done. Do not treat a particular
+result list, model list, comparison tolerance, import order, or completion
+criterion as approved until the Chief Developer supplies and approves the
+detailed Objective 2 scope.
 
 The working discipline remains: agree, change one bounded item, test, review,
 and then continue.

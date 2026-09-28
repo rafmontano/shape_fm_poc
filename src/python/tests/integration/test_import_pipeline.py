@@ -15,8 +15,8 @@ from pathlib import Path
 
 import duckdb
 
-from util.configuration import load_config
-from util.database import ShapeFMDatabase
+from util.configuration import load_experiment_configuration
+from util.database import ShapeFMDatabase, initialize_experiment_database
 from util.gift_eval_source import iter_source_series
 from util.import_execution import ImportCoordinator
 
@@ -29,8 +29,12 @@ class Stage1ImportTests(unittest.TestCase):
         """Load the pinned ten-series source configuration and source revision."""
         cls.root = Path(__file__).resolve().parents[4]
         cls.source = cls.root / "data/source/gift_eval/m4_daily"
-        cls.config = load_config(cls.root / "config/imports/m4_daily.json", 10)
-        cls.revision = "30841734ac5cfddbd0c3bad6d09d2b6b32becbb0"
+        configuration = load_experiment_configuration(
+            cls.root / "config/experiments/poc2_m4_daily_100.json"
+        )
+        cls.config = configuration.import_settings
+        cls.config["max_series"] = 10
+        cls.revision = configuration.resolved["data"]["source"]["revision"]
 
     @staticmethod
     def snapshot(path: Path):
@@ -58,12 +62,16 @@ class Stage1ImportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             sequential = Path(directory) / "sequential.duckdb"
             parallel = Path(directory) / "parallel.duckdb"
+            initialize_experiment_database(
+                sequential,
+                self.root / "config/experiments/poc2_m4_daily_100.json",
+            )
             with ImportCoordinator(sequential) as coordinator:
                 first = coordinator.import_m4_daily(
-                    self.source, self.config, self.revision, workers=1
+                    self.source, self.config, self.revision, workers=1, batch_size=10
                 )
                 second = coordinator.import_m4_daily(
-                    self.source, self.config, self.revision, workers=1
+                    self.source, self.config, self.revision, workers=1, batch_size=10
                 )
             self.assertEqual(first["series_count"], 10)
             self.assertEqual(first["observation_count"], 7291)
@@ -77,9 +85,13 @@ class Stage1ImportTests(unittest.TestCase):
             connection.close()
             self.assertEqual(invocation_count, 2)
 
+            initialize_experiment_database(
+                parallel,
+                self.root / "config/experiments/poc2_m4_daily_100.json",
+            )
             with ImportCoordinator(parallel) as coordinator:
                 parallel_result = coordinator.import_m4_daily(
-                    self.source, self.config, self.revision, workers=2
+                    self.source, self.config, self.revision, workers=2, batch_size=10
                 )
             self.assertEqual(parallel_result["completed_this_invocation"], 10)
             self.assertEqual(self.snapshot(sequential), self.snapshot(parallel))

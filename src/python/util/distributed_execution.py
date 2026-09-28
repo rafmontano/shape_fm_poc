@@ -35,10 +35,6 @@ from .transformations import transform
 
 # Dask release required on every scheduler and worker to keep serialization compatible.
 EXPECTED_DASK_VERSION = "2026.8.0"
-# Immutable GIFT-Eval Git commit that cluster preflight must report.
-EXPECTED_GIFT_EVAL_REVISION = "4d5ab3fa0fe7451bbf59bb1ff6dd76e6e414d64a"
-# Immutable Chronos-2 model revision that GPU workers must load.
-EXPECTED_CHRONOS_REVISION = "29ec3766d36d6f73f0696f85560a422f50e8498c"
 # ROOT: repository root resolved from this source file.
 ROOT = Path(__file__).resolve().parents[3]
 # CHRONOS_GPU_RESOURCE: Dask resource label reserving one logical Chronos GPU slot.
@@ -103,13 +99,10 @@ def worker_resource_snapshot(dask_worker: Any = None) -> dict[str, Any]:
     return snapshot
 
 
-def _run_r(payload: dict[str, Any], timeout: float = 1800.0) -> dict[str, Any]:
+def _run_r(
+    payload: dict[str, Any], script: str, timeout: float, threads: int
+) -> dict[str, Any]:
     """Run the cleaning or AutoARIMA R script with JSON stdin and return its JSON response."""
-    script = (
-        "src/r/04_forecast_auto_arima.R"
-        if payload.get("action") == "forecast"
-        else "src/r/02_preprocess_series.R"
-    )
     completed = subprocess.run(
         ["Rscript", str(ROOT / script)],
         cwd=ROOT,
@@ -120,15 +113,21 @@ def _run_r(payload: dict[str, Any], timeout: float = 1800.0) -> dict[str, Any]:
         timeout=timeout,
         env={
             **os.environ,
-            "OMP_NUM_THREADS": "1",
-            "OPENBLAS_NUM_THREADS": "1",
+            "OMP_NUM_THREADS": str(threads),
+            "OPENBLAS_NUM_THREADS": str(threads),
             "RENV_CONFIG_SYNCHRONIZED_CHECK": "false",
         },
     )
     return json.loads(completed.stdout)
 
 
-def clean_batch(batch: list[dict[str, Any]], retry_count: int = 0) -> dict[str, Any]:
+def clean_batch(
+    batch: list[dict[str, Any]],
+    script: str,
+    timeout: float,
+    threads: int,
+    retry_count: int = 0,
+) -> dict[str, Any]:
     """Clean jobs through the R worker and return results, package versions, timing, and provenance."""
     started = time.monotonic()
     response = _run_r(
@@ -138,7 +137,10 @@ def clean_batch(batch: list[dict[str, Any]], retry_count: int = 0) -> dict[str, 
                 {key: value for key, value in job.items() if key != "instance_id"}
                 for job in batch
             ],
-        }
+        },
+        script,
+        timeout,
+        threads,
     )
     runtime = time.monotonic() - started
     return {
@@ -170,13 +172,19 @@ def transform_batch(batch: list[dict[str, Any]], retry_count: int = 0) -> dict[s
 
 
 def autoarima_batch(
-    batch: list[dict[str, Any]], settings: dict[str, Any], retry_count: int = 0
+    batch: list[dict[str, Any]],
+    settings: dict[str, Any],
+    script: str,
+    timeout: float,
+    threads: int,
+    retry_count: int = 0,
 ) -> dict[str, Any]:
     """Forecast a batch through R AutoARIMA and return forecasts plus execution metadata."""
     started = time.monotonic()
     response = _run_r(
         {
             "action": "forecast",
+            "settings": settings,
             "jobs": [
                 {
                     key: value
@@ -185,7 +193,10 @@ def autoarima_batch(
                 }
                 for job in batch
             ],
-        }
+        },
+        script,
+        timeout,
+        threads,
     )
     runtime = time.monotonic() - started
     return {
@@ -205,7 +216,9 @@ def combine_batch(batch: list[dict[str, Any]], retry_count: int = 0) -> dict[str
     started = time.monotonic()
     results = []
     for job in batch:
-        combination = combine_equal_weight(job["left"], job["right"])
+        combination = combine_equal_weight(
+            job["left"], job["right"], job["weights"]
+        )
         results.append(
             {
                 "id": job["id"],
@@ -223,7 +236,7 @@ def combine_batch(batch: list[dict[str, Any]], retry_count: int = 0) -> dict[str
 _chronos_lock = threading.Lock()
 # Cached worker client and its model/revision/device key; both are replaced together.
 _chronos_worker: Any = None
-_chronos_key: tuple[str, str, str] | None = None
+_chronos_key: tuple[str, str, str, str, int, str, str, float, float] | None = None
 # Monotonic process-local restart counter reported with forecast provenance.
 _chronos_generation = 0
 
@@ -241,19 +254,39 @@ def _close_chronos() -> None:
 atexit.register(_close_chronos)
 
 
-def _get_chronos(model: str, revision: str, device: str) -> tuple[Any, int]:
+def _get_chronos(
+    model: str,
+    revision: str,
+    device: str,
+    dtype: str,
+    internal_cpu_threads: int,
+    environment: str,
+    worker_script: str,
+    startup_timeout: float,
+    request_timeout: float,
+) -> tuple[Any, int]:
     """Return a persistent Chronos process and generation, restarting when its model key changes."""
     global _chronos_worker, _chronos_key, _chronos_generation
     from .execution_profiles import PersistentChronosWorker
 
-    key = (model, revision, device)
+    key = (
+        model,
+        revision,
+        device,
+        dtype,
+        internal_cpu_threads,
+        environment,
+        worker_script,
+        startup_timeout,
+        request_timeout,
+    )
     with _chronos_lock:
         if _chronos_worker is None or _chronos_key != key:
             if _chronos_worker is not None:
                 _chronos_worker.close(force=True)
             command = [
-                str(ROOT / "environments/chronos-2/.venv/bin/python"),
-                str(ROOT / "src/python/04_forecast_chronos.py"),
+                str(ROOT / environment / "bin/python"),
+                str(ROOT / worker_script),
                 "serve",
                 "--model",
                 model,
@@ -261,8 +294,14 @@ def _get_chronos(model: str, revision: str, device: str) -> tuple[Any, int]:
                 revision,
                 "--device",
                 device,
+                "--dtype",
+                dtype,
+                "--internal-cpu-threads",
+                str(internal_cpu_threads),
             ]
-            _chronos_worker = PersistentChronosWorker(command)
+            _chronos_worker = PersistentChronosWorker(
+                command, startup_timeout=startup_timeout
+            )
             _chronos_worker.start()
             _chronos_key = key
             _chronos_generation += 1
@@ -275,10 +314,28 @@ def chronos_batch(
     revision: str,
     quantile_levels: list[float],
     device: str,
+    dtype: str,
+    cross_learning: bool,
+    predict_batches_jointly: bool,
+    internal_cpu_threads: int,
+    environment: str,
+    worker_script: str,
+    startup_timeout: float,
+    request_timeout: float,
     retry_count: int = 0,
 ) -> dict[str, Any]:
     """Request one persistent-worker prediction batch and return forecasts and accelerator metadata."""
-    worker, generation = _get_chronos(model, revision, device)
+    worker, generation = _get_chronos(
+        model,
+        revision,
+        device,
+        dtype,
+        internal_cpu_threads,
+        environment,
+        worker_script,
+        startup_timeout,
+        request_timeout,
+    )
     started = time.monotonic()
     response = worker.request(
         {
@@ -296,7 +353,10 @@ def chronos_batch(
             "horizon": batch[0]["horizon"],
             "quantile_levels": quantile_levels,
             "inference_batch_size": len(batch),
-        }
+            "cross_learning": cross_learning,
+            "predict_batches_jointly": predict_batches_jointly,
+        },
+        timeout=request_timeout,
     )
     if response.get("type") != "result":
         error = response.get("error", f"invalid Chronos response: {response}")
@@ -331,20 +391,20 @@ def _command(*arguments: str, timeout: float = 30.0) -> str:
     ).stdout.strip()
 
 
-def worker_preflight(dask_worker: Any = None) -> dict[str, Any]:
-    """Collect Git, Python/R/Dask, configuration, checkpoint, and hardware identity on a worker."""
-    config = json.loads(
-        (ROOT / "config/experiments/m4_daily_reference.json").read_text()
-    )
-    scientific = {
-        key: value
-        for key, value in config.items()
-        if key not in {"provisional_candidate", "submission_metadata"}
-    }
+def worker_preflight(
+    configuration_hash: str,
+    chronos_repository: str,
+    chronos_revision: str,
+    chronos_environment: str,
+    gift_eval_source_directory: str,
+    dask_worker: Any = None,
+) -> dict[str, Any]:
+    """Collect worker identity using dependency locations supplied by the coordinator."""
     chronos_script = """
-import importlib.metadata as metadata, json, pathlib, torch
-root = pathlib.Path.home() / '.cache/huggingface/hub/models--amazon--chronos-2'
-revision = (root / 'refs/main').read_text().strip()
+import importlib.metadata as metadata, json, os, pathlib, sys, torch
+cache = pathlib.Path(os.environ.get('HF_HOME', pathlib.Path.home() / '.cache/huggingface')) / 'hub'
+root = cache / ('models--' + sys.argv[1].replace('/', '--'))
+revision = sys.argv[2]
 print(json.dumps({
     'chronos_forecasting': metadata.version('chronos-forecasting'),
     'torch': torch.__version__,
@@ -357,9 +417,11 @@ print(json.dumps({
 """
     chronos = json.loads(
         _command(
-            str(ROOT / "environments/chronos-2/.venv/bin/python"),
+            str(ROOT / chronos_environment / "bin/python"),
             "-c",
             chronos_script,
+            chronos_repository,
+            chronos_revision,
             timeout=60,
         )
     )
@@ -382,9 +444,13 @@ print(json.dumps({
         "python_version": platform.python_version(),
         "dask_version": dask.__version__,
         "distributed_version": distributed.__version__,
-        "configuration_hash": json_fingerprint(scientific),
+        "configuration_hash": configuration_hash,
         "gift_eval_revision": _command(
-            "git", "-C", str(ROOT / "external/gift-eval"), "rev-parse", "HEAD"
+            "git",
+            "-C",
+            str(ROOT / gift_eval_source_directory),
+            "rev-parse",
+            "HEAD",
         ),
         "r_packages": r_packages,
         "chronos": chronos,
@@ -398,15 +464,28 @@ def validate_cluster(
     timeout: float,
     expected_commit: str,
     expected_configuration_hash: str,
+    expected_gift_eval_revision: str,
+    expected_chronos_revision: str,
+    expected_chronos_version: str,
+    chronos_repository: str,
+    chronos_environment: str,
+    gift_eval_source_directory: str,
     require_gpu: bool,
-    expected_gpu_name: str | None = "NVIDIA GeForce RTX 5090",
+    expected_gpu_name: str | None,
     expected_gpu_workers: int = 1,
 ) -> dict[str, dict[str, Any]]:
     """Return worker preflight reports only when count, software, revisions, and GPU contract match."""
     if expected_gpu_workers < 1:
         raise ValueError("expected_gpu_workers must be positive")
     client.wait_for_workers(expected_workers, timeout=timeout)
-    reports = client.run(worker_preflight)
+    reports = client.run(
+        worker_preflight,
+        expected_configuration_hash,
+        chronos_repository,
+        expected_chronos_revision,
+        chronos_environment,
+        gift_eval_source_directory,
+    )
     failures = []
     gpu_workers = 0
     for address, report in reports.items():
@@ -417,7 +496,7 @@ def validate_cluster(
             "dask_version": EXPECTED_DASK_VERSION,
             "distributed_version": EXPECTED_DASK_VERSION,
             "configuration_hash": expected_configuration_hash,
-            "gift_eval_revision": EXPECTED_GIFT_EVAL_REVISION,
+            "gift_eval_revision": expected_gift_eval_revision,
         }
         for field, value in expected.items():
             if report.get(field) != value:
@@ -436,9 +515,9 @@ def validate_cluster(
                     f"{address}: R {field}={report['r_packages'].get(field)!r}, expected {value!r}"
                 )
         chronos = report["chronos"]
-        if chronos["chronos_forecasting"] != "2.2.2":
+        if chronos["chronos_forecasting"] != expected_chronos_version:
             failures.append(f"{address}: unexpected Chronos version")
-        if chronos["checkpoint_revision"] != EXPECTED_CHRONOS_REVISION or not chronos[
+        if chronos["checkpoint_revision"] != expected_chronos_revision or not chronos[
             "checkpoint_present"
         ]:
             failures.append(f"{address}: pinned Chronos checkpoint is unavailable")

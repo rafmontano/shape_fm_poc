@@ -15,6 +15,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from util.configuration import load_experiment_configuration
+
 
 class OfficialAdapterTests(unittest.TestCase):
     """Verify the pinned adapter's dataset description, evaluation, and manifest contracts."""
@@ -26,6 +28,10 @@ class OfficialAdapterTests(unittest.TestCase):
         cls.python = cls.root / "environments/gift-eval/.venv/bin/python"
         cls.bridge = cls.root / "src/python/06_evaluate_gift_eval.py"
         cls.source = cls.root / "data/source/gift_eval"
+        cls.experiment_configuration = load_experiment_configuration(
+            cls.root / "config/experiments/poc2_m4_daily_100.json"
+        )
+        cls.configuration = cls.experiment_configuration.resolved
 
     def bridge_call(self, *arguments):
         """Run a bridge command and decode its successful JSON response."""
@@ -42,7 +48,19 @@ class OfficialAdapterTests(unittest.TestCase):
     def test_official_instances_are_context_only_and_evaluate_officially(self):
         """Described instances support official evaluation of horizon-length forecasts."""
         description = self.bridge_call(
-            "describe", "--source-root", str(self.source), "--limit", "2"
+            "describe",
+            "--source-root",
+            str(self.source),
+            "--dataset-name",
+            self.configuration["data"]["dataset_name"],
+            "--term",
+            self.configuration["data"]["benchmark"]["term"],
+            "--domain",
+            self.configuration["data"]["benchmark"]["domain"],
+            "--num-variates",
+            str(self.configuration["data"]["benchmark"]["num_variates"]),
+            "--limit",
+            "2",
         )
         self.assertEqual(description["configuration_name"], "m4_daily/D/short")
         self.assertEqual(description["prediction_length"], 14)
@@ -56,7 +74,16 @@ class OfficialAdapterTests(unittest.TestCase):
             )
             self.assertEqual(len(instance["actual"]), 14)
         with tempfile.NamedTemporaryFile("w", suffix=".json") as stream:
-            json.dump({"forecasts": forecasts}, stream)
+            json.dump(
+                {
+                    "dataset_name": self.configuration["data"]["dataset_name"],
+                    "term": self.configuration["data"]["benchmark"]["term"],
+                    "quantile_levels": self.configuration["models"]["chronos_2"]["quantile_levels"],
+                    "options": self.experiment_configuration.evaluation_options,
+                    "forecasts": forecasts,
+                },
+                stream,
+            )
             stream.flush()
             metrics = self.bridge_call(
                 "evaluate",
@@ -71,7 +98,13 @@ class OfficialAdapterTests(unittest.TestCase):
 
     def test_manifest_is_complete_qualified_and_validated(self):
         """The manifest contains the validated 97-configuration consensus and full metadata."""
-        manifest = self.bridge_call("manifest", "--root", str(self.root))
+        manifest = self.bridge_call(
+            "manifest",
+            "--root",
+            str(self.root),
+            "--gift-eval-directory",
+            self.configuration["evaluation"]["gift_eval"]["source_directory"],
+        )
         self.assertTrue(manifest["validated"])
         self.assertEqual(manifest["manifest_role"], "pinned_consensus_manifest")
         self.assertEqual(manifest["configuration_count"], 97)

@@ -9,12 +9,12 @@
 
 """Verify pinned GIFT-Eval dataset metadata, split, metric, and quantile semantics used by experiment planning."""
 
-import json
 import os
 import unittest
 from pathlib import Path
 
 from gift_eval.data import Dataset
+from util.configuration import load_experiment_configuration
 
 
 class GiftEvalSemanticsTests(unittest.TestCase):
@@ -26,8 +26,9 @@ class GiftEvalSemanticsTests(unittest.TestCase):
             os.environ.get("SHAPEFM_GIFT_EVAL_ROOT", root / "data/source/gift_eval")
         )
         os.environ["GIFT_EVAL"] = str(source_root)
-        with (root / "config/imports/m4_daily.json").open(encoding="utf-8") as stream:
-            config = json.load(stream)
+        config = load_experiment_configuration(
+            root / "config/experiments/poc2_m4_daily_100.json"
+        ).resolved["data"]
 
         dataset = Dataset("m4_daily", term="short")
         self.assertEqual(dataset.freq, config["benchmark"]["frequency"])

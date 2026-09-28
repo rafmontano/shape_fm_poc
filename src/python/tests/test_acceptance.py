@@ -15,14 +15,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import tests.acceptance as acceptance
 from tests.acceptance import (
-    EXPECTED_CHRONOS_TASKS,
     GIB,
-    MAC_CPU_MEMORY_GIB,
-    MAX_IN_FLIGHT,
-    UBUNTU_CPU_MEMORY_GIB,
-    UBUNTU_GPU_MEMORY_GIB,
-    UBUNTU_GPU_WORKERS,
+    _activate_configuration,
     _contribution_checks,
     _contribution_topology,
     _memory_budget,
@@ -33,14 +29,23 @@ from tests.acceptance import (
     _write_failure_report,
     run_acceptance,
 )
+from util.configuration import load_experiment_configuration
 from util.distributed_execution import CHRONOS_GPU_RESOURCE
 
 
 class AcceptanceReadinessTests(unittest.TestCase):
     """Verify acceptance evidence, resource safety, resumability, and report decisions."""
     def setUp(self):
-        """Build a Mac/Ubuntu topology with the required logical GPU workers."""
-        gpu_workers = [f"gpu-worker-{index}" for index in range(UBUNTU_GPU_WORKERS)]
+        """Activate the stored contract and build its two-worker topology."""
+        _activate_configuration(
+            load_experiment_configuration(
+                Path(__file__).resolve().parents[3]
+                / "config/experiments/poc2_m4_daily_100.json"
+            )
+        )
+        gpu_workers = [
+            f"gpu-worker-{index}" for index in range(acceptance.UBUNTU_GPU_WORKERS)
+        ]
         self.topology = {
             "topology": {
                 "mac_hosts": ["mac"],
@@ -49,10 +54,6 @@ class AcceptanceReadinessTests(unittest.TestCase):
             },
             "workers": {
                 "mac-worker": {"hostname": "mac", "resources": {"CPU": 1}},
-                "ubuntu-worker": {
-                    "hostname": "ubuntu",
-                    "resources": {"CPU": 1},
-                },
                 **{
                     worker: {
                         "hostname": "ubuntu",
@@ -84,10 +85,10 @@ class AcceptanceReadinessTests(unittest.TestCase):
                     "dask_worker": f"gpu-worker-{index}",
                     "advertised_resource": CHRONOS_GPU_RESOURCE,
                     "completed_tasks": (
-                        36 if index == UBUNTU_GPU_WORKERS - 1 else 26
+                        acceptance.EXPECTED_CHRONOS_TASKS
                     ),
                 }
-                for index in range(UBUNTU_GPU_WORKERS)
+                for index in range(acceptance.UBUNTU_GPU_WORKERS)
             ],
         }
 
@@ -118,28 +119,29 @@ class AcceptanceReadinessTests(unittest.TestCase):
                         "dask_spilled_disk_bytes": 0,
                         "gpu": {"available_memory_bytes": 8 * GIB},
                     }
-                    for index in range(UBUNTU_GPU_WORKERS)
+                    for index in range(acceptance.UBUNTU_GPU_WORKERS)
                 },
             },
             "scheduler_workers": {
-                "mac-worker": {"memory_limit": MAC_CPU_MEMORY_GIB * GIB},
-                "ubuntu-worker": {"memory_limit": UBUNTU_CPU_MEMORY_GIB * GIB},
+                "mac-worker": {"memory_limit": acceptance.MAC_CPU_MEMORY_GIB * GIB},
                 **{
                     f"gpu-worker-{index}": {
-                        "memory_limit": UBUNTU_GPU_MEMORY_GIB * GIB
+                        "memory_limit": acceptance.UBUNTU_GPU_MEMORY_GIB * GIB
                     }
-                    for index in range(UBUNTU_GPU_WORKERS)
+                    for index in range(acceptance.UBUNTU_GPU_WORKERS)
                 },
             },
         }
 
-    def test_requires_mac_and_ubuntu_cpu_contribution(self):
-        """Contribution checks require both CPU hosts and the exact GPU task distribution."""
+    def test_requires_mac_cpu_and_ubuntu_gpu_contribution(self):
+        """Contribution checks require both hosts and the exact GPU task count."""
         result = _contribution_checks(self._evidence(), self.topology)
         self.assertTrue(result["passed"])
         self.assertEqual(result["mac_cpu_completed_tasks"], 10)
         self.assertEqual(result["ubuntu_cpu_completed_tasks"], 20)
-        self.assertEqual(result["chronos_completed_tasks"], EXPECTED_CHRONOS_TASKS)
+        self.assertEqual(
+            result["chronos_completed_tasks"], acceptance.EXPECTED_CHRONOS_TASKS
+        )
 
         wrong_count = self._evidence()
         wrong_count["chronos_contribution"][0]["completed_tasks"] -= 1
@@ -149,12 +151,12 @@ class AcceptanceReadinessTests(unittest.TestCase):
         wrong_worker["chronos_contribution"][0]["dask_worker"] = "ubuntu-worker"
         self.assertFalse(_contribution_checks(wrong_worker, self.topology)["passed"])
 
-    def test_rejects_gpu_only_ubuntu_contribution(self):
-        """GPU work on Ubuntu does not satisfy its required CPU contribution."""
+    def test_accepts_gpu_only_ubuntu_contribution(self):
+        """The approved two-worker topology needs no separate Ubuntu CPU worker."""
         result = _contribution_checks(
             self._evidence(CHRONOS_GPU_RESOURCE), self.topology
         )
-        self.assertFalse(result["passed"])
+        self.assertTrue(result["passed"])
         self.assertEqual(result["ubuntu_cpu_completed_tasks"], 0)
 
     def test_rejects_zero_samples_and_unsafe_resources(self):
@@ -176,7 +178,7 @@ class AcceptanceReadinessTests(unittest.TestCase):
         self.assertIn("mac memory headroom fell below threshold", unsafe["unsafe_reasons"])
 
         removed = self._sample()
-        del removed["workers"]["ubuntu-worker"]
+        del removed["workers"]["gpu-worker-0"]
         replacement = _summarize_resources([removed], [], self.topology)
         self.assertFalse(replacement["passed"])
         self.assertEqual(replacement["worker_replacements_or_removals"], 1)
@@ -214,7 +216,7 @@ class AcceptanceReadinessTests(unittest.TestCase):
                 "gift_eval_revision": "gift",
             }
             coordinator = MagicMock()
-            coordinator.__enter__.return_value.import_m4_daily.side_effect = RuntimeError(
+            coordinator.__enter__.return_value.import_configured.side_effect = RuntimeError(
                 "synthetic import failure"
             )
             with (
@@ -239,7 +241,11 @@ class AcceptanceReadinessTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[3]
         with tempfile.TemporaryDirectory() as directory:
             database = (Path(directory) / "acceptance.duckdb").resolve()
-            database.touch()
+            from util.database import initialize_experiment_database
+
+            initialize_experiment_database(
+                database, root / "config/experiments/poc2_m4_daily_100.json"
+            )
             report_path = Path(directory) / "report.json"
             report = _report_document(
                 None,
@@ -272,7 +278,11 @@ class AcceptanceReadinessTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[3]
         with tempfile.TemporaryDirectory() as directory:
             database = (Path(directory) / "acceptance.duckdb").resolve()
-            database.touch()
+            from util.database import initialize_experiment_database
+
+            initialize_experiment_database(
+                database, root / "config/experiments/poc2_m4_daily_100.json"
+            )
             report_path = Path(directory) / "report.json"
             report = _report_document(
                 None,
@@ -293,7 +303,7 @@ class AcceptanceReadinessTests(unittest.TestCase):
             cluster = MagicMock()
             cluster.preflight.return_value = {"repository_revision": "revision"}
             coordinator = MagicMock()
-            coordinator.__enter__.return_value.import_m4_daily.side_effect = RuntimeError(
+            coordinator.__enter__.return_value.import_configured.side_effect = RuntimeError(
                 "resumed import reached"
             )
             with (
@@ -372,7 +382,8 @@ class AcceptanceReadinessTests(unittest.TestCase):
             "topology": {
                 **self.topology["topology"],
                 "gpu_worker_addresses": [
-                    f"new-gpu-worker-{index}" for index in range(UBUNTU_GPU_WORKERS)
+                    f"new-gpu-worker-{index}"
+                    for index in range(acceptance.UBUNTU_GPU_WORKERS)
                 ],
             },
         }
@@ -391,24 +402,26 @@ class AcceptanceReadinessTests(unittest.TestCase):
     def test_profile_records_actual_topology_overrides(self):
         """The acceptance profile records worker overrides within both hosts' memory budgets."""
         profile, overrides = _resolve_acceptance_profile()
-        self.assertEqual(profile.dask_mac_cpu_workers, 5)
-        self.assertEqual(profile.dask_ubuntu_cpu_workers, 15)
-        self.assertEqual(profile.dask_max_in_flight, MAX_IN_FLIGHT)
-        self.assertGreaterEqual(MAX_IN_FLIGHT, UBUNTU_GPU_WORKERS)
+        self.assertEqual(profile.dask_mac_cpu_workers, 1)
+        self.assertEqual(profile.dask_ubuntu_cpu_workers, 0)
+        self.assertEqual(profile.dask_max_in_flight, acceptance.MAX_IN_FLIGHT)
+        self.assertGreaterEqual(
+            acceptance.MAX_IN_FLIGHT, acceptance.UBUNTU_GPU_WORKERS
+        )
         self.assertEqual(
             overrides,
             {
-                "dask_mac_cpu_workers": 5,
-                "dask_ubuntu_cpu_workers": 15,
-                "dask_max_in_flight": MAX_IN_FLIGHT,
+                "dask_mac_cpu_workers": 1,
+                "dask_ubuntu_cpu_workers": 0,
+                "dask_max_in_flight": acceptance.MAX_IN_FLIGHT,
             },
         )
         budget = _memory_budget()
-        self.assertEqual(UBUNTU_CPU_MEMORY_GIB, 2)
-        self.assertEqual(UBUNTU_GPU_MEMORY_GIB, 4)
+        self.assertEqual(acceptance.UBUNTU_CPU_MEMORY_GIB, 0)
+        self.assertEqual(acceptance.UBUNTU_GPU_MEMORY_GIB, 4)
         self.assertEqual(
             budget["ubuntu"]["configured_worker_memory_ceiling_bytes"],
-            90 * GIB,
+            4 * GIB,
         )
         self.assertGreaterEqual(
             budget["mac"]["memory_outside_worker_ceilings_bytes"],

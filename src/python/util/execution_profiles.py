@@ -145,8 +145,9 @@ def resolve_execution_profile(
         "dask_max_in_flight",
     ):
         value = getattr(profile, field)
-        if value is not None and value < 1:
-            raise ValueError(f"{field} must be positive when configured")
+        minimum = 1 if field == "dask_max_in_flight" else 0
+        if value is not None and value < minimum:
+            raise ValueError(f"{field} must be at least {minimum} when configured")
     return profile, clean_overrides
 
 

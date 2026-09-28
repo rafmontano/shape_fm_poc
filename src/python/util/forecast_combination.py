@@ -15,9 +15,11 @@ from typing import Any
 
 
 def combine_equal_weight(
-    left: dict[str, Any], right: dict[str, Any]
+    left: dict[str, Any], right: dict[str, Any], weights: dict[str, float]
 ) -> dict[str, Any]:
-    """Average corresponding forecasts and rearrange crossed output quantiles."""
+    """Apply configured equal model weights and rearrange crossed output quantiles."""
+    if weights != {"auto_arima": 0.5, "chronos_2": 0.5}:
+        raise ValueError("equal-weight combination requires two weights of 0.5")
 
     def average(a: list[float], b: list[float]) -> list[float]:
         """Return strict pairwise arithmetic means, rejecting unequal lengths."""

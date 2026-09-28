@@ -34,15 +34,13 @@ from .configuration import (
     evaluation_window,
     json_fingerprint,
 )
-from .database import migrate_database
+from .database import load_database_configuration, migrate_database
 from .gift_eval_source import iter_source_series, source_fingerprint, source_metadata
 from .provenance import sha256_file, utc_now
 
 
 # Persistent task-stage identifier used in import run and attempt rows.
 STAGE = "import"
-# Maximum series tasks sent to one local worker scheduling batch.
-BATCH_SIZE = 64
 
 
 @dataclass(frozen=True)
@@ -57,6 +55,7 @@ class SeriesTask:
     start_timestamp: Any
     target: tuple[float, ...]
     horizon: int
+    window_id: str
     boundary_convention: str
 
 
@@ -89,7 +88,7 @@ def compute_series(task: SeriesTask) -> SeriesResult:
     packed = struct.pack(f"<{len(task.target)}f", *task.target)
     content_hash = hashlib.sha256(packed).hexdigest()
     window = {
-        "window_id": "short/000",
+        "window_id": task.window_id,
         "split_name": "validation_and_test",
         "train_start": 0,
         "train_end": len(task.target) - 2 * task.horizon,
@@ -108,6 +107,7 @@ def compute_series(task: SeriesTask) -> SeriesResult:
                 "boundary_convention": task.boundary_convention,
             }
         },
+        window_id=task.window_id,
     ):
         raise ImportValidationError("worker evaluation-window calculation diverged")
     return SeriesResult(
@@ -191,9 +191,16 @@ class ImportCoordinator:
     """Single DuckDB writer that registers, resumes, and atomically commits Stage 1 series tasks."""
 
     def __init__(self, database_path: Path):
-        """Migrate `database_path` and open the coordinator's writable connection."""
+        """Open an initialized database and load its authoritative configuration."""
+        if not Path(database_path).resolve().is_file():
+            raise FileNotFoundError(
+                f"experiment database does not exist: {Path(database_path).resolve()}"
+            )
         self.database_path = migrate_database(database_path)
         self.connection = duckdb.connect(str(self.database_path))
+        self.configuration = load_database_configuration(
+            self.database_path, self.connection
+        )
 
     def close(self) -> None:
         """Close the owned DuckDB connection."""
@@ -512,11 +519,12 @@ class ImportCoordinator:
         source_dir: Path,
         config: dict[str, Any],
         source_revision: str,
-        workers: int = 1,
+        workers: int,
+        batch_size: int,
     ) -> dict[str, Any]:
         """Import selected M4 Daily rows restartably, verify source immutability, and return run/invocation counts."""
-        if workers < 1:
-            raise ValueError("workers must be at least 1")
+        if workers < 1 or batch_size < 1:
+            raise ValueError("workers and batch_size must be at least 1")
         source_before = source_fingerprint(source_dir)
         dataset_id, config_hash = dataset_identity(
             config, source_revision, source_before["files"]
@@ -570,10 +578,11 @@ class ImportCoordinator:
                         start_timestamp=source.start_timestamp,
                         target=source.target,
                         horizon=config["benchmark"]["prediction_length"],
+                        window_id=f"{config['benchmark']['term']}/000",
                         boundary_convention=config["benchmark"]["boundary_convention"],
                     )
                 )
-                if len(pending) >= BATCH_SIZE:
+                if len(pending) >= batch_size:
                     summary["submitted_tasks"] += len(pending)
                     completed, failed = self._process_batch(pending, executor)
                     summary["completed_this_invocation"] += completed
@@ -662,3 +671,32 @@ class ImportCoordinator:
         finally:
             if executor is not None:
                 executor.shutdown()
+
+    def import_configured(self) -> dict[str, Any]:
+        """Import the stored deterministic M4 selection without rereading experiment JSON."""
+        root = repository_root()
+        source = (
+            root
+            / self.configuration.source_directory
+            / self.configuration.resolved["data"]["dataset_name"]
+        )
+        configured_hashes = self.configuration.resolved["data"]["source"]["files"]
+        actual = source_fingerprint(source)["files"]
+        actual_hashes = {name: details["sha256"] for name, details in actual.items()}
+        if actual_hashes != configured_hashes:
+            raise ImportValidationError(
+                "pinned M4 Daily source hashes do not match stored configuration"
+            )
+        workers = int(
+            self.configuration.resolved["execution"]["default"]["import_workers"]
+        )
+        batch_size = int(
+            self.configuration.resolved["execution"]["default"]["batch_sizes"]["import"]
+        )
+        return self.import_m4_daily(
+            source,
+            self.configuration.import_settings,
+            self.configuration.resolved["data"]["source"]["revision"],
+            workers=workers,
+            batch_size=batch_size,
+        )

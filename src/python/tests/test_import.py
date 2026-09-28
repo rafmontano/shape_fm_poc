@@ -29,7 +29,7 @@ from util.configuration import (
     json_fingerprint,
     validate_config,
 )
-from util.database import ShapeFMDatabase, migrate_database
+from util.database import ShapeFMDatabase, initialize_experiment_database, migrate_database
 from util.import_execution import (
     ImportCoordinator,
     SeriesResult,
@@ -72,6 +72,14 @@ def write_source(path: Path, targets: list[list[float]]) -> None:
             writer.write_table(table)
     (path / "dataset_info.json").write_text(json.dumps({"rows": len(targets)}))
     (path / "state.json").write_text(json.dumps({"format": "arrow"}))
+
+
+def initialize_test_database(path: Path) -> None:
+    """Create a configured database for coordinator-level import tests."""
+    initialize_experiment_database(
+        path,
+        Path(__file__).resolve().parents[3] / "config/experiments/poc2_m4_daily_100.json",
+    )
 
 
 class ConfigurationTests(unittest.TestCase):
@@ -138,6 +146,7 @@ class WorkerTests(unittest.TestCase):
             start_timestamp=datetime(2000, 1, 1),
             target=tuple(float(value) for value in range(31)),
             horizon=14,
+            window_id="short/000",
             boundary_convention="zero-based, end-exclusive",
         )
         result = compute_series(task)
@@ -199,10 +208,13 @@ class DatabaseTests(unittest.TestCase):
         source = self.temp / "source"
         write_source(source, [[float(value) for value in range(10)]])
         database = self.temp / "failed.duckdb"
+        initialize_test_database(database)
         for expected_attempts in (1, 2):
             with ImportCoordinator(database) as coordinator:
                 with self.assertRaises(RuntimeError):
-                    coordinator.import_m4_daily(source, config(1), "revision", workers=1)
+                    coordinator.import_m4_daily(
+                        source, config(1), "revision", workers=1, batch_size=1
+                    )
             connection = duckdb.connect(str(database), read_only=True)
             task = connection.execute("SELECT status, attempt_count FROM tasks").fetchone()
             attempts = connection.execute("SELECT count(*) FROM task_attempts").fetchone()[0]
@@ -222,12 +234,13 @@ class DatabaseTests(unittest.TestCase):
             [[float(value + row) for value in range(30)] for row in range(12)],
         )
         database = self.temp / "extension.duckdb"
+        initialize_test_database(database)
         with ImportCoordinator(database) as coordinator:
             smoke = coordinator.import_m4_daily(
-                source, config(3), "revision", workers=1
+                source, config(3), "revision", workers=1, batch_size=3
             )
             full = coordinator.import_m4_daily(
-                source, config(None), "revision", workers=1
+                source, config(None), "revision", workers=1, batch_size=12
             )
         self.assertEqual(smoke["dataset_id"], full["dataset_id"])
         self.assertEqual(smoke["run_id"], full["run_id"])
@@ -249,8 +262,11 @@ class DatabaseTests(unittest.TestCase):
         source = self.temp / "source"
         write_source(source, [[float(value) for value in range(30)]])
         database = self.temp / "atomic.duckdb"
+        initialize_test_database(database)
         with ImportCoordinator(database) as coordinator:
-            coordinator.import_m4_daily(source, config(1), "revision", workers=1)
+            coordinator.import_m4_daily(
+                source, config(1), "revision", workers=1, batch_size=1
+            )
             dataset_id, task_id = coordinator.connection.execute(
                 "SELECT dataset_id, task_id FROM tasks"
             ).fetchone()

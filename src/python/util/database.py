@@ -11,15 +11,26 @@
 
 from __future__ import annotations
 
+import json
+import os
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import duckdb
 
+from .configuration import (
+    PROCESS_NAMES,
+    ExperimentConfiguration,
+    canonical_json,
+    load_experiment_configuration,
+    resolve_experiment_configuration,
+)
+
 
 # SCHEMA_VERSION: latest DuckDB migration version required by this code.
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 # DEFAULT_DATABASE: repository-relative default path used when the caller supplies no override.
 DEFAULT_DATABASE = Path("data/shapefm.duckdb")
 
@@ -30,6 +41,44 @@ CREATE TABLE IF NOT EXISTS schema_versions (
     version INTEGER PRIMARY KEY,
     applied_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
     description VARCHAR NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS experiment_configuration (
+    configuration_key VARCHAR PRIMARY KEY CHECK (configuration_key = 'experiment'),
+    configuration_version INTEGER NOT NULL,
+    experiment_name VARCHAR NOT NULL,
+    experiment_date DATE NOT NULL,
+    experiment_description VARCHAR NOT NULL,
+    reproducibility_seed BIGINT NOT NULL,
+    original_configuration JSON NOT NULL,
+    resolved_configuration JSON NOT NULL,
+    scientific_hash VARCHAR NOT NULL,
+    configuration_integrity_hash VARCHAR NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp
+);
+
+CREATE TABLE IF NOT EXISTS experiment_processes (
+    process_id INTEGER PRIMARY KEY CHECK (process_id BETWEEN 1 AND 6),
+    process_name VARCHAR NOT NULL,
+    status VARCHAR NOT NULL CHECK (status IN ('pending', 'running', 'completed', 'failed')),
+    started_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
+    summary JSON,
+    last_error VARCHAR
+);
+
+CREATE TABLE IF NOT EXISTS execution_events (
+    execution_id VARCHAR PRIMARY KEY,
+    requested_processes JSON NOT NULL,
+    operational_configuration JSON NOT NULL,
+    repository_revision VARCHAR,
+    machine JSON NOT NULL,
+    started_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
+    completed_at TIMESTAMPTZ,
+    status VARCHAR NOT NULL CHECK (status IN ('running', 'completed', 'failed')),
+    summary JSON,
+    error VARCHAR
 );
 
 CREATE TABLE IF NOT EXISTS datasets (
@@ -164,6 +213,9 @@ CREATE TABLE IF NOT EXISTS experiments (
     scope VARCHAR NOT NULL,
     status VARCHAR NOT NULL CHECK (status IN ('planned', 'running', 'completed', 'failed')),
     provisional_candidate JSON,
+    configuration_version INTEGER,
+    experiment_date DATE,
+    description VARCHAR,
     created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp
 );
@@ -412,6 +464,21 @@ def migrate_database(path: Path = DEFAULT_DATABASE) -> Path:
             "ALTER TABLE official_evaluations ADD COLUMN IF NOT EXISTS forecast_input_fingerprint VARCHAR"
         )
         connection.execute(
+            "ALTER TABLE experiments ADD COLUMN IF NOT EXISTS configuration_version INTEGER"
+        )
+        connection.execute(
+            "ALTER TABLE experiments ADD COLUMN IF NOT EXISTS experiment_date DATE"
+        )
+        connection.execute(
+            "ALTER TABLE experiments ADD COLUMN IF NOT EXISTS description VARCHAR"
+        )
+        connection.execute(
+            "ALTER TABLE experiment_configuration ADD COLUMN IF NOT EXISTS reproducibility_seed BIGINT"
+        )
+        connection.execute(
+            "ALTER TABLE experiment_configuration ADD COLUMN IF NOT EXISTS configuration_integrity_hash VARCHAR"
+        )
+        connection.execute(
             "INSERT INTO schema_versions (version, description) VALUES (?, ?) "
             "ON CONFLICT (version) DO NOTHING",
             [1, "Foundation Stage 1 canonical GIFT-Eval import"],
@@ -429,7 +496,12 @@ def migrate_database(path: Path = DEFAULT_DATABASE) -> Path:
         connection.execute(
             "INSERT INTO schema_versions (version, description) VALUES (?, ?) "
             "ON CONFLICT (version) DO NOTHING",
-            [SCHEMA_VERSION, "POC 1 full-scope evaluation provenance"],
+            [4, "POC 1 full-scope evaluation provenance"],
+        )
+        connection.execute(
+            "INSERT INTO schema_versions (version, description) VALUES (?, ?) "
+            "ON CONFLICT (version) DO NOTHING",
+            [SCHEMA_VERSION, "POC 2 authoritative experiment configuration"],
         )
         connection.execute("COMMIT")
     except BaseException:
@@ -438,6 +510,103 @@ def migrate_database(path: Path = DEFAULT_DATABASE) -> Path:
     finally:
         connection.close()
     return path
+
+
+def initialize_experiment_database(
+    path: Path, configuration_path: Path
+) -> ExperimentConfiguration:
+    """Atomically create a new database and store one validated authoritative configuration.
+
+    Validation occurs before any file is created. Schema creation, original/resolved
+    JSON, metadata, and six process-state rows are committed in a temporary sibling
+    database that is atomically renamed to ``path`` only after success.
+    """
+    configuration = load_experiment_configuration(configuration_path)
+    target = path.resolve()
+    if target.exists():
+        raise FileExistsError(f"experiment database already exists: {target}")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        migrate_database(temporary)
+        connection = duckdb.connect(str(temporary))
+        try:
+            connection.execute("BEGIN TRANSACTION")
+            connection.execute(
+                """INSERT INTO experiment_configuration
+                (configuration_key, configuration_version, experiment_name,
+                 experiment_date, experiment_description, reproducibility_seed,
+                 original_configuration, resolved_configuration, scientific_hash,
+                 configuration_integrity_hash)
+                VALUES ('experiment', ?, ?, CAST(? AS DATE), ?, ?, ?, ?, ?, ?)""",
+                [
+                    configuration.version,
+                    configuration.name,
+                    configuration.date,
+                    configuration.description,
+                    configuration.seed,
+                    canonical_json(configuration.original),
+                    canonical_json(configuration.resolved),
+                    configuration.scientific_hash,
+                    configuration.configuration_integrity_hash,
+                ],
+            )
+            connection.executemany(
+                "INSERT INTO experiment_processes (process_id, process_name, status) VALUES (?, ?, 'pending')",
+                list(PROCESS_NAMES.items()),
+            )
+            connection.execute("COMMIT")
+        except BaseException:
+            connection.execute("ROLLBACK")
+            raise
+        finally:
+            connection.close()
+        os.replace(temporary, target)
+        return configuration
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
+def load_database_configuration(
+    database_path: Path, connection: duckdb.DuckDBPyConnection | None = None
+) -> ExperimentConfiguration:
+    """Load and validate the authoritative resolved configuration stored in DuckDB."""
+    owned = connection is None
+    if owned:
+        path = database_path.resolve()
+        if not path.is_file():
+            raise FileNotFoundError(f"experiment database does not exist: {path}")
+        connection = duckdb.connect(str(path), read_only=True)
+    try:
+        row = connection.execute(
+            """SELECT configuration_version, reproducibility_seed, experiment_name,
+                      CAST(experiment_date AS VARCHAR), experiment_description,
+                      original_configuration, resolved_configuration,
+                      scientific_hash, configuration_integrity_hash
+               FROM experiment_configuration WHERE configuration_key='experiment'"""
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("database has no authoritative experiment configuration")
+        original = json.loads(row[5])
+        stored_resolved = json.loads(row[6])
+        configuration = resolve_experiment_configuration(original)
+        if configuration.version != row[0]:
+            raise RuntimeError("stored configuration version does not match original JSON")
+        if configuration.seed != row[1]:
+            raise RuntimeError("stored reproducibility seed does not match original JSON")
+        if (configuration.name, configuration.date, configuration.description) != row[2:5]:
+            raise RuntimeError("stored experiment metadata does not match original JSON")
+        if configuration.resolved != stored_resolved:
+            raise RuntimeError("stored resolved configuration does not match configuration version rules")
+        if configuration.scientific_hash != row[7]:
+            raise RuntimeError("stored scientific configuration hash is invalid")
+        if configuration.configuration_integrity_hash != row[8]:
+            raise RuntimeError("stored configuration-integrity hash is invalid")
+        return configuration
+    finally:
+        if owned:
+            connection.close()
 
 
 class ShapeFMDatabase:

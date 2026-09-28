@@ -3,7 +3,7 @@
 # 04_forecast_auto_arima.R
 #
 # Purpose: Fit AutoARIMA and return point and interval-derived quantile forecasts for worker jobs.
-# Inputs: One JSON object on stdin with action="forecast" and jobs containing id, context, seasonality, and horizon.
+# Inputs: One JSON object on stdin with action, AutoARIMA settings, and forecast jobs.
 # Outputs: One JSON object on stdout containing forecasts and R package versions.
 # Run from: printf '%s' '<payload>' | Rscript src/r/04_forecast_auto_arima.R
 # ==============================================================================
@@ -18,18 +18,23 @@ source("src/r/util/time_series_input.R")
 # payload: decoded stdin request consumed by the action dispatcher below.
 payload <- jsonlite::fromJSON(file("stdin"), simplifyVector = FALSE)
 
-# Forecast one worker job; job supplies context, seasonality, horizon, and id, and the action dispatcher receives mean, median, and nine ordered quantile vectors.
-forecast_one <- function(job) {
+# Forecast one worker job with explicit settings; the dispatcher receives mean, median, and nine ordered quantile vectors.
+forecast_one <- function(job, settings) {
   input <- time_series_input(job)
   fit <- forecast::auto.arima(
     input$series,
-    stepwise = TRUE,
-    approximation = FALSE,
-    allowdrift = TRUE,
-    allowmean = TRUE,
-    parallel = FALSE
+    stepwise = isTRUE(settings$stepwise),
+    approximation = isTRUE(settings$approximation),
+    allowdrift = isTRUE(settings$allowdrift),
+    allowmean = isTRUE(settings$allowmean),
+    parallel = isTRUE(settings$parallel),
+    num.cores = as.integer(settings$num_cores)
   )
-  predicted <- forecast::forecast(fit, h = as.integer(job$horizon), level = c(20, 40, 60, 80))
+  predicted <- forecast::forecast(
+    fit,
+    h = as.integer(job$horizon),
+    level = as.numeric(unlist(settings$interval_levels))
+  )
   mean <- as.numeric(predicted$mean)
   quantiles <- list(
     as.numeric(predicted$lower[, "80%"]),
@@ -47,7 +52,10 @@ forecast_one <- function(job) {
 
 # results: ordered forecast responses serialized to stdout.
 if (identical(payload$action, "forecast")) {
-  results <- lapply(payload$jobs, forecast_one)
+  if (is.null(payload$settings)) {
+    stop("AutoARIMA settings are required")
+  }
+  results <- lapply(payload$jobs, forecast_one, settings = payload$settings)
 } else {
   stop("Unsupported POC 1 worker action")
 }
