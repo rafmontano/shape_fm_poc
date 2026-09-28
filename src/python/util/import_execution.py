@@ -39,13 +39,18 @@ from .gift_eval_source import iter_source_series, source_fingerprint, source_met
 from .provenance import sha256_file, utc_now
 
 
-# Persistent task-stage identifier used in import run and attempt rows.
+# Code constant: persistent stage identifier in import run and attempt records.
 STAGE = "import"
 
 
 @dataclass(frozen=True)
 class SeriesTask:
-    """Immutable worker payload identifying one source row and its values, frequency, horizon, and split convention."""
+    """Purpose: Carry one source series and window contract to an import worker.
+
+    Inputs: Task/dataset/source identities, ordered observations, frequency/start time,
+    forecast horizon, window ID, and boundary convention.
+    Outputs: Immutable, pickle-safe worker input with no database ownership.
+    """
     task_id: str
     dataset_id: str
     series_id: str
@@ -61,7 +66,12 @@ class SeriesTask:
 
 @dataclass(frozen=True)
 class SeriesResult:
-    """Validated worker result containing canonical series metadata, float32-content SHA-256, and evaluation window."""
+    """Purpose: Carry canonical series calculations back to the single writer.
+
+    Inputs: Task/source metadata, observations and count, float32-content digest, and
+    computed evaluation-window mapping.
+    Outputs: Immutable worker result ready for transactional persistence.
+    """
     task_id: str
     dataset_id: str
     series_id: str
@@ -77,14 +87,24 @@ class SeriesResult:
 
 @dataclass(frozen=True)
 class WorkerOutcome:
-    """Pickle-safe worker envelope carrying either one series result or its formatted failure."""
+    """Purpose: Transfer worker success or failure without crossing exception objects.
+
+    Inputs: Task ID and exactly one useful result or formatted error string.
+    Outputs: Pickle-safe outcome consumed by the coordinator.
+    """
     task_id: str
     result: SeriesResult | None
     error: str | None
 
 
 def compute_series(task: SeriesTask) -> SeriesResult:
-    """Pure worker computation: no database access and no side effects."""
+    """Purpose: Compute canonical content identity and holdout boundaries for a series.
+
+    Inputs: Immutable task containing source float values and the benchmark horizon.
+    Outputs: ``SeriesResult`` with SHA-256 over little-endian float32 bytes and one
+    zero-based, end-exclusive validation/test window.
+    Notes: Performs no database access and cross-checks window logic centrally.
+    """
     packed = struct.pack(f"<{len(task.target)}f", *task.target)
     content_hash = hashlib.sha256(packed).hexdigest()
     window = {
@@ -126,7 +146,11 @@ def compute_series(task: SeriesTask) -> SeriesResult:
 
 
 def worker_entry(task: SeriesTask) -> WorkerOutcome:
-    """Execute one side-effect-free series task and convert any exception into a worker outcome."""
+    """Purpose: Isolate one worker computation and serialize failures as data.
+
+    Inputs: One ``SeriesTask``.
+    Outputs: ``WorkerOutcome`` containing the result or exception type/message.
+    """
     try:
         return WorkerOutcome(task.task_id, compute_series(task), None)
     except BaseException as exc:
@@ -139,7 +163,11 @@ def repository_root() -> Path:
 
 
 def command_output(command: list[str], timeout_seconds: float = 30.0) -> str | None:
-    """Capture a provenance command's stdout, returning `None` on launch, exit, or timeout failure."""
+    """Purpose: Best-effort capture a subprocess version string for provenance.
+
+    Inputs: Argument vector and timeout in seconds; execution uses the repository root.
+    Outputs: Stripped stdout, or ``None`` on launch, nonzero exit, or timeout.
+    """
     try:
         return subprocess.run(
             command,
@@ -154,7 +182,11 @@ def command_output(command: list[str], timeout_seconds: float = 30.0) -> str | N
 
 
 def execution_provenance() -> tuple[dict[str, Any], dict[str, Any]]:
-    """Collect Python/R/tool versions and lock hash together with host OS and architecture identity."""
+    """Purpose: Snapshot software and machine identity for an import invocation.
+
+    Inputs: Installed Python/R/tool environments, lockfile, and current host state.
+    Outputs: Environment and machine mappings suitable for canonical JSON persistence.
+    """
     root = repository_root()
     packages = {}
     for name in ("shape-fm-poc", "duckdb", "pyarrow"):
@@ -188,10 +220,19 @@ def execution_provenance() -> tuple[dict[str, Any], dict[str, Any]]:
 
 
 class ImportCoordinator:
-    """Single DuckDB writer that registers, resumes, and atomically commits Stage 1 series tasks."""
+    """Purpose: Own Stage 1 orchestration and the sole DuckDB writer connection.
+
+    Inputs: Initialized experiment database with authoritative configuration.
+    Outputs: Restartable task/attempt state and atomically persisted series/windows.
+    Notes: Worker processes are side-effect free; this instance owns database writes.
+    """
 
     def __init__(self, database_path: Path):
-        """Open an initialized database and load its authoritative configuration."""
+        """Purpose: Acquire coordinator-owned database and configuration state.
+
+        Inputs: Path to an existing initialized experiment database.
+        Outputs: Open writable DuckDB connection and validated authoritative configuration.
+        """
         if not Path(database_path).resolve().is_file():
             raise FileNotFoundError(
                 f"experiment database does not exist: {Path(database_path).resolve()}"
@@ -224,7 +265,12 @@ class ImportCoordinator:
         metadata: dict[str, Any],
         workers: int,
     ) -> tuple[str, str]:
-        """Upsert dataset/run provenance, create an invocation, reset interrupted tasks, and return both IDs."""
+        """Purpose: Prepare persistent state for a restartable import invocation.
+
+        Inputs: Dataset/config/source identity and metadata plus worker count.
+        Outputs: Deterministic run ID and new invocation ID after provenance upserts and
+        reset of interrupted tasks/attempts.
+        """
         run_id = f"import/{json_fingerprint({'dataset_id': dataset_id, 'stage': STAGE})[:24]}"
         invocation_id = f"invocation/{uuid.uuid4().hex}"
         environment, machine = execution_provenance()
@@ -309,7 +355,11 @@ class ImportCoordinator:
         return run_id, invocation_id
 
     def _register_task(self, run_id: str, dataset_id: str, series_id: str) -> tuple[str, str]:
-        """Create the deterministic per-series task if absent and return its ID and resumable status."""
+        """Purpose: Idempotently register one deterministic per-series task.
+
+        Inputs: Run, dataset, and series IDs.
+        Outputs: Task ID and persisted status used to skip completed work.
+        """
         task_id = f"task/{json_fingerprint({'run_id': run_id, 'series_id': series_id})[:32]}"
         self.connection.execute(
             """
@@ -324,7 +374,11 @@ class ImportCoordinator:
         return task_id, status
 
     def _start_attempt(self, task_id: str) -> int:
-        """Atomically mark a task running, increment its attempt number, and insert the attempt row."""
+        """Purpose: Transactionally begin the next attempt for a task.
+
+        Inputs: Existing task ID.
+        Outputs: Incremented attempt number after task and attempt state commit.
+        """
         self.connection.execute("BEGIN TRANSACTION")
         try:
             self.connection.execute(
@@ -354,7 +408,11 @@ class ImportCoordinator:
             raise
 
     def _record_failure(self, task_id: str, attempt: int, error: str) -> None:
-        """Atomically mark a task and its numbered attempt failed with the same error text."""
+        """Purpose: Transactionally persist a task-attempt failure.
+
+        Inputs: Task ID, attempt number, and formatted error text.
+        Outputs: ``None`` after task and attempt rows share failed state.
+        """
         self.connection.execute("BEGIN TRANSACTION")
         try:
             self.connection.execute(
@@ -377,7 +435,12 @@ class ImportCoordinator:
             raise
 
     def _commit_result(self, result: SeriesResult, attempt: int) -> None:
-        """Atomically validate/insert scientific data and complete its task."""
+        """Purpose: Atomically persist scientific output and complete its task attempt.
+
+        Inputs: Computed series result and active attempt number.
+        Outputs: ``None`` after idempotent series/window insertion and status updates;
+        conflicting canonical data raises ``ImportValidationError`` and rolls back.
+        """
         self.connection.execute("BEGIN TRANSACTION")
         try:
             existing = self.connection.execute(
@@ -489,7 +552,11 @@ class ImportCoordinator:
         tasks: list[SeriesTask],
         executor: ProcessPoolExecutor | None,
     ) -> tuple[int, int]:
-        """Run one task batch locally or in the process pool, commit successes, and count successes/failures."""
+        """Purpose: Execute and persist one bounded batch of series tasks.
+
+        Inputs: Tasks and optional process-pool executor (``None`` means local mapping).
+        Outputs: Counts of committed successes and recorded failures.
+        """
         attempts = {task.task_id: self._start_attempt(task.task_id) for task in tasks}
         outcomes: Iterable[WorkerOutcome]
         outcomes = (
@@ -522,7 +589,13 @@ class ImportCoordinator:
         workers: int,
         batch_size: int,
     ) -> dict[str, Any]:
-        """Import selected M4 Daily rows restartably, verify source immutability, and return run/invocation counts."""
+        """Purpose: Run a restartable, provenance-checked M4 Daily import.
+
+        Inputs: Pinned source directory, import contract/revision, worker count, and
+        positive batch size.
+        Outputs: Run/invocation/dataset IDs and task, series, and observation counts.
+        Notes: Re-fingerprints files after iteration; only the coordinator writes DuckDB.
+        """
         if workers < 1 or batch_size < 1:
             raise ValueError("workers and batch_size must be at least 1")
         source_before = source_fingerprint(source_dir)
@@ -673,7 +746,12 @@ class ImportCoordinator:
                 executor.shutdown()
 
     def import_configured(self) -> dict[str, Any]:
-        """Import the stored deterministic M4 selection without rereading experiment JSON."""
+        """Purpose: Execute import solely from authoritative stored configuration.
+
+        Inputs: Coordinator configuration plus repository-relative pinned source files.
+        Outputs: ``import_m4_daily`` summary after source hashes match stored digests;
+        mismatch raises ``ImportValidationError`` before import.
+        """
         root = repository_root()
         source = (
             root

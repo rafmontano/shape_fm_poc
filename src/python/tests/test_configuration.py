@@ -28,7 +28,8 @@ from util.database import (
 )
 
 
-# REFERENCE_CONFIGURATION: researcher-authored configuration exercised by every test.
+# Test/calibration value: repository fixture authored in the committed experiment JSON;
+# tests do not override production configuration authority.
 REFERENCE_CONFIGURATION = (
     Path(__file__).resolve().parents[3]
     / "config/experiments/poc2_m4_daily_100.json"
@@ -36,7 +37,12 @@ REFERENCE_CONFIGURATION = (
 
 
 class ExperimentConfigurationTests(unittest.TestCase):
-    """Check validation, derived values, atomic creation, and resume without source JSON."""
+    """Exercise experiment validation, derivation, persistence, and resume.
+
+    Purpose: Verify JSON-to-DuckDB authority and integrity boundaries.
+    Inputs: The reference contract, modified copies, and temporary database paths.
+    Outputs: Assertions and temporary DuckDB/file mutations owned by individual tests.
+    """
 
     def test_complete_document_derives_current_cardinalities(self) -> None:
         """The reference contract derives all Process 01–06 and result counts."""

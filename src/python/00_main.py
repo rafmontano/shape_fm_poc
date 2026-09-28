@@ -26,7 +26,7 @@ from typing import Any, Sequence
 import duckdb
 
 
-# ROOT: repository root resolved from this source file.
+# Code constant: repository root derived from this source path; it has no override.
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src/python"))
 
@@ -44,13 +44,17 @@ from util.import_execution import ImportCoordinator
 from tests.acceptance import run_acceptance
 
 
-# DEFAULT_DATABASE: repository-relative default path used when the caller supplies no override.
+# Bootstrap/interface default: acceptance database used only while locating DuckDB;
+# ``--database`` overrides it, and the path is not part of scientific identity.
 DEFAULT_DATABASE = ROOT / "results/poc2_acceptance.duckdb"
-# DEFAULT_PLAN_DATABASE: repository-relative default path used when the caller supplies no override.
+# Bootstrap/interface default: invocation label used before the plan creates its
+# temporary DuckDB; it has no CLI override and is not part of scientific identity.
 DEFAULT_PLAN_DATABASE = ROOT / "results/poc2_local_plan.duckdb"
-# DEFAULT_REPORT: repository-relative default path used when the caller supplies no override.
+# Bootstrap/interface default: acceptance-report destination before DuckDB is located;
+# ``test --report`` overrides it, and it is not part of scientific identity.
 DEFAULT_REPORT = ROOT / "results/poc2_acceptance_report.json"
-# DEFAULT_CONFIGURATION: complete researcher-authored definition used only before database creation.
+# Bootstrap/interface default: creation JSON used before DuckDB becomes authoritative;
+# ``plan|run --configuration`` overrides it, and the path itself is not scientific identity.
 DEFAULT_CONFIGURATION = ROOT / "config/experiments/poc2_m4_daily_100.json"
 
 
@@ -66,7 +70,11 @@ def positive_integer(value: str) -> int:
 
 
 def process_selection(value: str) -> tuple[int, ...]:
-    """Parse one process number or inclusive range and require ordered Processes 01–06."""
+    """Purpose: Parse the CLI process selector and enforce the Processes 01–06 contract.
+
+    Inputs: One argparse string containing either an integer or an inclusive ``start-end`` range.
+    Outputs: An ordered tuple of process IDs, or ``ArgumentTypeError`` for malformed/out-of-range input.
+    """
     try:
         if "-" in value:
             start_text, end_text = value.split("-", 1)
@@ -94,7 +102,12 @@ def _git(*arguments: str) -> str:
 
 
 def invocation_record(action: str, args: argparse.Namespace, database: Path) -> dict[str, Any]:
-    """Capture CLI arguments, Git state, host identity, and the resolved database for result provenance."""
+    """Purpose: Build the provenance record attached to researcher-facing CLI results.
+
+    Inputs: The selected action, parsed argparse namespace, and resolved database path.
+    Outputs: A JSON-ready mapping of arguments, command, Git state, host/Python environment, and database.
+    Side effects: Runs read-only Git subprocesses against the repository working tree.
+    """
     return {
         "action": action,
         "arguments": {
@@ -118,7 +131,11 @@ def invocation_record(action: str, args: argparse.Namespace, database: Path) -> 
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Define the researcher-facing plan, status, results, and acceptance-test CLI."""
+    """Purpose: Define parsing and dispatch inputs for the researcher-facing CLI.
+
+    Inputs: Defaults derived from repository paths plus later command-line arguments.
+    Outputs: An argparse parser for ``plan``, ``run``, ``status``, ``results``, and ``test``.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="action")
 
@@ -156,7 +173,12 @@ def _set_process_state(
     summary: dict[str, Any] | None = None,
     error: str | None = None,
 ) -> None:
-    """Transactionally update one coordinator-owned process state row."""
+    """Purpose: Persist a coordinator-owned process transition atomically.
+
+    Inputs: DuckDB path, process ID, status, and optional summary/error payloads.
+    Outputs: None; raises on transaction failure.
+    Side effects: Opens DuckDB, updates timestamps/state, and commits or rolls back one transaction.
+    """
     connection = duckdb.connect(str(database))
     try:
         connection.execute("BEGIN TRANSACTION")
@@ -186,7 +208,12 @@ def _set_process_state(
 def run_configured_processes(
     database: Path, configuration_path: Path | None, processes: tuple[int, ...]
 ) -> dict[str, Any]:
-    """Create or resume one experiment database and execute only selected incomplete processes."""
+    """Purpose: Create or resume an experiment and dispatch selected Processes 01–06 in order.
+
+    Inputs: A DuckDB path, an optional creation configuration path, and ordered process IDs.
+    Outputs: Execution/configuration metadata and per-process completion or skip summaries.
+    Side effects: Initializes or mutates DuckDB, runs import/experiment coordinators, and records execution state.
+    """
     if database.exists():
         if configuration_path is not None:
             raise ValueError("--configuration is only valid when creating a new database")
@@ -302,7 +329,12 @@ def run_configured_processes(
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Dispatch one CLI action, print its JSON record, and return zero on success or one on an expected failure."""
+    """Purpose: Parse and dispatch one researcher CLI action.
+
+    Inputs: Optional argument sequence; when absent argparse reads the process command line.
+    Outputs: Pretty JSON on stdout and status 0 for help/success; an error on stderr and status 1 for expected failures.
+    Side effects: Depending on the action, reads/writes DuckDB, creates a temporary plan database, or writes a test report.
+    """
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.action is None:

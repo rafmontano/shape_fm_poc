@@ -34,9 +34,19 @@ from util.distributed_execution import CHRONOS_GPU_RESOURCE
 
 
 class AcceptanceReadinessTests(unittest.TestCase):
-    """Verify acceptance evidence, resource safety, resumability, and report decisions."""
+    """Exercise acceptance evidence, safety, resume, and report decisions.
+
+    Purpose: Isolate acceptance policy from the real two-host workload.
+    Inputs: A stored experiment contract plus synthetic topology, telemetry, and reports.
+    Outputs: Assertions only; individual tests own temporary files and DuckDB databases.
+    """
     def setUp(self):
-        """Activate the stored contract and build its two-worker topology."""
+        """Prepare authoritative acceptance globals and synthetic topology.
+
+        Purpose: Give each test the production contract and expected host/worker layout.
+        Inputs: The committed POC2 experiment configuration.
+        Outputs: Mutates acceptance module globals and sets ``self.topology``.
+        """
         _activate_configuration(
             load_experiment_configuration(
                 Path(__file__).resolve().parents[3]
@@ -65,7 +75,12 @@ class AcceptanceReadinessTests(unittest.TestCase):
         }
 
     def _evidence(self, ubuntu_resource="CPU"):
-        """Build host and GPU-worker task contributions, optionally changing Ubuntu's resource."""
+        """Build deterministic task-contribution evidence.
+
+        Purpose: Model valid host and per-GPU-worker acceptance contributions.
+        Inputs: Optional advertised resource for Ubuntu's aggregate contribution.
+        Outputs: A new evidence mapping; no fixture or external state is mutated.
+        """
         return {
             "task_contribution_by_host_and_resource": [
                 {
@@ -93,7 +108,12 @@ class AcceptanceReadinessTests(unittest.TestCase):
         }
 
     def _sample(self, *, mac_available=4 * GIB, spill=0, swap=0):
-        """Build a resource sample with configurable Mac headroom, spill, and swap usage."""
+        """Build one deterministic scheduler/resource sample.
+
+        Purpose: Model safe or deliberately unsafe memory, spill, and swap telemetry.
+        Inputs: Mac available bytes and synthetic spill/swap byte counts.
+        Outputs: A new sample mapping; no scheduler or fixture state is mutated.
+        """
         return {
             "workers": {
                 "mac-worker": {

@@ -38,7 +38,8 @@ from .execution_profiles import (
 from .import_execution import repository_root
 
 
-# Worker counts and Chronos batch sizes benchmarked for each supported host profile.
+# Test/calibration value: developer-owned search grids; calibration code changes them,
+# and they never override experiment or recorded execution settings.
 CALIBRATION_CANDIDATES = {
     "mac_m1pro_10core_16gb": {
         "cpu_workers": [1, 2, 4],
@@ -50,20 +51,20 @@ CALIBRATION_CANDIDATES = {
     },
 }
 class _MemorySampler:
-    """Collect host-memory snapshots before, during, and after a measured block."""
+    """Purpose: Own periodic host-memory sampling for one calibration block. Inputs: Construction accepts a polling interval in seconds. Outputs: Raw snapshots and an aggregate summary; owns mutable samples, a stop event, and a daemon thread from context entry through exit."""
     def __init__(self, interval_seconds: float = 0.25):
-        """Retain the polling interval, snapshots, and thread controls for one use."""
+        """Purpose: Initialize one unused memory sampler. Inputs: ``interval_seconds`` is the positive polling period in seconds. Outputs: None; creates empty sample state, a stop event, and no thread or probes yet."""
         self.interval_seconds = interval_seconds
         self.samples: list[dict[str, int]] = []
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
     def _sample(self) -> None:
-        """Append one current host-memory snapshot."""
+        """Purpose: Capture current host memory. Inputs: None; data comes from ``system_memory``. Outputs: None; appends one byte-valued RAM/swap mapping to owned sample state."""
         self.samples.append(system_memory())
 
     def _run(self) -> None:
-        """Append snapshots at the configured interval until context exit signals stop."""
+        """Purpose: Drive periodic memory sampling. Inputs: Owned interval and stop event. Outputs: None; blocks the daemon thread and appends snapshots until stop is signaled."""
         while not self._stop.wait(self.interval_seconds):
             self._sample()
 
@@ -86,7 +87,7 @@ class _MemorySampler:
         self._sample()
 
     def summary(self) -> dict[str, Any]:
-        """Return before/after memory, minimum available bytes, peak swap bytes, and sample count."""
+        """Purpose: Aggregate the sampler's captured host state. Inputs: Owned memory snapshots ordered by capture time. Outputs: First/last mappings, minimum available RAM bytes, maximum used swap bytes, and count; raises if no samples exist and performs no new probe."""
         if not self.samples:
             raise RuntimeError("calibration memory sampler captured no samples")
         swap_used = [
@@ -107,7 +108,7 @@ class _MemorySampler:
 def _system_memory_rejection(
     profile: ExecutionProfile, memory: dict[str, Any]
 ) -> str | None:
-    """Return a rejection reason when measured host memory misses the profile's available-GiB floor."""
+    """Purpose: Evaluate host-memory calibration safety. Inputs: An ``ExecutionProfile`` carrying an available-memory floor in GiB and a sampler summary containing minimum available bytes. Outputs: A human-readable rejection reason for unavailable/below-threshold memory, otherwise ``None``; has no side effects."""
     available = memory["minimum_system_memory_available_bytes"]
     threshold = int(profile.system_memory_min_available_gib * GIB)
     if available <= 0:
@@ -123,7 +124,7 @@ def _system_memory_rejection(
 def _accelerator_memory_rejection(
     profile: ExecutionProfile, available_values: list[int]
 ) -> str | None:
-    """Return a rejection reason when sampled accelerator memory misses the profile's available-GiB floor."""
+    """Purpose: Evaluate accelerator-memory calibration safety. Inputs: An ``ExecutionProfile`` carrying a GiB floor and sampled available-memory integers in bytes. Outputs: A rejection reason when samples are absent or their minimum is below the floor, otherwise ``None``; has no side effects."""
     if not available_values:
         return "accelerator available memory could not be measured"
     available = min(available_values)
@@ -139,7 +140,7 @@ def _accelerator_memory_rejection(
 def _recommended_setting(
     measurements: list[dict[str, Any]], kind: str, setting: str, equivalence: str
 ) -> int | None:
-    """Choose the fastest non-rejected candidate, breaking ties toward the smaller setting."""
+    """Purpose: Select a safe calibration setting. Inputs: Measurement mappings, required ``kind``, integer setting-field name, and boolean equivalence-field name. Outputs: The setting from the highest tasks/second safe, successful, equivalent candidate, preferring smaller settings on ties, or ``None``; does not mutate measurements."""
     accepted = [
         item
         for item in measurements
@@ -154,7 +155,7 @@ def _recommended_setting(
 
 
 def _forecast_comparison(first: dict[str, Any], second: dict[str, Any]) -> dict[str, Any]:
-    """Compare flattened mean, median, and quantile forecasts at 1e-5 tolerances."""
+    """Purpose: Compare two forecast payloads numerically. Inputs: Forecast mappings with equal-shape mean, median, and nested quantile sequences of numeric horizon values. Outputs: Maximum absolute/relative differences and equivalence at 1e-5 relative/absolute tolerances; shape mismatch returns infinite differences and false."""
     first_values = first["mean"] + first["median"] + sum(first["quantiles"], [])
     second_values = second["mean"] + second["median"] + sum(second["quantiles"], [])
     if len(first_values) != len(second_values):
@@ -180,7 +181,7 @@ def _chronos_context_responses(
     horizon: int,
     quantile_levels: list[float],
 ) -> list[dict[str, Any]]:
-    """Request one repeated-job batch per context, stopping after the first worker error."""
+    """Purpose: Measure Chronos inference across representative contexts. Inputs: A running ``PersistentChronosWorker``; context mappings with labels and one-dimensional numeric series; positive batch size/horizon; and quantile levels in [0,1]. Outputs: Ordered protocol response mappings, stopping after an error; sends one repeated-job request per context and advances worker/process state."""
     responses = []
     for context in contexts:
         jobs = [
@@ -212,7 +213,7 @@ def _chronos_reference_forecasts(
     horizon: int,
     quantile_levels: list[float],
 ) -> dict[str, dict[str, Any]]:
-    """Map each context label to its single-job Chronos forecast reference."""
+    """Purpose: Generate batch-size-one Chronos references. Inputs: A running persistent worker, labeled numeric context mappings, positive horizon, and quantile levels in [0,1]. Outputs: Forecast mappings keyed by context label; sends subprocess requests and raises unless every context returns exactly one result."""
     responses = _chronos_context_responses(
         worker, contexts, batch_size=1, horizon=horizon, quantile_levels=quantile_levels
     )
@@ -231,7 +232,7 @@ def _chronos_differences(
     responses: list[dict[str, Any]],
     references: dict[str, dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Compare the first result from each context batch with its batch-size-one reference."""
+    """Purpose: Compare batched Chronos forecasts with references. Inputs: Ordered context mappings, corresponding successful response mappings, and references keyed by label. Outputs: One numeric comparison mapping per zipped context/response pair; performs no worker requests or mutation."""
     return [
         _forecast_comparison(references[context["label"]], response["results"][0])
         for context, response in zip(contexts, responses, strict=True)
@@ -239,7 +240,7 @@ def _chronos_differences(
 
 
 def representative_contexts(database_path: Path) -> list[dict[str, Any]]:
-    """Read the shortest, median-ranked, and longest M4 Daily training contexts."""
+    """Purpose: Select representative local-calibration series. Inputs: ``database_path`` is a configured DuckDB file containing M4 Daily series and evaluation windows. Outputs: Three mappings labeled short/median/long with series ID, one-dimensional numeric training context, and observation length; opens the canonical database read-only and closes it, raising unless all ranks exist."""
     configuration = load_database_configuration(database_path)
     dataset_name = configuration.resolved["data"]["dataset_name"]
     connection = duckdb.connect(str(database_path.resolve()), read_only=True)
@@ -272,7 +273,7 @@ def representative_contexts(database_path: Path) -> list[dict[str, Any]]:
 def _r_forecast(
     root: Path, job: dict[str, Any], settings: dict[str, Any]
 ) -> dict[str, Any]:
-    """Run one R forecasting bridge request and return its decoded JSON response."""
+    """Purpose: Execute one calibration AutoARIMA forecast. Inputs: ``root`` is the repository directory, ``job`` is a JSON-serializable context/horizon/seasonality mapping, and ``settings`` is resolved model configuration. Outputs: Decoded JSON response; launches one R subprocess with single-thread limits, repository cwd, and a 1,800-second timeout."""
     completed = subprocess.run(
         ["Rscript", str(root / "src/r/04_forecast_auto_arima.R")],
         cwd=root,
@@ -292,7 +293,7 @@ def _r_forecast(
 
 
 def _peak_children_memory_bytes() -> int:
-    """Return the process resource counter for peak child RSS, normalized to bytes by platform."""
+    """Purpose: Probe cumulative child-process peak resident memory. Inputs: None; data comes from ``RUSAGE_CHILDREN`` and is bytes on macOS or KiB elsewhere. Outputs: Peak RSS normalized to bytes; samples process resource state without resetting the cumulative counter."""
     value = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
     return int(value if platform.system() == "Darwin" else value * 1024)
 
@@ -303,7 +304,7 @@ def calibrate(
     database_path: Path = DEFAULT_DATABASE,
     output: Path | None = None,
 ) -> dict[str, Any]:
-    """Benchmark profile CPU workers and Chronos batches, optionally writing a JSON report."""
+    """Purpose: Calibrate local AutoARIMA concurrency and Chronos batch size. Inputs: A supported ``ExecutionProfile``, caller-supplied hardware snapshot, configured canonical DuckDB path, and optional report ``Path``. Outputs: Timing, byte-valued memory, safety/equivalence measurements and recommendations; reads canonical data, launches R/Chronos subprocesses, samples host/accelerator state, writes only an isolated temporary DuckDB, removes it, and optionally creates the JSON report."""
     if profile.name not in CALIBRATION_CANDIDATES:
         raise ValueError(f"no calibration grid is defined for {profile.name}")
     root = repository_root()
@@ -573,9 +574,9 @@ def calibrate(
 
 
 class _DistributedResourceSampler:
-    """Collect coordinator and Dask-worker resource snapshots around a distributed run."""
+    """Purpose: Own periodic coordinator and Dask-worker telemetry for one calibration run. Inputs: Construction accepts a distributed client and polling interval in seconds. Outputs: Raw samples/failures and aggregate stability/resource evidence; owns mutable state, a stop event, and daemon thread but not the caller-owned client."""
     def __init__(self, client: Any, interval_seconds: float = 1.0):
-        """Retain the client, polling interval, snapshots, failures, and thread controls."""
+        """Purpose: Initialize an unused distributed sampler. Inputs: ``client`` is a connected Dask Client-like object and ``interval_seconds`` is a positive polling period. Outputs: None; retains but does not own/close the client and creates empty sample/failure state plus thread controls."""
         self.client = client
         self.interval_seconds = interval_seconds
         self.samples: list[dict[str, Any]] = []
@@ -584,7 +585,7 @@ class _DistributedResourceSampler:
         self._thread: threading.Thread | None = None
 
     def _sample(self) -> None:
-        """Append one scheduler and worker resource snapshot."""
+        """Purpose: Capture one distributed resource observation. Inputs: The retained Dask client and current coordinator/worker state. Outputs: None; remotely invokes worker probes, samples coordinator CPU/RAM/swap, records collection seconds, and appends the combined mapping."""
         import psutil
 
         from .distributed_execution import worker_resource_snapshot
@@ -607,7 +608,7 @@ class _DistributedResourceSampler:
         )
 
     def _run(self) -> None:
-        """Poll cluster resources until stopped, retaining sampling exceptions as evidence."""
+        """Purpose: Drive periodic distributed telemetry. Inputs: Owned interval, stop event, and client. Outputs: None; appends samples until stopped and converts any probe exception into retained failure text rather than terminating the daemon thread."""
         while not self._stop.wait(self.interval_seconds):
             try:
                 self._sample()
@@ -636,7 +637,7 @@ class _DistributedResourceSampler:
             self.failures.append(f"{type(error).__name__}: {error}")
 
     def summary(self, initial_workers: set[str], final_workers: set[str]) -> dict[str, Any]:
-        """Aggregate sampled worker stability, memory, CPU, and scheduler activity into report fields."""
+        """Purpose: Aggregate distributed calibration telemetry. Inputs: Sets of worker-address strings sampled before and after the run plus owned timestamped host/worker snapshots. Outputs: Per-host CPU percentages and byte memory extrema, GPU percentages/bytes/name, spill bytes/persistence, sampling failures/latency, worker sets, and restart count; does not perform new probes."""
         hosts: dict[str, dict[str, list[float]]] = {}
         observed_workers: set[str] = set()
         gpu_samples: list[dict[str, Any]] = []
@@ -713,7 +714,7 @@ class _DistributedResourceSampler:
 
 
 def _distributed_contexts(database_path: Path, count: int = 256) -> list[dict[str, Any]]:
-    """Select evenly ranked M4 Daily training contexts and label them by length third."""
+    """Purpose: Select length-stratified contexts for distributed calibration. Inputs: A configured canonical DuckDB ``Path`` and requested positive ``count`` (normally 256). Outputs: Equally ranked mappings with series ID, one-dimensional numeric training context, integer length, and short/medium/long label; opens the database read-only and raises when too few rows exist."""
     configuration = load_database_configuration(database_path)
     dataset_name = configuration.resolved["data"]["dataset_name"]
     connection = duckdb.connect(str(database_path.resolve()), read_only=True)
@@ -753,7 +754,7 @@ def _distributed_contexts(database_path: Path, count: int = 256) -> list[dict[st
 def _calibration_batches(
     jobs: list[dict[str, Any]], batch_size: int
 ) -> list[list[dict[str, Any]]]:
-    """Partition contexts into length-aware batches capped by the requested batch size."""
+    """Purpose: Form length-aware Chronos calibration batches. Inputs: Job mappings with IDs and one-dimensional contexts plus a positive maximum ``batch_size``. Outputs: A list of nonempty job lists, grouped by context-length bit bucket and capped at the requested size; sorts/references jobs without mutating them."""
     grouped: dict[int, list[dict[str, Any]]] = {}
     for job in sorted(jobs, key=lambda item: (len(item["context"]), item["id"])):
         grouped.setdefault(max(1, len(job["context"])).bit_length(), []).append(job)
@@ -768,7 +769,7 @@ def _calibration_batches(
 def _scientific_comparison(
     outputs: dict[str, dict[str, Any]], references: dict[str, dict[str, Any]]
 ) -> dict[str, Any]:
-    """Compare candidate forecasts with references and report exact coverage plus numeric tolerances."""
+    """Purpose: Evaluate distributed forecast equivalence and ID coverage. Inputs: Candidate and reference forecast mappings keyed by task ID, each containing mean/median/quantile arrays. Outputs: Equivalence, missing/unexpected counts, maximum absolute/relative differences, and fixed 1e-5 tolerances; performs no I/O or mutation."""
     missing = sorted(set(references) - set(outputs))
     unexpected = sorted(set(outputs) - set(references))
     differences = [
@@ -805,7 +806,7 @@ def calibrate_dask_profile(
     output: Path,
     baseline: Path | None = None,
 ) -> dict[str, Any]:
-    """Run cleaning, transforms, and both models on Dask using an isolated measurement DB."""
+    """Purpose: Calibrate an end-to-end Dask execution profile. Inputs: Canonical DuckDB path; scheduler address; positive worker, per-host CPU, Chronos batch, and in-flight counts; profile name; required output path; and optional baseline JSON path. Outputs: A report containing throughput, retries, failures, scientific equivalence, task contributions, sampled byte/percent telemetry, and safety verdict; opens canonical data read-only, creates/closes a Dask client, submits/retries pipeline tasks, launches remote R/Chronos work, creates then removes an isolated measurement DB, and creates the JSON report and parent directories."""
     from distributed import Client
 
     from .distributed_execution import (

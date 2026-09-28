@@ -44,7 +44,11 @@ from util.experiment_execution import (
 
 
 class ExecutionProfileTests(unittest.TestCase):
-    """Verify profile defaults, validation, task sizing, and coordinator settings."""
+    """Purpose: Verify profile defaults, validation, task sizing, and coordinator settings.
+
+    Inputs: Committed profiles, synthetic jobs, configuration files, and mocked Dask clients.
+    Outputs: Assertions over settings and request shapes; no persistent state or external side effects.
+    """
     def test_committed_profile_values_and_single_writer(self) -> None:
         """Profiles retain their tuned concurrency and exactly one database writer."""
         sequential, _ = resolve_execution_profile("sequential_safe")
@@ -211,7 +215,11 @@ class ExecutionProfileTests(unittest.TestCase):
 
 
 class PersistentWorkerTests(unittest.TestCase):
-    """Verify persistent worker protocols, isolation, batching, and Dask retries."""
+    """Purpose: Verify persistent worker protocols, isolation, batching, and Dask retries.
+
+    Inputs: JSON worker requests, temporary scripts, local Dask clusters, and synthetic jobs.
+    Outputs: Protocol and result assertions; temporary processes/files are closed or removed.
+    """
     def test_relocated_r_workers_preserve_json_contracts(self) -> None:
         """R cleaning and forecasting entry points preserve their JSON response schemas."""
         root = Path(__file__).parents[3]
@@ -427,7 +435,11 @@ for line in sys.stdin:
         from util.distributed_execution import run_batches
 
         def succeed_on_retry(batch, retry_count=0):
-            """Fail the initial attempt and identify jobs on the first retry."""
+            """Purpose: Model a Dask task that succeeds only after its initial attempt.
+
+            Inputs: A list of job mappings and the scheduler-supplied integer retry count.
+            Outputs: Job IDs and retry count, or an initial RuntimeError; no persistent side effects.
+            """
             if retry_count == 0:
                 raise RuntimeError("first attempt fails")
             return {"ids": [job["id"] for job in batch], "retry_count": retry_count}
@@ -457,7 +469,11 @@ for line in sys.stdin:
 
 
 class CalibrationSafetyTests(unittest.TestCase):
-    """Verify calibration equivalence baselines and safe-setting selection."""
+    """Purpose: Verify calibration equivalence baselines and safe-setting selection.
+
+    Inputs: Synthetic forecasts, calibration candidates, and in-memory worker doubles.
+    Outputs: Equivalence and recommendation assertions; no process, database, or file effects.
+    """
     def test_distributed_scientific_comparison_uses_requested_tolerances(self) -> None:
         """Scientific comparison accepts small drift and rejects larger or missing output."""
         reference = {
@@ -493,13 +509,25 @@ class CalibrationSafetyTests(unittest.TestCase):
         ]
 
         class FakeWorker:
-            """Record requested batch sizes and return forecasts equal to that size."""
+            """Purpose: Emulate Chronos while recording requested inference batch sizes.
+
+            Inputs: Request mappings containing batch size and a list of forecast jobs.
+            Outputs: Result mappings with constant forecast arrays; mutates only ``batch_sizes``.
+            """
             def __init__(self) -> None:
-                """Initialize the ordered record of requested batch sizes."""
+                """Purpose: Initialize request-history state for the fake worker.
+
+                Inputs: None.
+                Outputs: An empty mutable ``batch_sizes`` list; no external side effects.
+                """
                 self.batch_sizes = []
 
             def request(self, message):
-                """Record one request and return one constant forecast per job."""
+                """Purpose: Record one Chronos-shaped request and synthesize its response.
+
+                Inputs: A mapping with ``inference_batch_size`` and ``jobs`` entries.
+                Outputs: A result mapping with one forecast per job; appends to request history.
+                """
                 batch_size = message["inference_batch_size"]
                 self.batch_sizes.append(batch_size)
                 value = float(batch_size)

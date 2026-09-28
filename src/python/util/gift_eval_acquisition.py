@@ -26,7 +26,7 @@ from .configuration import ImportValidationError
 from .provenance import atomic_write_json, sha256_file, utc_now
 
 
-# Manifest written below the source root to bind repository revision, scope, and file hashes.
+# Code constant: acquisition-protocol manifest filename; callers cannot override it.
 MANIFEST_NAME = "source-manifest.json"
 
 
@@ -42,7 +42,12 @@ def load_dependency(path: Path) -> dict[str, Any]:
 
 
 def verify_code(dependency: dict[str, Any]) -> dict[str, str]:
-    """Verify the local GIFT-Eval checkout is at the locked commit and return its identity."""
+    """Purpose: Verify the local GIFT-Eval code checkout against dependency-lock metadata.
+
+    Inputs: Decoded dependency configuration containing repository, path, and commit.
+    Outputs: Repository/commit/path identity, or ``ImportValidationError`` on absence or mismatch.
+    Side effects: Runs a read-only Git subprocess in the configured checkout.
+    """
     code = dependency["code"]
     checkout = repository_root() / code["path"]
     try:
@@ -69,7 +74,12 @@ def required_fingerprints(
     dataset_names: Sequence[str],
     required_names: Sequence[str],
 ) -> dict[str, dict[str, Any]]:
-    """Validate required JSON/Arrow files for each dataset and return byte sizes and SHA-256 hashes."""
+    """Purpose: Validate and fingerprint required files in a local dataset snapshot.
+
+    Inputs: Source root, selected dataset directories, and required JSON/Arrow filenames from the lock.
+    Outputs: Source-relative file records containing byte sizes and SHA-256 hashes.
+    Side effects: Reads every required file and fully decodes JSON or Arrow content.
+    """
     files: dict[str, dict[str, Any]] = {}
     for dataset_name in dataset_names:
         dataset_dir = source_root / dataset_name
@@ -137,7 +147,12 @@ def manifest_matches(
 
 
 def remote_dataset_names(repository: str, revision: str) -> list[str]:
-    """List top-level dataset directories in the pinned Hugging Face snapshot."""
+    """Purpose: Discover dataset directories present in a pinned Hugging Face snapshot.
+
+    Inputs: Dataset repository ID and immutable revision from dependency configuration.
+    Outputs: Sorted top-level directories containing the expected Arrow shard.
+    Side effects: Performs a Hugging Face API request.
+    """
     files = HfApi().list_repo_files(
         repository, repo_type="dataset", revision=revision
     )
@@ -154,7 +169,12 @@ def remote_dataset_names(repository: str, revision: str) -> list[str]:
 def verify_source(
     source_root: Path, dependency: dict[str, Any], scope: str
 ) -> dict[str, Any]:
-    """Validate the requested local snapshot and return manifest content; reject lock mismatches."""
+    """Purpose: Validate a local GIFT-Eval dataset snapshot for the requested acquisition scope.
+
+    Inputs: Source directory, dependency-lock mapping, and ``m4_daily`` or complete scope.
+    Outputs: Manifest content with repository/revision, dataset directories, and file fingerprints.
+    Side effects: Reads local source files and queries Hugging Face for complete-scope directory names.
+    """
     dataset = dependency["dataset"]
     names = (
         [dataset["phase_0_1_subset"]]
@@ -176,7 +196,12 @@ def verify_source(
 
 
 def acquire(source_root: Path, dependency: dict[str, Any], scope: str) -> dict[str, Any]:
-    """Safely skip a valid snapshot or resume its pinned Hugging Face download."""
+    """Purpose: Acquire, verify, and manifest an immutable GIFT-Eval dataset snapshot.
+
+    Inputs: Destination root, dependency-lock metadata, and ``m4_daily`` or complete scope.
+    Outputs: Verified manifest data, manifest path, and ``already_valid``/``downloaded`` outcome.
+    Side effects: May create directories, download snapshot files/cache data, and atomically write the manifest.
+    """
     source_root = source_root.resolve()
     manifest_path = source_root / MANIFEST_NAME
     try:
@@ -221,10 +246,16 @@ def acquire(source_root: Path, dependency: dict[str, Any], scope: str) -> dict[s
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Define acquisition scope, source-root, and dependency-lock CLI arguments."""
+    """Purpose: Define the GIFT-Eval acquisition and verification command line.
+
+    Inputs: Repository-relative default dependency lock and later CLI arguments.
+    Outputs: Parser for scope, optional source root, and dependency configuration path.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("scope", choices=("m4_daily", "complete", "verify"))
     parser.add_argument("--source-root", type=Path)
+    # Bootstrap/interface default: repository dependency-lock path used before
+    # source discovery; ``--dependency`` overrides it and it is not scientific identity.
     parser.add_argument(
         "--dependency",
         type=Path,
@@ -234,7 +265,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Acquire or verify the selected snapshot, print its manifest, and return a shell status code."""
+    """Purpose: Parse and dispatch GIFT-Eval source acquisition or verification.
+
+    Inputs: Optional arguments; defaults originate in the dependency lock and repository layout.
+    Outputs: Manifest JSON on stdout with status 0, or an error on stderr with status 1.
+    Side effects: May access Hugging Face, download files, write ``source-manifest.json``, and run Git.
+    """
     args = build_parser().parse_args(argv)
     try:
         dependency = load_dependency(args.dependency)

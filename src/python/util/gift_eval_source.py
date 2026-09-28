@@ -24,15 +24,20 @@ from .configuration import ImportValidationError, json_fingerprint
 from .provenance import sha256_file
 
 
-# SOURCE_ARROW_NAME: pinned Arrow stream filename required from the source snapshot.
+# Code constant: Arrow filename required by the pinned GIFT-Eval snapshot protocol.
 SOURCE_ARROW_NAME = "data-00000-of-00001.arrow"
-# SOURCE_METADATA_NAMES: complete tuple of Arrow and metadata files required from the source snapshot.
+# Code constant: complete pinned-snapshot file contract used for provenance hashing.
 SOURCE_METADATA_NAMES = (SOURCE_ARROW_NAME, "dataset_info.json", "state.json")
 
 
 @dataclass(frozen=True)
 class SourceSeries:
-    """One validated Arrow row for import: zero-based source row, source item ID, first-observation timestamp, source frequency code, and finite target observations."""
+    """Purpose: Represent one validated source row ready for canonical import.
+
+    Inputs: Zero-based row and item identity, first-observation timestamp, source
+    frequency code, and finite float32-derived target observations.
+    Outputs: Immutable series state preserving source order and scientific values.
+    """
     source_row: int
     source_series_id: str
     start_timestamp: Any
@@ -41,7 +46,11 @@ class SourceSeries:
 
 
 def source_fingerprint(source_dir: Path) -> dict[str, Any]:
-    """Return byte sizes and SHA-256 digests for every required source file plus their aggregate digest."""
+    """Purpose: Establish the byte-level identity of a pinned source snapshot.
+
+    Inputs: Directory containing all three required GIFT-Eval snapshot files.
+    Outputs: Per-file byte sizes and SHA-256 values plus their aggregate JSON digest.
+    """
     files: dict[str, Any] = {}
     for name in SOURCE_METADATA_NAMES:
         path = source_dir / name
@@ -52,7 +61,11 @@ def source_fingerprint(source_dir: Path) -> dict[str, Any]:
 
 
 def source_metadata(source_dir: Path) -> dict[str, Any]:
-    """Load and return the snapshot's dataset-info and state JSON keyed by filename."""
+    """Purpose: Read descriptive and state metadata from a source snapshot.
+
+    Inputs: Snapshot directory containing valid ``dataset_info.json`` and ``state.json``.
+    Outputs: Decoded JSON values keyed by filename; I/O and decoding errors propagate.
+    """
     metadata: dict[str, Any] = {}
     for name in ("dataset_info.json", "state.json"):
         with (source_dir / name).open("r", encoding="utf-8") as stream:
@@ -61,7 +74,12 @@ def source_metadata(source_dir: Path) -> dict[str, Any]:
 
 
 def _validate_schema(schema: pa.Schema) -> None:
-    """Require the exact item ID, second timestamp, frequency, and float32-list Arrow schema."""
+    """Purpose: Enforce the exact scientific Arrow input schema.
+
+    Inputs: Arrow schema expected to contain item ID, seconds timestamp, frequency,
+    and list-of-float32 target columns in that order.
+    Outputs: ``None`` when valid; otherwise raises ``ImportValidationError``.
+    """
     expected_names = ["item_id", "start", "freq", "target"]
     if schema.names != expected_names:
         raise ImportValidationError(
@@ -81,7 +99,13 @@ def _validate_schema(schema: pa.Schema) -> None:
 def iter_source_series(
     source_dir: Path, expected_frequency: str, max_series: int | None
 ) -> Iterator[SourceSeries]:
-    """Yield one validated source series at a time from the memory-mapped stream."""
+    """Purpose: Stream validated univariate series from the pinned Arrow snapshot.
+
+    Inputs: Source directory, required frequency code, and optional positive row limit.
+    Outputs: ``SourceSeries`` values in source order without materializing the dataset.
+    Notes: Rejects nulls, duplicate IDs, frequency mismatches, empty/non-finite targets,
+    and an empty source; targets retain the source float32 values.
+    """
     arrow_path = source_dir / SOURCE_ARROW_NAME
     seen: set[str] = set()
     source_row = 0

@@ -290,10 +290,13 @@ preserves their history, so no archive copy is created.
 
 ### Source documentation
 
-Source documentation is mandatory for every tracked Python and R source or
-test file under `src/python` and `src/r`.
+Source documentation is mandatory for every project-authored source and test
+file, regardless of programming or scripting language. This standard applies
+to Python, R, shell, and any language introduced by a later POC. Vendored
+external code is excluded.
 
-Each file uses the appropriate Python or R comment syntax for this header:
+Each file uses its language's normal documentation or comment syntax for this
+header:
 
 ```text
 ==============================================================================
@@ -306,25 +309,38 @@ Run from: Exact repository-root command, or “Imported; not run directly.”
 ==============================================================================
 ```
 
-- Each file begins with a concise comment header naming the filename and its
+- Each file begins with a concise header naming the filename and its
   **Purpose**, **Inputs**, **Outputs**, and **Run from** context. Preserve useful
-  Python module docstrings. Utility, package, and test-support modules state
-  `Imported; not run directly.`; only `src/python/00_main.py` is
-  researcher-facing. Executable headers give an exact repository-root command.
-  Executable tests give their exact `unittest` module command using
-  `.tools/uv/uv run --locked --no-sync` and the established `PYTHONPATH` where
-  applicable. R workers describe their stdin execution context accurately.
+  language-native module documentation. Utility, package, and test-support
+  modules state `Imported; not run directly.` Executable files give an exact
+  repository-root command. Worker files describe their standard-input,
+  subprocess, or scheduler context accurately.
+- **Run from** applies to files, not functions. It records how an executable is
+  launched or states that a module is imported. A function does not repeat the
+  file's command or maintain a caller list.
 - Every named function or method, including private helpers and test methods,
-  has a concise Python docstring or immediately preceding R contract comment.
-  It states purpose, inputs, outputs or side effects, and caller/context where
-  that context is not obvious.
-- Every class, dataclass, or research object documents its purpose,
-  fields/constructor, state produced, and use.
+  has a language-native docstring or an immediately preceding contract comment.
+  A non-trivial function documents its **Purpose**, **Inputs**, and **Outputs**.
+  Outputs include returned values and important side effects such as database,
+  file, task-state, standard-output, or process changes.
+- A small, obvious function may use one accurate sentence when separate input
+  and output sections would only repeat its signature. Add **Raises**,
+  **Notes**, or an **Example** only when needed to use or verify the function
+  correctly.
+- Function documentation explains the contract rather than listing current
+  callers or narrating the implementation. Parameter descriptions add research
+  meaning, units, shapes, allowed values, object types, or data origin instead
+  of merely repeating names and type annotations.
+- Every class, data object, or research object documents its purpose, important
+  inputs or fields, state or outputs, and ownership of side effects. Individual
+  methods follow the same function standard.
 - Important scientific fields, identifiers, units, and allowed values are
   explicit.
 - Every important module global has an adjacent concise comment explaining its
-  purpose/source or unit/use. Related constants may share a block only when
-  every name is explicit.
+  purpose and approved classification: experiment global, execution global,
+  bootstrap/interface default, machine environment, code constant, or
+  test/calibration value. Override and provenance behaviour are stated when
+  relevant. Related constants may share a block only when every name is clear.
 - Do not document imports or every local variable.
 - Keep documentation simple, concise, and technical. Prefer one short line per
   field. Explain contracts rather than restating names; do not use descriptions

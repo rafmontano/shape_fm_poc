@@ -44,14 +44,19 @@ from .transformations import TransformationResult, inverse, transform
 from .provenance import utc_now
 
 
-# Ordered database stage numbers mapped to invocation gate names.
+# Code constant: persistent process-number to invocation-stage protocol mapping.
 STAGES = {2: "preprocess", 3: "transform", 4: "forecast", 5: "combine", 6: "evaluate"}
 
 
 def expected_task_counts(
     instance_count: int, workflow: dict[str, Any]
 ) -> dict[int, int]:
-    """Derive Process 02–06 task totals from selected instances and stored settings."""
+    """Purpose: Derive Process 02–06 task totals for an experiment plan.
+
+    Inputs: Selected forecast-instance count and the stored workflow mapping of
+    cleaning methods, transformations, and models.
+    Outputs: Stage-number to task-count mapping; no database or process effects.
+    """
     if instance_count < 0:
         raise ValueError("instance count cannot be negative")
     cleaning_count = len(workflow["cleaning"])
@@ -77,7 +82,12 @@ def scientific_configuration(config: dict[str, Any]) -> dict[str, Any]:
 
 
 def validated_submission_metadata(config: dict[str, Any]) -> dict[str, Any]:
-    """Validate draft/approved GIFT-Eval submission fields and return them key-sorted."""
+    """Purpose: Validate GIFT-Eval submission metadata before candidate export.
+
+    Inputs: Workflow configuration containing creation-time ``submission_metadata``.
+    Outputs: Key-sorted metadata mapping, or ``ValueError`` for an invalid draft
+    or approval; no database or filesystem effects.
+    """
     metadata = config.get("submission_metadata", {})
     required = {
         "status",
@@ -132,11 +142,12 @@ def validated_submission_metadata(config: dict[str, Any]) -> dict[str, Any]:
 
 @dataclass(frozen=True)
 class ExperimentPlan:
-    """Result of planning an executable POC 1 experiment.
+    """Purpose: Describe a persisted, executable M4 Daily experiment plan.
 
-    Fields identify the persisted experiment and benchmark, describe its requested
-    scope and optional series cap, and report instance, variant, and per-stage task
-    counts. Pass a non-dry-run plan to :meth:`POC1Coordinator.run_all`.
+    Inputs: Constructed from authoritative configuration and the official benchmark
+    selection by :meth:`POC1Coordinator.plan`.
+    Outputs: Immutable experiment ID, scope, instance and variant counts, per-stage
+    task counts, and benchmark configuration name; owns no external resources.
     """
     experiment_id: str
     scope: str
@@ -148,12 +159,11 @@ class ExperimentPlan:
 
 @dataclass(frozen=True)
 class ExperimentForecast:
-    """Read model for one persisted candidate forecast and its held-out target.
+    """Purpose: Represent one persisted candidate forecast and held-out target.
 
-    Identity fields locate the experiment, variant, forecast instance, and
-    candidate. ``mean`` and ``median`` are horizon-length point forecasts;
-    ``quantiles`` aligns with ``quantile_levels`` and ``actual`` contains the
-    comparison target. Instances are returned by :func:`get_forecast`.
+    Inputs: Constructed by :func:`get_forecast` from forecast and instance rows.
+    Outputs: Immutable IDs plus horizon-length mean, median, and actual vectors;
+    ``quantiles`` has shape ``(levels, horizon)`` aligned to ``quantile_levels``.
     """
     forecast_id: str
     experiment_id: str
@@ -170,7 +180,11 @@ class ExperimentForecast:
 def _run_parallel(
     function: Callable[[Any], Any], values: list[Any], workers: int
 ) -> list[Any]:
-    """Run pure computations sequentially or in spawned local workers."""
+    """Purpose: Execute pure scientific jobs with deterministic result ordering.
+
+    Inputs: Picklable callable, ordered job values, and local process count.
+    Outputs: Results aligned to input order; may spawn and close worker processes.
+    """
     if workers == 1:
         return [function(value) for value in values]
     import multiprocessing
@@ -206,7 +220,12 @@ def _length_aware_batches(
 def _run_external_batches(
     function: Callable[[Any], Any], batches: list[Any], workers: int
 ) -> Iterable[Any]:
-    """Run bounded external jobs without allowing workers to access DuckDB."""
+    """Purpose: Schedule bounded bridge batches while preserving single-writer safety.
+
+    Inputs: Batch callable, ordered payload batches, and thread count.
+    Outputs: Ordered batch results; may create a thread pool whose callbacks launch
+    external workers, but grants them no DuckDB connection.
+    """
     if workers == 1:
         for batch in batches:
             yield function(batch)
@@ -226,18 +245,22 @@ def _combine_job(job: dict[str, Any]) -> dict[str, Any]:
 
 
 class POC1Coordinator:
-    """Coordinate planning and stage execution through one writable DuckDB connection.
+    """Purpose: Own planning and restartable M4 Daily stage coordination.
 
-    Construct with a database path (the default project database is used when
-    omitted). Construction migrates the database, loads the fixed M4 Daily
-    experiment configuration, and initializes a hardware cache. Use as a context
-    manager, call :meth:`plan`, then execute individual gates or :meth:`run_all`;
-    task attempts, forecasts, evaluations, and exports are persisted for restart
-    and audit. Read-only module helpers serve consumers that do not need a writer.
+    Inputs: A DuckDB path whose stored configuration defines scientific workflow,
+    execution controls, benchmark selection, model revisions, and quantile levels.
+    Outputs: Plans, gate summaries, forecasts, evaluations, status, and exports;
+    owns the sole writable connection and all task/invocation transaction effects,
+    and launches isolated R, Chronos, GIFT-Eval, and optional Dask work.
     """
 
     def __init__(self, database_path: Path = DEFAULT_DATABASE):
-        """Open an initialized database and load its authoritative configuration."""
+        """Purpose: Initialize the coordinator's authoritative state and writer.
+
+        Inputs: Existing experiment DuckDB path, defaulting to the project database.
+        Outputs: Open coordinator with migrated schema, stored configuration,
+        quantile levels, and hardware cache; migrates and opens DuckDB for writes.
+        """
         self.root = repository_root()
         if not Path(database_path).resolve().is_file():
             raise FileNotFoundError(
@@ -267,7 +290,13 @@ class POC1Coordinator:
         self.close()
 
     def _gift_bridge(self, *arguments: str, timeout: float = 300.0) -> dict[str, Any]:
-        """Run the isolated GIFT-Eval bridge with CLI arguments and decode its JSON response."""
+        """Purpose: Invoke the pinned GIFT-Eval environment through its JSON bridge.
+
+        Inputs: Bridge CLI arguments and subprocess timeout; environment and script
+        paths originate in the stored resolved configuration.
+        Outputs: Decoded response mapping; launches a checked subprocess and may
+        raise timeout, process, or JSON errors without directly writing DuckDB.
+        """
         environment = self.configuration.resolved["evaluation"]["gift_eval"]["environment"]
         command = [
             str(self.root / environment / "bin/python"),
@@ -285,7 +314,12 @@ class POC1Coordinator:
         return json.loads(completed.stdout)
 
     def _dataset_id(self) -> str:
-        """Return the newest imported M4 Daily dataset ID, failing when Stage 1 has not run."""
+        """Purpose: Resolve the imported dataset used to plan an experiment.
+
+        Inputs: Dataset name from authoritative stored configuration.
+        Outputs: Newest matching M4 Daily dataset ID read from DuckDB; writes nothing
+        and raises ``RuntimeError`` when Process 01 has not completed.
+        """
         row = self.connection.execute(
             "SELECT dataset_id FROM datasets WHERE dataset_name = ? "
             "ORDER BY created_at DESC LIMIT 1",
@@ -296,7 +330,12 @@ class POC1Coordinator:
         return row[0]
 
     def _validate_official_configuration(self, official: dict[str, Any]) -> None:
-        """Require the configured benchmark name and the single POC forecast window."""
+        """Purpose: Guard the POC against an incompatible official benchmark shape.
+
+        Inputs: GIFT-Eval description mapping and configured benchmark identity.
+        Outputs: None for the expected configuration with one forecast window;
+        raises ``RuntimeError`` otherwise and has no side effects.
+        """
         expected_configuration = self.config["benchmark"]["configuration"]
         if official["configuration_name"] != expected_configuration:
             raise RuntimeError(
@@ -310,7 +349,12 @@ class POC1Coordinator:
             )
 
     def _configured_execution(self) -> tuple[ExecutionProfile, ExecutionSettings]:
-        """Build sequential process controls exclusively from stored execution settings."""
+        """Purpose: Materialize execution controls from authoritative stored settings.
+
+        Inputs: Process workers, batch sizes, memory bounds, and Dask controls in
+        the database-backed execution configuration.
+        Outputs: Execution profile and settings objects; no external side effects.
+        """
         values = self.configuration.execution
         workers = values["process_workers"]
         profile = ExecutionProfile(
@@ -339,7 +383,15 @@ class POC1Coordinator:
         return profile, settings
 
     def plan(self, dry_run: bool = False) -> ExperimentPlan | dict[str, Any]:
-        """Select the configured official prefix and materialize its deterministic task graph."""
+        """Purpose: Select official M4 instances and build the deterministic task graph.
+
+        Inputs: ``dry_run`` plus benchmark, series count, workflow dimensions, and
+        execution batch size from authoritative stored configuration.
+        Outputs: Dry-run selection/count mapping or persisted :class:`ExperimentPlan`;
+        calls GIFT-Eval and, unless dry-running, transactionally inserts benchmark,
+        experiment, variant, instance, and Stage 2–6 task rows and invalidates stale
+        evaluation/export state when scope expands.
+        """
         source_root = self.root / self.configuration.source_directory
         availability = self._gift_bridge(
             "describe",
@@ -679,7 +731,11 @@ class POC1Coordinator:
         variant_id: str | None,
         candidate: str | None,
     ) -> str:
-        """Insert one deterministic pending task if absent and return its task ID."""
+        """Purpose: Register one idempotent unit in the persisted task graph.
+
+        Inputs: Experiment/stage identity and optional instance, variant, and candidate.
+        Outputs: Deterministic task ID; inserts a pending DuckDB row when absent.
+        """
         row = self._task_row(
             experiment_id, stage, instance_id, variant_id, candidate
         )
@@ -728,7 +784,13 @@ class POC1Coordinator:
         overrides: dict[str, Any] | None = None,
         hardware: dict[str, Any] | None = None,
     ) -> str:
-        """Record a running gate invocation and reset interrupted tasks for retry."""
+        """Purpose: Start durable accounting for one restartable stage invocation.
+
+        Inputs: Experiment and stage IDs, resolved concurrency/device/batch controls,
+        execution profile and overrides, and measured hardware evidence.
+        Outputs: New invocation ID; inserts a running invocation and marks orphaned
+        running attempts failed while resetting their tasks to pending in DuckDB.
+        """
         invocation_id = f"poc1-invocation/{uuid.uuid4().hex}"
         self.connection.execute(
             """INSERT INTO experiment_invocations
@@ -769,7 +831,12 @@ class POC1Coordinator:
         return invocation_id
 
     def _chronos_hardware(self, requested_device: str) -> dict[str, Any]:
-        """Probe the Chronos bridge for the requested accelerator and decode its hardware report."""
+        """Purpose: Probe accelerator availability through the isolated Chronos bridge.
+
+        Inputs: Requested device plus worker/environment paths from stored configuration.
+        Outputs: Decoded hardware mapping; launches a checked subprocess and raises
+        ``RuntimeError`` with bridge diagnostics when the device is unavailable.
+        """
         paths = self.configuration.resolved["execution"]["paths"]
         try:
             completed = subprocess.run(
@@ -794,7 +861,12 @@ class POC1Coordinator:
         return json.loads(completed.stdout)
 
     def execution_hardware(self, profile: ExecutionProfile) -> dict[str, Any]:
-        """Validate and cache host, accelerator, R, forecast, and model details."""
+        """Purpose: Validate and cache execution hardware/software provenance.
+
+        Inputs: Execution profile and stored Chronos model and execution settings.
+        Outputs: Host, accelerator, R, forecast-package, and model detail mapping;
+        probes Chronos and R subprocesses on first use and mutates only the cache.
+        """
         requested = profile.required_accelerator or "auto"
         if requested not in self._hardware_cache:
             accelerator = self._chronos_hardware(requested)
@@ -831,7 +903,13 @@ class POC1Coordinator:
     def validate_hardware(
         self, profile: ExecutionProfile, run_chronos_smoke: bool = False
     ) -> dict[str, Any]:
-        """Report profile hardware and optionally prove Chronos inference on one instance."""
+        """Purpose: Validate a profile and optionally perform one Chronos smoke forecast.
+
+        Inputs: Execution profile and smoke flag; smoke data is the first planned
+        context vector and horizon, with model controls from stored configuration.
+        Outputs: Profile, hardware, and optional inference timing/shape mapping;
+        probes subprocesses and model inference but does not mutate scientific rows.
+        """
         details = self.execution_hardware(profile)
         result: dict[str, Any] = {
             "profile": profile.to_dict(),
@@ -897,7 +975,12 @@ class POC1Coordinator:
         return result
 
     def _start_tasks(self, rows: list[tuple], invocation_id: str) -> dict[str, int]:
-        """Mark selected tasks running, create attempt rows, and return attempt numbers."""
+        """Purpose: Begin a durable attempt for every selected incomplete task.
+
+        Inputs: Task query rows and owning invocation ID.
+        Outputs: Task-ID to attempt-number mapping; transactionally marks each task
+        running and inserts its running attempt row in DuckDB.
+        """
         attempts = {}
         for row in rows:
             task_id = row[0]
@@ -933,7 +1016,13 @@ class POC1Coordinator:
         insert: Callable[[], None],
         resources: dict[str, Any] | None = None,
     ) -> None:
-        """Atomically run a result insert and mark its task attempt completed."""
+        """Purpose: Commit one scientific result and its task completion atomically.
+
+        Inputs: Task/attempt identity, runtime, callback that writes the stage result,
+        and optional worker resource provenance.
+        Outputs: None; executes the callback and completes task and attempt rows in
+        one DuckDB transaction, rolling all writes back on failure.
+        """
         self.connection.execute("BEGIN TRANSACTION")
         try:
             insert()
@@ -953,7 +1042,11 @@ class POC1Coordinator:
             raise
 
     def _fail_task(self, task_id: str, attempt: int, error: str) -> None:
-        """Atomically mark a task and its current attempt failed with an error."""
+        """Purpose: Persist terminal failure state for one task attempt.
+
+        Inputs: Task ID, current attempt number, and diagnostic text.
+        Outputs: None; atomically marks DuckDB task and attempt rows failed.
+        """
         self.connection.execute("BEGIN TRANSACTION")
         try:
             self.connection.execute(
@@ -971,7 +1064,13 @@ class POC1Coordinator:
             raise
 
     def _r_worker(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """Send cleaning or AutoARIMA jobs to the matching R bridge and decode its response."""
+        """Purpose: Execute cleaning or AutoARIMA jobs in the configured R bridge.
+
+        Inputs: JSON-serializable action and batched series/forecast payload; script,
+        timeout, and thread limits originate in stored execution configuration.
+        Outputs: Decoded result/provenance mapping; launches a checked R subprocess
+        with bounded threads and does not permit the worker to access DuckDB.
+        """
         paths = self.configuration.resolved["execution"]["paths"]
         execution = self.configuration.execution
         timeout = float(execution["worker_timeouts_seconds"]["r"])
@@ -999,7 +1098,12 @@ class POC1Coordinator:
         return json.loads(completed.stdout)
 
     def _pending(self, experiment_id: str, stage: int) -> list[tuple]:
-        """Return incomplete task identifiers and candidate dimensions for one experiment stage."""
+        """Purpose: Select restartable work for one stage invocation.
+
+        Inputs: Persisted experiment ID and Process 02–06 stage number.
+        Outputs: Ordered incomplete task IDs and instance/variant/candidate dimensions
+        read from DuckDB without changing task state.
+        """
         return self.connection.execute(
             """SELECT task_id, forecast_instance_id, variant_id, candidate
             FROM experiment_tasks WHERE experiment_id=? AND stage=? AND status!='completed'
@@ -1008,7 +1112,12 @@ class POC1Coordinator:
         ).fetchall()
 
     def _check_gate(self, experiment_id: str, stage: int) -> None:
-        """Require every task in the preceding stage to be complete."""
+        """Purpose: Enforce the persisted predecessor-stage completion gate.
+
+        Inputs: Persisted experiment ID and requested Process 02–06 stage number.
+        Outputs: None; performs a read-only task count and raises ``RuntimeError``
+        when the preceding stage still has incomplete tasks.
+        """
         if stage == 2:
             return
         incomplete = self.connection.execute(
@@ -1029,13 +1138,14 @@ class POC1Coordinator:
         execution: tuple[ExecutionProfile, dict[str, Any]] | None = None,
         execution_settings: ExecutionSettings | None = None,
     ) -> dict[str, Any]:
-        """Execute one restartable stage and return its invocation/task summary.
+        """Purpose: Execute one restartable Process 02–06 gate.
 
-        The execution profile determines stage concurrency and accelerator use;
-        sequential settings force all concurrency to one. Only incomplete tasks
-        are selected. Their attempts and stage outputs are committed through the
-        coordinator, while a failed stage remains retryable and raises
-        ``RuntimeError`` after invocation accounting is finalized.
+        Inputs: Experiment/stage identity and optional worker, device, batch, profile,
+        override, and Dask settings; omitted controls come from stored configuration.
+        Outputs: Invocation ID and task/runtime summary; validates predecessor and
+        hardware gates, optionally opens Dask, records invocation/attempt state,
+        dispatches the stage, commits results through the single writer, finalizes
+        failures for retry, and closes the Dask client.
         """
         if (
             stage not in STAGES
@@ -1248,7 +1358,13 @@ class POC1Coordinator:
         dask_client: Any = None,
         settings: ExecutionSettings | None = None,
     ) -> None:
-        """Clean raw training contexts in R and atomically persist preprocessed series."""
+        """Purpose: Execute Stage 2 cleaning for selected training contexts.
+
+        Inputs: Experiment task rows/attempts, worker and batch controls, and optional
+        Dask client/settings; contexts and official seasonality come from DuckDB.
+        Outputs: None; dispatches R cleaning batches and atomically inserts each
+        preprocessed vector, fingerprints, package provenance, and task completion.
+        """
         jobs = []
         for task_id, instance_id, _, method in rows:
             context, metadata = self.connection.execute(
@@ -1269,7 +1385,12 @@ class POC1Coordinator:
             )
 
         def invoke(batch: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any], float]:
-            """Send one cleaning batch to R and return its response with elapsed time."""
+            """Purpose: Run one local Stage 2 R cleaning batch.
+
+            Inputs: Job mappings containing task IDs, contexts, methods, and seasonality.
+            Outputs: Original batch, decoded worker response, and elapsed seconds;
+            launches the R bridge but does not write DuckDB.
+            """
             started = time.monotonic()
             response = self._r_worker(
                 {"action": "clean", "jobs": [{k: v for k, v in job.items() if k != "instance_id"} for job in batch]}
@@ -1330,7 +1451,12 @@ class POC1Coordinator:
                     seasonality=job["seasonality"],
                     packages=response["packages"],
                 ):
-                    """Insert the cleaned context and its fingerprints as a preprocessed series."""
+                    """Purpose: Write one cleaned context within its task transaction.
+
+                    Inputs: Captured instance/method IDs, original and cleaned vectors,
+                    official seasonality, and R package provenance.
+                    Outputs: None; inserts an idempotent ``preprocessed_series`` row.
+                    """
                     self.connection.execute(
                         """INSERT INTO preprocessed_series VALUES
                         (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, current_timestamp)
@@ -1365,7 +1491,13 @@ class POC1Coordinator:
         dask_client: Any = None,
         settings: ExecutionSettings | None = None,
     ) -> None:
-        """Apply configured transformations and persist transformed training contexts."""
+        """Purpose: Execute Stage 3 transformations of cleaned training contexts.
+
+        Inputs: Experiment task rows/attempts, worker count, and optional Dask controls;
+        methods and input vectors are read from variant and preprocessing rows.
+        Outputs: None; computes transformed vectors locally or on Dask and atomically
+        persists values, parameters, lineage, fingerprints, and task completions.
+        """
         prepared = []
         metadata = []
         for task_id, instance_id, variant_id, _ in rows:
@@ -1387,12 +1519,22 @@ class POC1Coordinator:
             runtime: float,
             resources: dict[str, Any] | None = None,
         ) -> None:
-            """Persist one transformed context and complete its Stage 3 attempt."""
+            """Purpose: Commit one Stage 3 transformation result.
+
+            Inputs: Task metadata, transformed vector/parameters, runtime, and worker evidence.
+            Outputs: None; delegates result insertion and attempt completion to the
+            coordinator's single transaction writer.
+            """
             task_id, instance_id, variant_id, pre_id, method, values = meta
             transformation_id = f"transformed/{json_fingerprint({'experiment': experiment_id, 'variant': variant_id, 'instance': instance_id})[:32]}"
 
             def insert(result=result, values=values):
-                """Insert transformed values, parameters, lineage, and content hashes."""
+                """Purpose: Write one transformed series within its task transaction.
+
+                Inputs: Captured source vector, transformation result, IDs, and method.
+                Outputs: None; inserts an idempotent ``transformed_series`` row with
+                scientific parameters, lineage, and input/output hashes.
+                """
                 self.connection.execute(
                     """INSERT INTO transformed_series VALUES
                     (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
@@ -1464,7 +1606,15 @@ class POC1Coordinator:
         dask_client: Any = None,
         settings: ExecutionSettings | None = None,
     ) -> None:
-        """Run AutoARIMA and Chronos forecasts, invert transformations, and persist candidate forecasts."""
+        """Purpose: Execute Stage 4 base-model forecasting on transformed contexts.
+
+        Inputs: Experiment task rows/attempts, execution profile/device, and optional
+        Dask controls; horizons, seasonality, model revisions, and quantiles come
+        from DuckDB and stored configuration.
+        Outputs: None; invokes R AutoARIMA and Chronos workers, adaptively retries
+        Chronos OOM batches, inverse-transforms outputs, and transactionally persists
+        original-scale forecast arrays, provenance, hashes, and task state.
+        """
         prepared = []
         for task_id, instance_id, variant_id, model in rows:
             values, horizon, benchmark_metadata = self.connection.execute(
@@ -1490,7 +1640,13 @@ class POC1Coordinator:
         chronos_jobs = [job for job in prepared if job["model"] == "chronos_2"]
 
         def invoke_auto(batch: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any], float]:
-            """Forecast one AutoARIMA batch in R and attach runtime/package metadata."""
+            """Purpose: Run one local AutoARIMA forecast batch through R.
+
+            Inputs: Transformed context jobs with horizons and official seasonality;
+            AutoARIMA settings come from authoritative configuration.
+            Outputs: Batch, forecasts with package/runtime provenance, and elapsed
+            seconds; launches R without writing DuckDB.
+            """
             jobs = [
                 {key: value for key, value in job.items() if key not in {"model", "instance_id", "variant_id"}}
                 for job in batch
@@ -1522,7 +1678,12 @@ class POC1Coordinator:
             response: dict[str, Any],
             runtime: float,
         ) -> None:
-            """Validate a model batch, invert its transformations, and commit forecasts."""
+            """Purpose: Validate and commit one Stage 4 model response batch.
+
+            Inputs: Submitted jobs, worker forecast arrays/provenance, and batch runtime.
+            Outputs: None; verifies task identity, reads transformation parameters,
+            inverse-transforms mean/median/quantile arrays, then commits each forecast.
+            """
             result_ids = [item["id"] for item in response["results"]]
             by_id = {item["id"]: item for item in response["results"]}
             if len(result_ids) != len(set(result_ids)) or set(by_id) != {
@@ -1563,7 +1724,12 @@ class POC1Coordinator:
                     model=model,
                     metadata=metadata,
                 ):
-                    """Insert one original-scale model forecast with provenance and hash."""
+                    """Purpose: Write one original-scale base forecast transactionally.
+
+                    Inputs: Captured horizon arrays, model/lineage IDs, revision, and
+                    execution metadata from the validated worker response.
+                    Outputs: None; inserts an idempotent ``forecasts`` row with hash.
+                    """
                     self.connection.execute(
                         """INSERT INTO forecasts VALUES
                         (?, ?, ?, ?, ?, ?, ?, 'original', ?, ?, ?, ?, ?, ?, ?, current_timestamp)
@@ -1604,7 +1770,11 @@ class POC1Coordinator:
             )
 
             def pending_chronos() -> Iterable[list[dict[str, Any]]]:
-                """Yield queued Chronos batches until the stage queue is empty."""
+                """Purpose: Feed the mutable Chronos retry queue to Dask scheduling.
+
+                Inputs: Enclosing deque of length-aware context batches.
+                Outputs: Batches in queue order; consumes queue state but writes no DB rows.
+                """
                 while chronos_pending:
                     yield chronos_pending.popleft()
 
@@ -1676,7 +1846,13 @@ class POC1Coordinator:
             return
 
         def run_chronos(progress: Callable[[], None] = lambda: None) -> None:
-            """Serve queued Chronos batches, shrinking on OOM and committing each result."""
+            """Purpose: Run local persistent Chronos inference with bounded OOM recovery.
+
+            Inputs: Prepared context batches, stored model/quantile settings, profile
+            memory limits and device, plus a callback for concurrent CPU progress.
+            Outputs: None; owns a Chronos subprocess, shrinks/requeues OOM batches,
+            commits successful forecasts/task state, and always closes the worker.
+            """
             if not chronos_jobs:
                 return
             chronos = self.config["models"]["chronos_2"]
@@ -1801,7 +1977,12 @@ class POC1Coordinator:
                 committed: set[int] = set()
 
                 def commit_finished_auto() -> None:
-                    """Commit each completed AutoARIMA future exactly once during GPU work."""
+                    """Purpose: Drain completed CPU forecasts while Chronos uses the GPU.
+
+                    Inputs: Enclosing AutoARIMA futures and committed-index set.
+                    Outputs: None; commits each finished batch once, thereby writing
+                    forecast and task state through ``commit_response``.
+                    """
                     for index, (_, future) in enumerate(futures):
                         if index in committed or not future.done():
                             continue
@@ -1839,7 +2020,13 @@ class POC1Coordinator:
         dask_client: Any = None,
         settings: ExecutionSettings | None = None,
     ) -> None:
-        """Combine eligible base forecasts at equal weight and persist ensemble forecasts."""
+        """Purpose: Execute Stage 5 candidate pass-through and forecast combination.
+
+        Inputs: Experiment task rows/attempts, worker count, and optional Dask controls;
+        base mean/median/quantile arrays and weights come from DuckDB/configuration.
+        Outputs: None; completes base-candidate tasks and computes and transactionally
+        persists equal-weight forecasts, component lineage, hashes, and task state.
+        """
         combination_rows = [row for row in rows if row[3] == "equal_weight"]
         jobs = []
         for task_id, instance_id, variant_id, _ in combination_rows:
@@ -1868,12 +2055,23 @@ class POC1Coordinator:
             runtime: float = 0.0,
             resources: dict[str, Any] | None = None,
         ) -> None:
-            """Persist an equal-weight result and complete its Stage 5 attempt."""
+            """Purpose: Commit one equal-weight candidate and its Stage 5 attempt.
+
+            Inputs: Task row, combined forecast arrays, component mappings, runtime,
+            and optional worker provenance.
+            Outputs: None; transactionally inserts ensemble/component rows and marks
+            the task attempt complete.
+            """
             task_id, instance_id, variant_id, candidate = row
             forecast_id = f"forecast/{json_fingerprint({'experiment': experiment_id, 'variant': variant_id, 'instance': instance_id, 'candidate': candidate})[:32]}"
 
             def insert() -> None:
-                """Insert the ensemble forecast and configured component weights."""
+                """Purpose: Write one ensemble forecast and its component lineage.
+
+                Inputs: Captured IDs, combined horizon arrays, source forecast IDs,
+                configured weights, and quantile-rearrangement flag.
+                Outputs: None; inserts ``forecasts`` and ``forecast_components`` rows.
+                """
                 self.connection.execute(
                     """INSERT INTO forecasts VALUES
                     (?, ?, ?, ?, 'equal_weight', NULL, NULL, 'original', ?, ?, ?, ?, 0, ?, ?, current_timestamp)
@@ -1986,7 +2184,15 @@ class POC1Coordinator:
         attempts: dict[str, int],
         workers: int,
     ) -> None:
-        """Evaluate complete candidate matrices through GIFT-Eval and persist official metrics."""
+        """Purpose: Execute Stage 6 official evaluation of complete forecast matrices.
+
+        Inputs: Experiment evaluation task rows/attempts and worker count; ordered
+        forecast arrays, benchmark identity, quantiles, and options come from DuckDB
+        and authoritative configuration.
+        Outputs: None; validates complete official-position coverage, runs GIFT-Eval
+        subprocesses using temporary payloads, and transactionally upserts metrics,
+        input fingerprints, provenance, and task completion.
+        """
         source_root = self.root / self.configuration.source_directory
         benchmark_id = self.connection.execute(
             "SELECT benchmark_configuration_id FROM experiments WHERE experiment_id=?",
@@ -2052,7 +2258,12 @@ class POC1Coordinator:
             )
 
         def invoke(item: dict[str, Any]) -> tuple[dict[str, Any], dict[str, float], float]:
-            """Evaluate one complete candidate payload through the GIFT-Eval bridge."""
+            """Purpose: Evaluate one complete candidate matrix with GIFT-Eval.
+
+            Inputs: Candidate identity and ordered mean/quantile forecast payload.
+            Outputs: Input item, official metric mapping, and elapsed seconds; creates
+            and removes a temporary JSON file and launches the evaluation subprocess.
+            """
             started = time.monotonic()
             with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as stream:
                 json.dump(item["payload"], stream)
@@ -2083,7 +2294,12 @@ class POC1Coordinator:
             evaluation_id = f"evaluation/{json_fingerprint({'experiment': experiment_id, 'variant': variant_id, 'candidate': candidate})[:32]}"
 
             def insert():
-                """Upsert official metrics and the exact evaluated-input fingerprint."""
+                """Purpose: Write official metrics within the task transaction.
+
+                Inputs: Captured experiment/variant/candidate IDs, metric mapping,
+                options, evaluated row count, and exact forecast-input fingerprint.
+                Outputs: None; upserts one ``official_evaluations`` DuckDB row.
+                """
                 self.connection.execute(
                     """INSERT INTO official_evaluations
                     (evaluation_id, experiment_id, variant_id, candidate,
@@ -2134,7 +2350,13 @@ class POC1Coordinator:
         execution: tuple[ExecutionProfile, dict[str, Any]] | None = None,
         execution_settings: ExecutionSettings | None = None,
     ) -> list[dict[str, Any]]:
-        """Run Stages 2–6 in order, mark the experiment complete, and return summaries."""
+        """Purpose: Execute the full Process 02–06 pipeline in gate order.
+
+        Inputs: Persisted experiment plan and optional execution controls forwarded
+        to each gate.
+        Outputs: Ordered gate-summary mappings; writes all stage/task/invocation and
+        scientific result state, then marks the experiment completed in DuckDB.
+        """
         results = []
         for stage in STAGES:
             results.append(
@@ -2155,7 +2377,12 @@ class POC1Coordinator:
         return results
 
     def status(self, experiment_id: str) -> dict[str, Any]:
-        """Return task counts grouped by stage and status for an experiment."""
+        """Purpose: Read coordinator task progress for one experiment.
+
+        Inputs: Persisted experiment ID.
+        Outputs: Experiment ID and task counts grouped by stage/status; queries the
+        coordinator connection without changing database state.
+        """
         rows = self.connection.execute(
             """SELECT stage, status, count(*) FROM experiment_tasks WHERE experiment_id=?
             GROUP BY stage, status ORDER BY stage, status""",
@@ -2170,7 +2397,12 @@ class POC1Coordinator:
         }
 
     def official_results(self, experiment_id: str) -> list[dict[str, Any]]:
-        """Return official metrics and submittability for every evaluated variant/candidate."""
+        """Purpose: Read compact official results for an experiment.
+
+        Inputs: Persisted experiment ID.
+        Outputs: Ordered mappings of cleaning/transformation/candidate identity,
+        decoded metric objects, and submittability; performs no database writes.
+        """
         rows = self.connection.execute(
             """SELECT v.cleaning_method, v.transformation_method, e.candidate,
                e.metrics, e.is_submittable
@@ -2195,11 +2427,13 @@ class POC1Coordinator:
         model_name: str = "ShapeFM-POC1-provisional",
         output_root: Path = Path("results"),
     ) -> dict[str, Any]:
-        """Write the configured provisional candidate as a non-submittable subset.
+        """Purpose: Export the configured candidate in GIFT-Eval result layout.
 
-        Produces GIFT-Eval ``all_results.csv`` and ``config.json`` beneath
-        ``output_root/model_name``, validates required finite metrics and approved
-        metadata, records the export, and returns its path and validation summary.
+        Inputs: Experiment ID, output model name/root, stored provisional-candidate
+        selector, official metrics, submission metadata, and GIFT-Eval manifest.
+        Outputs: Export ID/path and validation summary; invokes the manifest bridge,
+        creates ``all_results.csv`` and ``config.json``, and inserts a non-submittable
+        ``submission_exports`` audit row in DuckDB.
         """
         provisional = self.config["provisional_candidate"]
         row = self.connection.execute(
@@ -2298,7 +2532,13 @@ class POC1Coordinator:
 def get_forecast(
     database_path: Path, experiment_id: str, variant_id: str, series_id: str, candidate: str
 ) -> ExperimentForecast:
-    """Read one persisted forecast and its held-out actuals through a read-only connection."""
+    """Purpose: Read one candidate forecast with its held-out target.
+
+    Inputs: DuckDB path and experiment, variant, series, and candidate identifiers.
+    Outputs: :class:`ExperimentForecast` containing horizon vectors and a
+    ``(quantile_levels, horizon)`` quantile matrix; opens and closes a read-only
+    connection and raises ``KeyError`` when no matching forecast exists.
+    """
     connection = duckdb.connect(str(database_path), read_only=True)
     try:
         row = connection.execute(
@@ -2320,7 +2560,12 @@ def get_forecast(
 
 
 def latest_experiment_id(database_path: Path = DEFAULT_DATABASE) -> str:
-    """Resolve the latest experiment without migrating or opening for writes."""
+    """Purpose: Resolve the most recently updated persisted experiment.
+
+    Inputs: Experiment DuckDB path, defaulting to the project database.
+    Outputs: Experiment ID string; opens and closes a read-only connection without
+    migration and raises ``RuntimeError`` when no plan exists.
+    """
     connection = duckdb.connect(str(Path(database_path).resolve()), read_only=True)
     try:
         row = connection.execute(
@@ -2336,7 +2581,12 @@ def latest_experiment_id(database_path: Path = DEFAULT_DATABASE) -> str:
 def experiment_status(
     database_path: Path, experiment_id: str
 ) -> dict[str, Any]:
-    """Read experiment metadata plus grouped task and invocation counts."""
+    """Purpose: Read a complete operational status snapshot for one experiment.
+
+    Inputs: DuckDB path and persisted experiment ID.
+    Outputs: Experiment/configuration metadata, Process 01–06 state, and grouped
+    task/invocation counts; opens and closes a read-only connection and writes nothing.
+    """
     connection = duckdb.connect(str(Path(database_path).resolve()), read_only=True)
     try:
         experiment = connection.execute(
@@ -2411,7 +2661,12 @@ def experiment_status(
 
 
 def configuration_status(database_path: Path) -> dict[str, Any]:
-    """Read stored experiment metadata and Process 01–06 state without opening for writes."""
+    """Purpose: Read authoritative configuration identity and pipeline process state.
+
+    Inputs: Experiment DuckDB path.
+    Outputs: Configuration metadata/hash/resolved document and Process 01–06 status
+    mappings; opens and closes a read-only connection and writes nothing.
+    """
     connection = duckdb.connect(str(Path(database_path).resolve()), read_only=True)
     try:
         configuration = connection.execute(
@@ -2457,7 +2712,13 @@ def configuration_status(database_path: Path) -> dict[str, Any]:
 def official_results(
     database_path: Path, experiment_id: str
 ) -> list[dict[str, Any]]:
-    """Read full official evaluation records through a read-only connection."""
+    """Purpose: Read full official evaluation records for one experiment.
+
+    Inputs: DuckDB path and persisted experiment ID.
+    Outputs: Ordered evaluation mappings containing variant methods, candidate,
+    benchmark/evaluator provenance, decoded options and metrics, manifest flags,
+    and timestamps; opens and closes a read-only connection without writes.
+    """
     connection = duckdb.connect(str(Path(database_path).resolve()), read_only=True)
     try:
         rows = connection.execute(

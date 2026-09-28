@@ -26,7 +26,11 @@ def utc_now() -> str:
 
 
 def sha256_file(path: Path) -> str:
-    """Stream ``path`` in 1 MiB blocks and return its hexadecimal SHA-256 digest."""
+    """Purpose: Compute file provenance without loading the entire file into memory.
+
+    Inputs: Path to a readable file, streamed in 1 MiB blocks.
+    Outputs: Lowercase hexadecimal SHA-256 digest; filesystem errors propagate.
+    """
     digest = hashlib.sha256()
     with path.open("rb") as stream:
         for block in iter(lambda: stream.read(1024 * 1024), b""):
@@ -35,7 +39,12 @@ def sha256_file(path: Path) -> str:
 
 
 def atomic_write_json(path: Path, value: Any) -> None:
-    """Write sorted, indented JSON durably to a sibling temporary file, then atomically replace ``path``."""
+    """Purpose: Persist deterministic JSON using an atomic same-directory replacement.
+
+    Inputs: Destination ``path`` and a JSON-serializable ``value``.
+    Outputs: ``None`` after flushing and fsyncing a temporary file and replacing the
+    destination; serialization and filesystem errors propagate.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.tmp-{uuid.uuid4().hex}")
     with temporary.open("w", encoding="utf-8") as stream:

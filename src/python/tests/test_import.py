@@ -40,7 +40,12 @@ from util.import_execution import (
 
 
 def config(max_series=10):
-    """Build the canonical M4 Daily import configuration with an optional row limit."""
+    """Build a canonical M4 Daily import fixture.
+
+    Purpose: Supply valid import settings while allowing execution-scope variation.
+    Inputs: Optional maximum number of source series.
+    Outputs: A new configuration mapping; no external state is mutated.
+    """
     return {
         "schema_version": "1",
         "dataset_name": "m4_daily",
@@ -57,7 +62,12 @@ def config(max_series=10):
 
 
 def write_source(path: Path, targets: list[list[float]]) -> None:
-    """Write synthetic target series and minimal GiftEval metadata as Arrow input."""
+    """Materialize a synthetic GiftEval-compatible source.
+
+    Purpose: Provide deterministic Arrow series and minimum import metadata.
+    Inputs: Destination directory and ordered target-value sequences.
+    Outputs: Creates the directory, Arrow stream, ``dataset_info.json``, and ``state.json``.
+    """
     path.mkdir(parents=True)
     table = pa.table(
         {
@@ -75,7 +85,12 @@ def write_source(path: Path, targets: list[list[float]]) -> None:
 
 
 def initialize_test_database(path: Path) -> None:
-    """Create a configured database for coordinator-level import tests."""
+    """Create a coordinator-ready test database.
+
+    Purpose: Initialize the production schema with the committed experiment contract.
+    Inputs: Destination DuckDB path.
+    Outputs: Creates and initializes the DuckDB file at ``path``.
+    """
     initialize_experiment_database(
         path,
         Path(__file__).resolve().parents[3] / "config/experiments/poc2_m4_daily_100.json",
@@ -83,7 +98,12 @@ def initialize_test_database(path: Path) -> None:
 
 
 class ConfigurationTests(unittest.TestCase):
-    """Verify M4 window boundaries, stable identities, and configuration validation."""
+    """Exercise M4 boundaries, identities, and import validation.
+
+    Purpose: Verify pure configuration behavior independently of persistence.
+    Inputs: In-memory canonical and deliberately modified configurations.
+    Outputs: Assertions only; this class owns no external side effects.
+    """
     def test_m4_daily_boundaries_are_zero_based_and_end_exclusive(self):
         """A 107-point series yields the official 79/14/14 end-exclusive split."""
         self.assertEqual(
@@ -122,7 +142,12 @@ class ConfigurationTests(unittest.TestCase):
 
 
 class WorkerTests(unittest.TestCase):
-    """Verify import worker results and optional provenance subprocess handling."""
+    """Exercise import computation and optional provenance subprocess handling.
+
+    Purpose: Verify worker results without database access or real subprocesses.
+    Inputs: Synthetic series tasks and a patched subprocess runner.
+    Outputs: Assertions and mock call state; this class owns no external side effects.
+    """
 
     @patch("util.import_execution.subprocess.run")
     def test_optional_provenance_command_times_out(self, run):
@@ -158,13 +183,28 @@ class WorkerTests(unittest.TestCase):
 
 
 class DatabaseTests(unittest.TestCase):
-    """Exercise import persistence in a fresh temporary directory per test."""
+    """Exercise import persistence in isolated filesystem state.
+
+    Purpose: Verify migration, retry, extension, and transaction atomicity.
+    Inputs: Synthetic source files and a fresh temporary directory per test.
+    Outputs: Temporary Arrow/JSON files and DuckDB mutations owned and removed here.
+    """
     def setUp(self):
-        """Create the directory that owns each test's sources and databases."""
+        """Allocate isolated filesystem state.
+
+        Purpose: Own every source and database artifact created by one test.
+        Inputs: The system temporary-directory service.
+        Outputs: Creates a directory and stores its path in ``self.temp``.
+        """
         self.temp = Path(tempfile.mkdtemp())
 
     def tearDown(self):
-        """Remove the test directory and all generated database files."""
+        """Remove isolated import-test state.
+
+        Purpose: Prevent generated sources and DuckDB files leaking after a test.
+        Inputs: ``self.temp`` created by ``setUp``.
+        Outputs: Recursively deletes the directory and all artifacts beneath it.
+        """
         shutil.rmtree(self.temp)
 
     def test_migration_preserves_stage_1_tables_and_adds_poc1(self):

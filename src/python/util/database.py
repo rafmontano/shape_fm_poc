@@ -29,13 +29,14 @@ from .configuration import (
 )
 
 
-# SCHEMA_VERSION: latest DuckDB migration version required by this code.
+# Code constant: latest DuckDB migration version implemented by this source revision.
 SCHEMA_VERSION = 5
-# DEFAULT_DATABASE: repository-relative default path used when the caller supplies no override.
+# Bootstrap/interface default: legacy library database path; an explicit path from the
+# coordinator overrides it, and the path does not define scientific identity.
 DEFAULT_DATABASE = Path("data/shapefm.duckdb")
 
 
-# SCHEMA_SQL: foundation DDL for imported datasets, series/windows, runs, and retryable tasks.
+# Code constant: foundation DuckDB schema governed by SCHEMA_VERSION migrations.
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS schema_versions (
     version INTEGER PRIMARY KEY,
@@ -185,7 +186,7 @@ CREATE TABLE IF NOT EXISTS task_attempts (
 """
 
 
-# POC1_SCHEMA_SQL: experiment DDL for benchmark instances, variants, forecasts, evaluations, and exports.
+# Code constant: benchmark DuckDB schema governed by SCHEMA_VERSION migrations.
 POC1_SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS benchmark_configurations (
     benchmark_configuration_id VARCHAR PRIMARY KEY,
@@ -394,7 +395,12 @@ CREATE TABLE IF NOT EXISTS submission_exports (
 
 @dataclass(frozen=True)
 class EvaluationWindow:
-    """Evaluation slices returned with a series. IDs name the window/split; all boundaries are observation offsets interpreted by ``boundary_convention``; ``horizon`` is observations per validation/test slice."""
+    """Purpose: Describe persisted train, validation, and test slices for one series.
+
+    Inputs: Window/split IDs, observation-offset boundaries, horizon, and convention.
+    Outputs: Immutable evaluation-window state returned with a ``TimeSeries``.
+    Notes: Boundaries are observation offsets; horizon is observations per holdout slice.
+    """
     window_id: str
     split_name: str
     train_start: int
@@ -409,7 +415,12 @@ class EvaluationWindow:
 
 @dataclass(frozen=True)
 class TimeSeries:
-    """Canonical series returned by ``get_series``. Dataset/series IDs identify stored and source records; frequency and start timestamp define time indexing; target contains observations, with count/digest and associated evaluation windows."""
+    """Purpose: Expose one canonical stored series and its evaluation windows.
+
+    Inputs: Dataset/source identities, frequency and start time, target observations,
+    count/content digest, and associated windows.
+    Outputs: Immutable researcher-facing scientific series state.
+    """
     dataset_id: str
     dataset_name: str
     series_id: str
@@ -424,7 +435,11 @@ class TimeSeries:
 
 @dataclass(frozen=True)
 class StageStatus:
-    """Run summary returned by ``stage_status``: stage/dataset/run identities, allowed persisted run status, invocation and per-status task counts, and imported series/observation totals."""
+    """Purpose: Summarize the latest persisted run for one dataset stage.
+
+    Inputs: Stage/dataset/run identities, run state, invocation/task counts, and volume.
+    Outputs: Immutable researcher-facing operational status.
+    """
     stage: str
     dataset_id: str
     dataset_name: str
@@ -437,7 +452,11 @@ class StageStatus:
 
 
 def migrate_database(path: Path = DEFAULT_DATABASE) -> Path:
-    """Create or upgrade the DuckDB schema transactionally and return its absolute path."""
+    """Purpose: Create or transactionally upgrade the versioned DuckDB schema.
+
+    Inputs: Destination database path; missing parent directories are created.
+    Outputs: Absolute database path after all schema-version rows commit.
+    """
     path = path.resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
     connection = duckdb.connect(str(path))
@@ -515,11 +534,11 @@ def migrate_database(path: Path = DEFAULT_DATABASE) -> Path:
 def initialize_experiment_database(
     path: Path, configuration_path: Path
 ) -> ExperimentConfiguration:
-    """Atomically create a new database and store one validated authoritative configuration.
+    """Purpose: Atomically create a database with its authoritative configuration.
 
-    Validation occurs before any file is created. Schema creation, original/resolved
-    JSON, metadata, and six process-state rows are committed in a temporary sibling
-    database that is atomically renamed to ``path`` only after success.
+    Inputs: New database path and researcher-authored configuration JSON path.
+    Outputs: Validated configuration after schema, configuration, and six process rows
+    commit in a sibling temporary database and are atomically renamed into place.
     """
     configuration = load_experiment_configuration(configuration_path)
     target = path.resolve()
@@ -571,7 +590,12 @@ def initialize_experiment_database(
 def load_database_configuration(
     database_path: Path, connection: duckdb.DuckDBPyConnection | None = None
 ) -> ExperimentConfiguration:
-    """Load and validate the authoritative resolved configuration stored in DuckDB."""
+    """Purpose: Reconstruct and integrity-check authoritative configuration in DuckDB.
+
+    Inputs: Database path and optional caller-owned open connection.
+    Outputs: Validated configuration whose metadata, resolved JSON, and hashes match;
+    missing or inconsistent persisted state raises an exception.
+    """
     owned = connection is None
     if owned:
         path = database_path.resolve()
@@ -610,10 +634,19 @@ def load_database_configuration(
 
 
 class ShapeFMDatabase:
-    """Research query interface retaining a resolved database path and open DuckDB connection. Coordinators/tests use it as a context manager to inspect canonical series, run status, and schema version; writable mode is available explicitly."""
+    """Purpose: Own an open DuckDB connection for researcher-facing queries.
+
+    Inputs: Resolved database path and explicit read-only/writable mode.
+    Outputs: Canonical series, run status, and schema-version query operations.
+    Notes: The instance owns and closes its retained connection.
+    """
 
     def __init__(self, path: Path, read_only: bool = True):
-        """Open ``path`` and retain its DuckDB connection; read-only mode requires an existing file."""
+        """Purpose: Open and retain the database connection owned by this interface.
+
+        Inputs: Database path and read-only flag; read-only mode requires an existing file.
+        Outputs: Initialized connection state; missing files or DuckDB errors propagate.
+        """
         self.path = path.resolve()
         if read_only and not self.path.is_file():
             raise FileNotFoundError(f"ShapeFM database does not exist: {self.path}")
@@ -639,7 +672,11 @@ class ShapeFMDatabase:
         self.close()
 
     def _resolve_dataset(self, dataset: str, stage: str = "import") -> tuple[str, str, str]:
-        """Resolve a dataset name or ID to its ID, name, and latest run for ``stage``."""
+        """Purpose: Resolve a dataset selector to its latest run for a stage.
+
+        Inputs: Dataset name or ID and persisted stage name.
+        Outputs: Dataset ID, dataset name, and latest run ID; raises ``KeyError`` if absent.
+        """
         row = self._connection.execute(
             """
             SELECT d.dataset_id, d.dataset_name, r.run_id
@@ -656,7 +693,12 @@ class ShapeFMDatabase:
         return row[0], row[1], row[2]
 
     def get_series(self, dataset: str, series_id: str) -> TimeSeries:
-        """Return a canonical series and ordered windows, resolving ``dataset`` by name or ID."""
+        """Purpose: Retrieve a canonical series with ordered evaluation windows.
+
+        Inputs: Dataset name/ID and series ID.
+        Outputs: ``TimeSeries`` with persisted target values and windows; raises
+        ``KeyError`` when the dataset run or series is absent.
+        """
         dataset_id, dataset_name, _ = self._resolve_dataset(dataset)
         row = self._connection.execute(
             """
@@ -692,7 +734,11 @@ class ShapeFMDatabase:
         )
 
     def stage_status(self, stage: str, dataset: str) -> StageStatus:
-        """Summarize the latest run, tasks, and imported volume for a dataset stage."""
+        """Purpose: Summarize persisted execution and scientific volume for a stage.
+
+        Inputs: Stage name and dataset name/ID.
+        Outputs: Latest run state, invocation/task counts, and series/observation totals.
+        """
         dataset_id, dataset_name, run_id = self._resolve_dataset(dataset, stage)
         run_status = self._connection.execute(
             "SELECT status FROM runs WHERE run_id = ?", [run_id]

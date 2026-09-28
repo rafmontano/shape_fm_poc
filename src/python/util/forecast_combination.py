@@ -17,7 +17,13 @@ from typing import Any
 def combine_equal_weight(
     left: dict[str, Any], right: dict[str, Any], weights: dict[str, float]
 ) -> dict[str, Any]:
-    """Apply configured equal model weights and rearrange crossed output quantiles."""
+    """Purpose: Combine two forecast distributions with the mandated equal weights.
+
+    Inputs: Forecast mappings containing equally shaped ``mean``, ``median``, and
+    horizon-by-quantile arrays, plus the exact two-model 0.5/0.5 weight mapping.
+    Outputs: Elementwise averages and noncrossing quantiles with a rearrangement flag.
+    Notes: Rearrangement sorts quantiles independently at each forecast horizon.
+    """
     if weights != {"auto_arima": 0.5, "chronos_2": 0.5}:
         raise ValueError("equal-weight combination requires two weights of 0.5")
 

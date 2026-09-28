@@ -25,9 +25,9 @@ from typing import Any, Literal
 from .import_execution import repository_root
 
 
-# GIB: number of bytes in one gibibyte, used for binary memory limits.
+# Code constant: IEC bytes per gibibyte used by memory-limit calculations.
 GIB = 1024**3
-# WORKER_FIELDS: execution-setting names accepted as worker-count overrides.
+# Code constant: profile fields admitted by the execution-override interface.
 WORKER_FIELDS = (
     "cleaning_workers",
     "transformation_workers",
@@ -41,7 +41,7 @@ WORKER_FIELDS = (
 
 @dataclass(frozen=True)
 class ExecutionProfile:
-    """Hardware profile: stage/process counts, overlap policy, GiB safety floors, and optional Dask limits."""
+    """Purpose: Own an immutable named hardware execution profile. Inputs: Construction fields specify accelerator identity, positive stage/process and inference-batch counts, overlap policy, memory safety floors in GiB, one database writer, and optional platform-specific Dask limits. Outputs: A value object whose fields are consumed as execution settings and serialized as provenance; it owns no processes or mutable resources."""
     name: str
     required_accelerator: str | None
     expected_accelerator_name: str | None
@@ -67,8 +67,10 @@ class ExecutionProfile:
 
 @dataclass(frozen=True)
 class ExecutionSettings:
-    """Non-scientific run controls for sequential, local, or Dask routing and positive worker/in-flight limits."""
+    """Purpose: Own immutable non-scientific routing controls for one run. Inputs: ``mode`` is ``sequential``, ``local``, or ``dask``; scheduler address is optional; timeout is seconds; expected worker counts and in-flight limit are positive; retries are nonnegative. Outputs: A validated settings value serialized into execution provenance; it owns no client or worker resources."""
 
+    # Execution global: creation defaults are owned here, CLI/profile overrides are
+    # validated by the coordinator, and effective values are recorded per execution.
     mode: Literal["sequential", "local", "dask"] = "local"
     dask_scheduler_address: str | None = None
     dask_timeout_seconds: float = 60.0
@@ -78,7 +80,7 @@ class ExecutionSettings:
     dask_retries: int = 2
 
     def __post_init__(self) -> None:
-        """Reject unsupported modes, nonpositive Dask limits, and negative retry counts at construction."""
+        """Purpose: Validate newly constructed execution settings. Inputs: The instance's mode, timeout in seconds, worker counts, in-flight bound, and retry count. Outputs: None; raises ``ValueError`` for unsupported modes or invalid bounds without changing frozen state."""
         if self.mode not in {"sequential", "local", "dask"}:
             raise ValueError("execution mode must be sequential, local, or dask")
         if self.dask_timeout_seconds <= 0:
@@ -98,7 +100,7 @@ class ExecutionSettings:
 
 
 def load_execution_profiles(path: Path | None = None) -> dict[str, ExecutionProfile]:
-    """Parse profile JSON at `path`, or the repository default, keyed by profile name."""
+    """Purpose: Load named hardware profiles from JSON. Inputs: ``path`` is an optional filesystem ``Path``; ``None`` selects the repository configuration file. Outputs: A mapping from JSON profile names to immutable ``ExecutionProfile`` objects; reads one UTF-8 file and performs no writes."""
     path = path or repository_root() / "config/execution_profiles.json"
     raw = json.loads(path.read_text(encoding="utf-8"))
     return {name: ExecutionProfile(name=name, **values) for name, values in raw.items()}
@@ -107,7 +109,7 @@ def load_execution_profiles(path: Path | None = None) -> dict[str, ExecutionProf
 def resolve_execution_profile(
     name: str, overrides: dict[str, Any] | None = None
 ) -> tuple[ExecutionProfile, dict[str, Any]]:
-    """Apply validated runtime overrides to a named profile and return it with the applied override map."""
+    """Purpose: Resolve and validate an effective hardware profile. Inputs: ``name`` selects a repository JSON profile and ``overrides`` maps dataclass field names to runtime values, with ``None`` values ignored; worker/batch counts must be positive and memory floors are GiB. Outputs: The replaced immutable profile and cleaned applied-override mapping; reads profile JSON and raises on unknown names/fields or violated accelerator, writer, and bound contracts."""
     profiles = load_execution_profiles()
     if name not in profiles:
         raise ValueError(
@@ -152,7 +154,7 @@ def resolve_execution_profile(
 
 
 def _sysctl_int(name: str) -> int | None:
-    """Read an integer macOS sysctl, returning `None` when unavailable or malformed."""
+    """Purpose: Probe one integer macOS kernel property. Inputs: ``name`` is a ``sysctl`` key string. Outputs: The parsed integer or ``None`` when unavailable/malformed; launches ``/usr/sbin/sysctl`` with a five-second timeout."""
     try:
         return int(
             subprocess.run(
@@ -168,7 +170,7 @@ def _sysctl_int(name: str) -> int | None:
 
 
 def _linux_memory() -> dict[str, int]:
-    """Read Linux memory and swap counters from `/proc/meminfo`, converted to bytes."""
+    """Purpose: Probe current Linux host memory. Inputs: None; data originates from ``/proc/meminfo`` counters reported in KiB. Outputs: Total/available RAM and total/free swap in bytes, or an empty mapping when the file cannot be parsed; reads but does not modify procfs."""
     values: dict[str, int] = {}
     try:
         for line in Path("/proc/meminfo").read_text(encoding="utf-8").splitlines():
@@ -185,7 +187,7 @@ def _linux_memory() -> dict[str, int]:
 
 
 def _mac_memory() -> dict[str, int]:
-    """Combine macOS sysctl, vm_stat, and swapusage data into byte-valued memory counters."""
+    """Purpose: Probe current macOS host memory. Inputs: None; data originates from ``hw.memsize``, ``vm_stat`` page counters, and ``vm.swapusage`` MiB values. Outputs: Total/estimated-available RAM and total/free swap in bytes, using zero for failed subprobes; launches bounded ``sysctl`` and ``vm_stat`` subprocesses."""
     total = _sysctl_int("hw.memsize") or 0
     available = 0
     try:
@@ -234,7 +236,7 @@ def _mac_memory() -> dict[str, int]:
 
 
 def physical_cpu_count() -> int | None:
-    """Return the detected physical core count, or `None` when platform probes fail."""
+    """Purpose: Detect physical CPU cores on supported hosts. Inputs: None; uses macOS ``hw.physicalcpu`` or Linux physical/core ID pairs from ``/proc/cpuinfo``. Outputs: A positive core count or ``None`` when unsupported/unavailable; may launch ``sysctl`` or read procfs."""
     if platform.system() == "Darwin":
         return _sysctl_int("hw.physicalcpu")
     if platform.system() == "Linux":
@@ -258,7 +260,7 @@ def physical_cpu_count() -> int | None:
 
 
 def cpu_model() -> str | None:
-    """Return the platform-specific CPU model string, or `None` when detection fails."""
+    """Purpose: Detect the host CPU model identity. Inputs: None; uses Linux ``/proc/cpuinfo``, macOS ``machdep.cpu.brand_string``, then ``platform.processor``. Outputs: A nonempty model string or ``None``; reads procfs or launches a five-second ``sysctl`` probe."""
     if platform.system() == "Linux":
         try:
             for line in Path("/proc/cpuinfo").read_text(encoding="utf-8").splitlines():
@@ -281,7 +283,7 @@ def cpu_model() -> str | None:
 
 
 def system_hardware() -> dict[str, Any]:
-    """Snapshot OS, architecture, CPU identity/counts, and current host memory counters."""
+    """Purpose: Capture host hardware and runtime provenance. Inputs: None; values originate from platform APIs and CPU/memory probes. Outputs: A mapping of OS/release, architecture, CPU model, physical/logical counts, current byte-valued memory counters, and Python version; samples mutable host state and may invoke platform probes."""
     return {
         "operating_system": platform.system(),
         "operating_system_release": platform.release(),
@@ -295,12 +297,12 @@ def system_hardware() -> dict[str, Any]:
 
 
 def system_memory() -> dict[str, int]:
-    """Return current Linux or macOS memory counters in bytes; unsupported systems yield an empty mapping."""
+    """Purpose: Dispatch the current-host memory probe. Inputs: None; operating-system identity comes from ``platform.system``. Outputs: Linux/macOS RAM and swap counters in bytes, or an empty mapping on unsupported systems; samples current host state."""
     return _mac_memory() if platform.system() == "Darwin" else _linux_memory()
 
 
 def validate_system_memory(profile: ExecutionProfile, hardware: dict[str, Any]) -> None:
-    """Raise when measured available memory is below the profile's GiB safety floor."""
+    """Purpose: Enforce a profile's host-memory safety floor. Inputs: An ``ExecutionProfile`` with a GiB minimum and a hardware snapshot containing ``system_memory.available_bytes``. Outputs: None; raises ``RuntimeError`` when a measurable byte value is below the converted threshold and does not mutate inputs."""
     available = hardware["system_memory"].get("available_bytes", 0)
     threshold = int(profile.system_memory_min_available_gib * GIB)
     if available and available < threshold:
@@ -311,7 +313,7 @@ def validate_system_memory(profile: ExecutionProfile, hardware: dict[str, Any]) 
 
 
 class PersistentChronosWorker:
-    """Coordinator-owned Chronos bridge client retaining process/readiness state, bounded stderr diagnostics, and its capture thread for repeated forecast requests."""
+    """Purpose: Own one persistent line-delimited JSON Chronos subprocess. Inputs: Construction receives an argv list, startup timeout in seconds, and bounded stderr capacity in bytes; requests later supply protocol mappings. Outputs: Ready/forecast response mappings and diagnostics; owns the child process, pipes, readiness state, stderr buffer/lock, and daemon drain thread until ``close`` or context exit."""
 
     def __init__(
         self,
@@ -319,7 +321,7 @@ class PersistentChronosWorker:
         startup_timeout: float = 300.0,
         stderr_tail_bytes: int = 32 * 1024,
     ):
-        """Configure the bridge command, startup timeout, and maximum retained stderr bytes."""
+        """Purpose: Initialize an unstarted Chronos process owner. Inputs: ``command`` is the complete argv string list, ``startup_timeout`` is seconds, and ``stderr_tail_bytes`` is the positive retention bound. Outputs: None; stores configuration and creates lock/buffer state without launching a subprocess."""
         self.command = command
         self.startup_timeout = startup_timeout
         self.stderr_tail_bytes = stderr_tail_bytes
@@ -336,7 +338,7 @@ class PersistentChronosWorker:
             return self._stderr_tail.decode(errors="replace")
 
     def _drain_stderr(self, stream: Any) -> None:
-        """Continuously capture subprocess stderr into the bounded diagnostic buffer."""
+        """Purpose: Drain child stderr without blocking the protocol. Inputs: ``stream`` is the owned text stderr pipe exposing a binary buffer. Outputs: None; reads until EOF/error and updates the lock-protected trailing byte buffer, discarding older diagnostics beyond its bound."""
         try:
             while True:
                 chunk = stream.buffer.read1(4096)
@@ -350,7 +352,7 @@ class PersistentChronosWorker:
             return
 
     def _diagnostic(self, message: str, wait_for_stderr: bool = False) -> str:
-        """Attach process status and captured stderr to a worker protocol error."""
+        """Purpose: Format a Chronos failure diagnostic. Inputs: ``message`` is the primary error text and ``wait_for_stderr`` requests up to a one-second drain-thread join. Outputs: The message optionally suffixed with captured stderr; may wait for the owned thread but does not alter process state."""
         thread = self._stderr_thread
         if wait_for_stderr and thread is not None:
             thread.join(timeout=1)
@@ -358,7 +360,7 @@ class PersistentChronosWorker:
         return f"{message}\nstderr tail:\n{tail}" if tail else message
 
     def start(self) -> dict[str, Any]:
-        """Launch the Chronos bridge once, verify its ready message, and return worker metadata."""
+        """Purpose: Start and handshake with the configured Chronos bridge. Inputs: Stored argv and startup timeout in seconds. Outputs: The decoded ``ready`` metadata mapping; creates the child with three pipes and a daemon stderr thread, stores process/readiness state, and force-closes partial state before raising on startup failure."""
         if self.process is not None:
             raise RuntimeError("Chronos worker is already running")
         self.process = subprocess.Popen(
@@ -393,7 +395,7 @@ class PersistentChronosWorker:
         return message
 
     def _read(self, timeout: float) -> dict[str, Any]:
-        """Read and decode one JSON response before `timeout`, failing on EOF or protocol errors."""
+        """Purpose: Receive one worker protocol message. Inputs: ``timeout`` is the maximum wait in seconds and the owned process must be running with stdout. Outputs: One decoded JSON-object line; temporarily registers stdout with a selector and raises with diagnostics on timeout, EOF, or malformed JSON."""
         if self.process is None or self.process.stdout is None:
             raise RuntimeError("Chronos worker is not running")
         selector = selectors.DefaultSelector()
@@ -417,7 +419,7 @@ class PersistentChronosWorker:
         return json.loads(line)
 
     def request(self, payload: dict[str, Any], timeout: float = 1800.0) -> dict[str, Any]:
-        """Send one forecast payload to the persistent worker and return its response."""
+        """Purpose: Perform one synchronous Chronos protocol request. Inputs: ``payload`` is a JSON-serializable command mapping with a batch ID and ``timeout`` is seconds. Outputs: The decoded response mapping with the same batch ID; writes/flushed one compact JSON line to child stdin and waits on stdout."""
         if self.process is None or self.process.stdin is None:
             raise RuntimeError("Chronos worker is not running")
         self.process.stdin.write(json.dumps(payload, separators=(",", ":")) + "\n")
@@ -428,7 +430,7 @@ class PersistentChronosWorker:
         return response
 
     def close(self, force: bool = False) -> None:
-        """Request bridge shutdown, terminate if necessary, and join stderr capture; safe after prior closure."""
+        """Purpose: Release all resources owned by the Chronos bridge client. Inputs: ``force`` selects immediate termination instead of graceful protocol shutdown. Outputs: None; atomically forgets the process, requests shutdown or escalates through terminate/kill with bounded waits, joins the stderr thread, and closes all pipes; repeated calls are safe."""
         process, self.process = self.process, None
         if process is None:
             return

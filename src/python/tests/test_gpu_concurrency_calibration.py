@@ -30,7 +30,13 @@ from util.gpu_concurrency_calibration import (
 
 
 class GpuConcurrencyCalibrationTests(unittest.TestCase):
-    """Verify calibration settings, cluster capacity, telemetry, and acceptance decisions."""
+    """Purpose: Verify calibration settings, cluster capacity, telemetry, and acceptance decisions.
+
+    Inputs: Committed configuration, mocked worker reports, and synthetic GPU telemetry mappings.
+    Outputs: Validation and decision assertions; no GPU process, database, or file side effects.
+    """
+    # Test/calibration value: resolved committed experiment fixture used as the
+    # assertion authority; it does not override production configuration.
     configuration = load_experiment_configuration(
         Path(__file__).resolve().parents[3]
         / "config/experiments/poc2_m4_daily_100.json"

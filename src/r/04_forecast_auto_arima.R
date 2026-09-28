@@ -2,10 +2,12 @@
 # ==============================================================================
 # 04_forecast_auto_arima.R
 #
-# Purpose: Fit AutoARIMA and return point and interval-derived quantile forecasts for worker jobs.
-# Inputs: One JSON object on stdin with action, AutoARIMA settings, and forecast jobs.
-# Outputs: One JSON object on stdout containing forecasts and R package versions.
-# Run from: printf '%s' '<payload>' | Rscript src/r/04_forecast_auto_arima.R
+# Purpose: Serve the bounded R subprocess that produces AutoARIMA forecasts.
+# Inputs: JSON on stdin: action="forecast", authoritative AutoARIMA settings,
+#   and jobs with id, numeric context, seasonal frequency, and horizon.
+# Outputs: JSON on stdout with same-scale forecasts and package versions;
+#   invalid settings, actions, or series terminate the subprocess with an R error.
+# Run from: printf '%s' '{"action":"forecast","settings":{},"jobs":[]}' | Rscript src/r/04_forecast_auto_arima.R
 # ==============================================================================
 
 suppressPackageStartupMessages({
@@ -15,10 +17,17 @@ suppressPackageStartupMessages({
 
 source("src/r/util/time_series_input.R")
 
-# payload: decoded stdin request consumed by the action dispatcher below.
+# Execution global: payload is the coordinator-authored request for this subprocess;
+# scientific and execution values remain authoritative from DuckDB and have no local override.
 payload <- jsonlite::fromJSON(file("stdin"), simplifyVector = FALSE)
 
-# Forecast one worker job with explicit settings; the dispatcher receives mean, median, and nine ordered quantile vectors.
+# Purpose: Fit AutoARIMA to one univariate context and forecast its horizon.
+# Inputs: job has id, finite numeric context of length n, positive integer
+#   seasonality/frequency, and positive integer horizon h; settings supplies
+#   coordinator-authoritative AutoARIMA booleans, core count, and interval levels.
+# Outputs: List with id; h same-scale mean and median values; and nine h-value
+#   quantile vectors ordered 0.1 through 0.9. Writes nothing to stdout; fitting,
+#   malformed input, or unavailable expected 20/40/60/80% intervals raises an R error.
 forecast_one <- function(job, settings) {
   input <- time_series_input(job)
   fit <- forecast::auto.arima(
@@ -50,7 +59,8 @@ forecast_one <- function(job, settings) {
   list(id = job$id, mean = mean, median = mean, quantiles = quantiles)
 }
 
-# results: ordered forecast responses serialized to stdout.
+# Execution global: results preserves coordinator job order for this invocation;
+# it is derived from stdin and has no independent override.
 if (identical(payload$action, "forecast")) {
   if (is.null(payload$settings)) {
     stop("AutoARIMA settings are required")
@@ -60,6 +70,8 @@ if (identical(payload$action, "forecast")) {
   stop("Unsupported POC 1 worker action")
 }
 
+# Code constant: JSON encoding is the worker protocol—scalar unboxing, 17-digit
+# numeric precision, and JSON null spelling are fixed by this implementation.
 cat(jsonlite::toJSON(
   list(
     results = results,

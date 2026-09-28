@@ -18,13 +18,25 @@ from typing import Iterable
 
 @dataclass(frozen=True)
 class TransformationResult:
-    """Transformation output consumed by workers: immutable scaled values and fitted extrema/center/scale with constant-series flags; identity uses an empty parameter mapping."""
+    """Purpose: Carry transformed observations and the state required for inversion.
+
+    Inputs: ``values`` are immutable transformed observations; ``parameters`` holds
+    fitted extrema, center, scale, and constant-series flags (empty for identity).
+    Outputs: Worker-owned, immutable transformation state on the transformed scale.
+    """
     values: tuple[float, ...]
     parameters: dict[str, float | bool]
 
 
 def transform(values: Iterable[float], method: str) -> TransformationResult:
-    """Apply identity or context-fitted min-max then population-standardization and return fitted parameters."""
+    """Purpose: Fit and apply a supported transformation to context observations.
+
+    Inputs: Finite numeric context ``values`` and ``identity`` or
+    ``minmax_then_standardize`` as ``method``.
+    Outputs: Transformed values plus parameters sufficient to restore original units.
+    Notes: Parameters are fitted only from the supplied context to prevent leakage;
+    variance uses the population denominator, and constant inputs map to zero.
+    """
     source = tuple(float(value) for value in values)
     if not source:
         raise ValueError("cannot transform an empty context")
@@ -57,7 +69,13 @@ def transform(values: Iterable[float], method: str) -> TransformationResult:
 
 
 def inverse(values: Iterable[float], method: str, parameters: dict) -> tuple[float, ...]:
-    """Restore forecast values from identity or fitted standardized/min-max scale to the original units."""
+    """Purpose: Restore transformed forecasts to the observations' original units.
+
+    Inputs: Forecast ``values``, the fitted method name, and parameters returned by
+    :func:`transform` for the corresponding context.
+    Outputs: An immutable sequence on the original data scale.
+    Notes: Constant contexts restore every forecast to the fitted minimum.
+    """
     source = tuple(float(value) for value in values)
     if method == "identity":
         return source

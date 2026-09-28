@@ -21,12 +21,20 @@ from .distributed_execution import ROOT, validate_cluster
 
 
 def _configuration_hash(database: Path) -> str:
-    """Return the authoritative scientific hash from an existing experiment database."""
+    """Purpose: Read the authoritative scientific identity from an experiment database.
+
+    Inputs: Path to an existing, valid ShapeFM DuckDB database.
+    Outputs: Validated scientific configuration SHA-256 digest.
+    """
     return load_database_configuration(database).scientific_hash
 
 
 def _commit() -> str:
-    """Return the repository's current Git commit from ``rev-parse HEAD``."""
+    """Purpose: Capture the repository revision used by cluster workers.
+
+    Inputs: The repository rooted at ``ROOT`` and an available Git subprocess.
+    Outputs: Current ``HEAD`` commit text; subprocess failures propagate.
+    """
     return subprocess.run(
         ["git", "rev-parse", "HEAD"],
         cwd=ROOT,
@@ -37,7 +45,12 @@ def _commit() -> str:
 
 
 def _worker_summary(client: Client) -> dict:
-    """Return scheduler address and sorted worker resources for diagnostic output."""
+    """Purpose: Build deterministic scheduler and worker diagnostics.
+
+    Inputs: A connected Dask ``Client`` whose scheduler exposes worker metadata.
+    Outputs: Scheduler/dashboard addresses, worker count, and workers sorted by address
+    with thread, resource, host, and memory-limit state.
+    """
     info = client.scheduler_info()
     workers = []
     for address, worker in sorted(info["workers"].items()):

@@ -2,10 +2,12 @@
 # ==============================================================================
 # 02_preprocess_series.R
 #
-# Purpose: Clean batches of time-series contexts with identity or forecast::tsclean.
-# Inputs: One JSON object on stdin with action="clean" and jobs containing id, context, method, and seasonality.
-# Outputs: One JSON object on stdout containing cleaned values and R package versions.
-# Run from: printf '%s' '<payload>' | Rscript src/r/02_preprocess_series.R
+# Purpose: Serve the bounded R subprocess that cleans batches of time-series contexts.
+# Inputs: JSON on stdin: action="clean" and jobs with id, numeric context, method,
+#   and positive integer seasonal frequency; Python supplies it to the subprocess.
+# Outputs: JSON on stdout with same-scale cleaned vectors and package versions;
+#   invalid actions, methods, or series terminate the subprocess with an R error.
+# Run from: printf '%s' '{"action":"clean","jobs":[]}' | Rscript src/r/02_preprocess_series.R
 # ==============================================================================
 
 suppressPackageStartupMessages({
@@ -15,10 +17,15 @@ suppressPackageStartupMessages({
 
 source("src/r/util/time_series_input.R")
 
-# payload: decoded stdin request consumed by the action dispatcher below.
+# Execution global: payload is the coordinator-authored request for this subprocess;
+# scientific and execution values remain authoritative from DuckDB and have no local override.
 payload <- jsonlite::fromJSON(file("stdin"), simplifyVector = FALSE)
 
-# Clean one worker job; job supplies id, numeric context, seasonality, and method, and the action dispatcher receives the id with cleaned values.
+# Purpose: Clean one univariate context using identity or forecast::tsclean.
+# Inputs: job with id, finite numeric context of length n, positive integer
+#   seasonality (the stats::ts frequency), and method "identity" or "tsclean".
+# Outputs: List with the unchanged id and n same-scale numeric values; writes
+#   nothing to stdout and raises an R error for an unsupported method/input.
 clean_one <- function(job) {
   input <- time_series_input(job)
   if (identical(job$method, "identity")) {
@@ -31,13 +38,16 @@ clean_one <- function(job) {
   list(id = job$id, values = cleaned)
 }
 
-# results: ordered cleaning responses serialized to stdout.
+# Execution global: results preserves coordinator job order for this invocation;
+# it is derived from stdin and has no independent override.
 if (identical(payload$action, "clean")) {
   results <- lapply(payload$jobs, clean_one)
 } else {
   stop("Unsupported POC 1 worker action")
 }
 
+# Code constant: JSON encoding is the worker protocol—scalar unboxing, 17-digit
+# numeric precision, and JSON null spelling are fixed by this implementation.
 cat(jsonlite::toJSON(
   list(
     results = results,

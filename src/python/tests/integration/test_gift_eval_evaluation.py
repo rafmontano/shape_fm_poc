@@ -19,11 +19,19 @@ from util.configuration import load_experiment_configuration
 
 
 class OfficialAdapterTests(unittest.TestCase):
-    """Verify the pinned adapter's dataset description, evaluation, and manifest contracts."""
+    """Purpose: Verify pinned adapter dataset, evaluation, and manifest contracts.
+
+    Inputs: Committed configuration, local GiftEval data, and the pinned bridge interpreter.
+    Outputs: JSON contract assertions; bridge subprocesses read fixtures and temporary payloads.
+    """
 
     @classmethod
     def setUpClass(cls):
-        """Resolve the repository, pinned interpreter, bridge, and fixture dataset paths."""
+        """Purpose: Resolve shared bridge dependencies and configuration for this class.
+
+        Inputs: Repository layout and committed 100-series experiment configuration.
+        Outputs: Class path/configuration attributes; reads configuration without writing files.
+        """
         cls.root = Path(__file__).resolve().parents[4]
         cls.python = cls.root / "environments/gift-eval/.venv/bin/python"
         cls.bridge = cls.root / "src/python/06_evaluate_gift_eval.py"
@@ -34,7 +42,11 @@ class OfficialAdapterTests(unittest.TestCase):
         cls.configuration = cls.experiment_configuration.resolved
 
     def bridge_call(self, *arguments):
-        """Run a bridge command and decode its successful JSON response."""
+        """Purpose: Invoke the pinned GiftEval bridge and decode its response.
+
+        Inputs: Command-line argument strings appended to the bridge executable invocation.
+        Outputs: Decoded JSON value; starts a subprocess that may read local fixture files.
+        """
         completed = subprocess.run(
             [str(self.python), str(self.bridge), *arguments],
             cwd=self.root,

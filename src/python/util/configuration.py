@@ -20,16 +20,24 @@ from typing import Any
 
 
 class ImportValidationError(ValueError):
-    """Raised when source data or import state violates the Stage 1 contract."""
+    """Purpose: Identify source-data or import-state contract violations.
+
+    Inputs: Human-readable validation details supplied when raised.
+    Outputs: A Stage 1-specific ``ValueError`` for callers to handle.
+    """
 
 
 class ExperimentConfigurationError(ValueError):
-    """Raised when a complete experiment document violates configuration version 1."""
+    """Purpose: Identify violations of the versioned experiment configuration contract.
+
+    Inputs: Human-readable field or document validation details.
+    Outputs: A configuration-specific ``ValueError`` for callers to handle.
+    """
 
 
-# Only configuration contract currently understood by this coordinator.
+# Code constant: configuration schema version implemented here; experiment JSON cannot override it.
 SUPPORTED_CONFIGURATION_VERSION = 1
-# Ordered process IDs and stable names used in JSON, DuckDB, CLI selection, and status output.
+# Code constant: repository protocol mapping shared by JSON, DuckDB, CLI, and status output.
 PROCESS_NAMES = {
     1: "import",
     2: "preprocess",
@@ -42,11 +50,12 @@ PROCESS_NAMES = {
 
 @dataclass(frozen=True)
 class ExperimentConfiguration:
-    """Validated experiment definition retained as original and fully resolved JSON.
+    """Purpose: Own a validated experiment's source and resolved configuration state.
 
-    ``original`` is the exact decoded researcher document. ``resolved`` contains
-    normalized paths and derived cardinalities. Coordinators load this object from
-    DuckDB after creation; workers receive only selected fields from it.
+    Inputs: ``original`` is the exact decoded researcher document; ``resolved`` adds
+    normalized paths and derived cardinalities under configuration version rules.
+    Outputs: Immutable access to scientific identity, workflow, and worker contracts.
+    Notes: Coordinators reload this state from DuckDB; workers receive selected fields.
     """
 
     original: dict[str, Any]
@@ -84,7 +93,11 @@ class ExperimentConfiguration:
 
     @property
     def scientific_configuration(self) -> dict[str, Any]:
-        """Return the path- and metadata-free document defining scientific identity."""
+        """Purpose: Select resolved fields that define scientific identity.
+
+        Inputs: Validated resolved experiment state.
+        Outputs: Deep-copied configuration excluding source paths and descriptive metadata.
+        """
         data = deepcopy(self.resolved["data"])
         data["source"].pop("directory", None)
         evaluation = self.resolved["evaluation"]
@@ -115,7 +128,11 @@ class ExperimentConfiguration:
 
     @property
     def auto_arima_settings(self) -> dict[str, Any]:
-        """Return scientific AutoARIMA settings plus centrally controlled R threading."""
+        """Purpose: Assemble the complete AutoARIMA worker contract.
+
+        Inputs: Scientific model settings and centrally controlled R thread limit.
+        Outputs: Independent settings mapping with package parallelism disabled.
+        """
         settings = deepcopy(self.resolved["models"]["auto_arima"]["settings"])
         settings.update({
             "parallel": False,
@@ -125,7 +142,11 @@ class ExperimentConfiguration:
 
     @property
     def evaluation_options(self) -> dict[str, Any]:
-        """Return scientific evaluator options plus its centrally controlled batch size."""
+        """Purpose: Assemble evaluator science and execution options.
+
+        Inputs: Stored GIFT-Eval options and centrally controlled evaluation batch size.
+        Outputs: Independent evaluator-options mapping.
+        """
         options = deepcopy(self.resolved["evaluation"]["options"])
         options["batch_size"] = int(self.execution["batch_sizes"]["gift_eval"])
         return options
@@ -142,7 +163,11 @@ class ExperimentConfiguration:
 
     @property
     def import_settings(self) -> dict[str, Any]:
-        """Return the Stage 1 worker contract derived from the authoritative document."""
+        """Purpose: Derive the reduced Stage 1 worker contract.
+
+        Inputs: Authoritative data, benchmark, version, and selection settings.
+        Outputs: Import configuration containing scientific fields and selected row limit.
+        """
         data = self.resolved["data"]
         benchmark = data["benchmark"]
         return {
@@ -161,7 +186,11 @@ class ExperimentConfiguration:
 
     @property
     def workflow(self) -> dict[str, Any]:
-        """Return the existing process-facing shape, derived solely from stored configuration."""
+        """Purpose: Derive the process-facing workflow from authoritative state.
+
+        Inputs: Stored benchmark, pipeline, model, and evaluation configuration.
+        Outputs: Independent mapping consumed by downstream process coordinators.
+        """
         data = self.resolved["data"]
         pipeline = self.resolved["pipeline"]
         evaluation = self.resolved["evaluation"]
@@ -198,7 +227,12 @@ def _require_keys(value: dict[str, Any], keys: set[str], field: str) -> None:
 
 
 def validate_experiment_configuration(value: dict[str, Any]) -> None:
-    """Validate the complete POC2 configuration-v1 scientific and execution contract."""
+    """Purpose: Validate the complete POC2 scientific and execution contract.
+
+    Inputs: Decoded configuration mapping claiming version 1.
+    Outputs: ``None`` when every nested field and fixed protocol value is valid;
+    otherwise raises ``ExperimentConfigurationError`` with field-level context.
+    """
     _require_keys(
         value,
         {"configuration_version", "experiment", "reproducibility", "data", "pipeline", "models", "evaluation", "execution"},
@@ -483,7 +517,12 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
 
 
 def resolve_experiment_configuration(value: dict[str, Any]) -> ExperimentConfiguration:
-    """Validate a decoded document and append deterministic derived cardinalities."""
+    """Purpose: Validate a document and derive deterministic pipeline cardinalities.
+
+    Inputs: Complete decoded researcher configuration.
+    Outputs: Immutable configuration retaining the original and a resolved copy with
+    expected task, forecast, evaluation, variant, and candidate counts.
+    """
     validate_experiment_configuration(value)
     original = deepcopy(value)
     resolved = deepcopy(value)
@@ -511,7 +550,12 @@ def resolve_experiment_configuration(value: dict[str, Any]) -> ExperimentConfigu
 
 
 def load_experiment_configuration(path: Path) -> ExperimentConfiguration:
-    """Load and validate one complete researcher-authored experiment JSON document."""
+    """Purpose: Load and resolve a researcher-authored experiment document.
+
+    Inputs: Path to a UTF-8 JSON object.
+    Outputs: Validated ``ExperimentConfiguration``; wraps I/O and JSON errors as
+    ``ExperimentConfigurationError``.
+    """
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -532,7 +576,12 @@ def json_fingerprint(value: Any) -> str:
 
 
 def validate_config(config: dict[str, Any]) -> None:
-    """Require Stage 1 keys, a positive optional limit, and the exact M4 Daily benchmark."""
+    """Purpose: Validate the reduced Stage 1 worker configuration.
+
+    Inputs: Import mapping with schema, source, benchmark, and optional series limit.
+    Outputs: ``None`` for the exact M4 Daily short-horizon contract; otherwise raises
+    ``ImportValidationError``.
+    """
     required = {"schema_version", "dataset_name", "source_system", "benchmark", "max_series"}
     missing = sorted(required - config.keys())
     if missing:
@@ -560,7 +609,11 @@ def canonical_import_configuration(config: dict[str, Any]) -> dict[str, Any]:
 def dataset_identity(
     config: dict[str, Any], source_revision: str, source_files: dict[str, Any]
 ) -> tuple[str, str]:
-    """Return the content-derived dataset ID and canonical configuration SHA-256 digest."""
+    """Purpose: Derive stable identities from source and scientific import settings.
+
+    Inputs: Stage 1 configuration, pinned source revision, and source-file provenance.
+    Outputs: Content-derived dataset ID and canonical configuration SHA-256 digest.
+    """
     canonical_config = canonical_import_configuration(config)
     config_hash = json_fingerprint(canonical_config)
     identity = {
@@ -578,7 +631,13 @@ def evaluation_window(
     *,
     window_id: str | None = None,
 ) -> dict[str, Any]:
-    """Return one validation/test window over the final two horizons of a series."""
+    """Purpose: Define leakage-safe training, validation, and test boundaries.
+
+    Inputs: Series observation count, benchmark horizon/convention, and optional ID.
+    Outputs: Zero-based, end-exclusive slices reserving the final two horizons for
+    validation and test; raises ``ImportValidationError`` when history is insufficient.
+    Notes: Boundary offsets count observations, not elapsed time units.
+    """
     horizon = config["benchmark"]["prediction_length"]
     if observation_count < horizon * 2:
         raise ImportValidationError(

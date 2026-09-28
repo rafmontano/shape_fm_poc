@@ -32,12 +32,17 @@ from util.experiment_execution import (
 from util.transformations import inverse, transform
 
 
-# Expected task rows per stage for 100 series across preprocessing and model variants.
+# Test/calibration value: expected rows derived from the committed 100-series fixture;
+# it is an assertion oracle, not a production execution or experiment global.
 EXPECTED_100_TASK_COUNTS = {2: 200, 3: 400, 4: 800, 5: 1_200, 6: 12}
 
 
 def initialize_test_database(path: Path) -> None:
-    """Create a configured database for experiment coordinator tests."""
+    """Purpose: Create a configured database for experiment coordinator tests.
+
+    Inputs: Destination ``Path`` and the committed 100-series experiment configuration.
+    Outputs: None; creates and initializes the DuckDB file at ``path``.
+    """
     initialize_experiment_database(
         path,
         Path(__file__).resolve().parents[3] / "config/experiments/poc2_m4_daily_100.json",
@@ -45,7 +50,11 @@ def initialize_test_database(path: Path) -> None:
 
 
 class TransformationTests(unittest.TestCase):
-    """Verify scientific identity and reversible deterministic transformations."""
+    """Purpose: Verify scientific identity and reversible deterministic transformations.
+
+    Inputs: In-memory configuration mappings and deterministic numeric series.
+    Outputs: Fingerprint and transformation assertions; no process, database, or file effects.
+    """
     def test_provisional_selection_does_not_change_scientific_identity(self):
         """Provisional candidate selection is excluded from the scientific fingerprint."""
         first = {"models": {"a": {"revision": "1"}}, "provisional_candidate": "a"}
@@ -97,7 +106,11 @@ class TransformationTests(unittest.TestCase):
 
 
 class ExternalBatchTests(unittest.TestCase):
-    """Verify forecast combination and external batch execution contracts."""
+    """Purpose: Verify forecast combination and external batch execution contracts.
+
+    Inputs: Forecast mappings, numeric batches, and local callback workers.
+    Outputs: Ordering, failure, and result assertions; worker processes may be short-lived.
+    """
     def test_equal_weight_combination_rearranges_crossed_quantiles(self):
         """Equal-weight combination sorts crossed averaged quantiles and flags the repair."""
         result = _combine_job(
@@ -146,7 +159,11 @@ class ExternalBatchTests(unittest.TestCase):
         self.assertEqual([len(batch) for batch in batches], [3, 3, 1])
 
         def fail_second(batch):
-            """Raise on the batch beginning at three and echo all other batches."""
+            """Purpose: Simulate a worker failure after one completed batch.
+
+            Inputs: A numeric batch list.
+            Outputs: The unchanged list, or RuntimeError when its first value is three; no state effects.
+            """
             if batch[0] == 3:
                 raise RuntimeError("worker failed")
             return batch
@@ -167,7 +184,11 @@ class ExternalBatchTests(unittest.TestCase):
 
 
 class ContractValidationTests(unittest.TestCase):
-    """Verify official benchmark and submission metadata contracts."""
+    """Purpose: Verify official benchmark and submission metadata contracts.
+
+    Inputs: Benchmark descriptions and draft or approved submission mappings.
+    Outputs: Validation results and exception assertions; no process, database, or file effects.
+    """
     def test_multi_window_configuration_is_rejected(self):
         """Official execution accepts exactly one evaluation window."""
         coordinator = object.__new__(POC1Coordinator)
@@ -217,20 +238,36 @@ class ContractValidationTests(unittest.TestCase):
 
 
 class TransactionTests(unittest.TestCase):
-    """Exercise task transactions and retries against a temporary coordinator database."""
+    """Purpose: Exercise task transactions and retries against coordinator database state.
+
+    Inputs: Synthetic benchmark, task, series, worker-request, and forecast mappings.
+    Outputs: Transaction and retry assertions; each test creates then removes a temporary DuckDB tree.
+    """
     def setUp(self):
-        """Create a coordinator backed by a test-owned temporary database."""
+        """Purpose: Provision isolated database state for one transaction test.
+
+        Inputs: The committed experiment configuration loaded by ``initialize_test_database``.
+        Outputs: ``directory`` and open ``coordinator`` attributes; creates a temporary DuckDB file.
+        """
         self.directory = Path(tempfile.mkdtemp())
         initialize_test_database(self.directory / "poc1.duckdb")
         self.coordinator = POC1Coordinator(self.directory / "poc1.duckdb")
 
     def tearDown(self):
-        """Close the coordinator and remove its temporary directory."""
+        """Purpose: Release all state provisioned by ``setUp``.
+
+        Inputs: The current open coordinator and temporary-directory attributes.
+        Outputs: None; closes DuckDB and recursively removes the temporary directory.
+        """
         self.coordinator.close()
         shutil.rmtree(self.directory)
 
     def _insert_benchmark_and_instances(self):
-        """Seed one benchmark and two forecast instances for stage tests."""
+        """Purpose: Seed the minimum benchmark state required by stage tests.
+
+        Inputs: The fixture coordinator's open DuckDB connection.
+        Outputs: None; inserts one benchmark row and two forecast-instance rows.
+        """
         connection = self.coordinator.connection
         connection.execute(
             """INSERT INTO benchmark_configurations
@@ -264,7 +301,11 @@ class TransactionTests(unittest.TestCase):
         attempt = self.coordinator._start_tasks([("task", None, None, None)], invocation)["task"]
 
         def invalid_insert():
-            """Insert an export, then fail so the surrounding transaction must roll back."""
+            """Purpose: Exercise rollback after a callback performs a database write.
+
+            Inputs: The enclosing fixture's open DuckDB connection.
+            Outputs: Always raises RuntimeError after inserting one export in the active transaction.
+            """
             connection.execute(
                 "INSERT INTO submission_exports VALUES ('export', 'experiment', 'model', 'path', 'revision', '{}', false, current_timestamp)"
             )
@@ -312,7 +353,11 @@ class TransactionTests(unittest.TestCase):
         calls = 0
 
         def failing_worker(payload):
-            """Echo cleaned contexts except for a simulated second-batch failure."""
+            """Purpose: Emulate preprocessing success followed by a batch failure.
+
+            Inputs: A worker payload mapping containing one job with ID and context.
+            Outputs: A results/packages mapping or RuntimeError; increments the enclosing call count.
+            """
             nonlocal calls
             calls += 1
             if calls == 2:
@@ -405,7 +450,11 @@ class TransactionTests(unittest.TestCase):
         received_settings = []
 
         def worker(payload):
-            """Return a constant forecast except for a simulated second-batch failure."""
+            """Purpose: Emulate forecasting success followed by a batch failure.
+
+            Inputs: A worker payload with settings and one forecast job.
+            Outputs: A forecast/packages mapping or RuntimeError; records calls and settings in memory.
+            """
             nonlocal calls
             calls += 1
             received_settings.append(payload["settings"])
@@ -481,20 +530,32 @@ class TransactionTests(unittest.TestCase):
             )
 
         class OOMThenSuccessWorker:
-            """Simulate one OOM followed by successful constant forecasts; track calls."""
+            """Purpose: Emulate a restartable Chronos worker that reports one OOM.
+
+            Inputs: Worker commands and request mappings with batch IDs and jobs.
+            Outputs: Ready/error/result mappings; records class-level calls without external resources.
+            """
             starts = 0
             requests = 0
             commands = []
             payloads = []
 
             def __init__(self, command, startup_timeout):
-                """Retain the worker command supplied by the coordinator."""
+                """Purpose: Capture worker startup arguments for later assertions.
+
+                Inputs: Command sequence and numeric startup timeout.
+                Outputs: Initialized instance state; appends the command to class request history.
+                """
                 self.command = command
                 self.startup_timeout = startup_timeout
                 type(self).commands.append(command)
 
             def start(self):
-                """Count a start and report deterministic accelerator readiness metadata."""
+                """Purpose: Report deterministic accelerator readiness after a logical start.
+
+                Inputs: Existing class-level start counter.
+                Outputs: Chronos-ready mapping; increments ``starts`` and launches no process.
+                """
                 type(self).starts += 1
                 return {
                     "type": "ready",
@@ -505,7 +566,11 @@ class TransactionTests(unittest.TestCase):
                 }
 
             def request(self, payload, timeout):
-                """Return OOM once, then one constant forecast for every requested job."""
+                """Purpose: Return one OOM response before serving split retry requests.
+
+                Inputs: Chronos request mapping and timeout value.
+                Outputs: Error or result mapping; records payloads and increments request state.
+                """
                 type(self).requests += 1
                 type(self).payloads.append(payload)
                 if type(self).requests == 1:
@@ -535,7 +600,11 @@ class TransactionTests(unittest.TestCase):
                 }
 
             def close(self, force=False):
-                """Accept coordinator cleanup without owning external resources."""
+                """Purpose: Satisfy the worker cleanup protocol for the in-memory fake.
+
+                Inputs: Optional boolean force flag.
+                Outputs: None; performs no process, file, or database cleanup.
+                """
                 return None
 
         self.coordinator.execution_hardware = lambda profile: {"accelerator_backend": "test"}
@@ -572,9 +641,17 @@ class TransactionTests(unittest.TestCase):
 
 
 class ConfiguredPlanningTests(unittest.TestCase):
-    """Exercise authoritative 100-series planning against seeded dataset state."""
+    """Purpose: Exercise authoritative 100-series planning against seeded dataset state.
+
+    Inputs: GiftEval-style descriptions, committed configuration, and a seeded dataset row.
+    Outputs: Plan/task assertions; each test creates then removes a temporary DuckDB tree.
+    """
     def setUp(self):
-        """Create a coordinator and seed the dataset referenced by generated descriptions."""
+        """Purpose: Provision planning state and its required dataset record.
+
+        Inputs: The committed 100-series experiment configuration.
+        Outputs: Temporary-directory and coordinator attributes; creates and seeds DuckDB.
+        """
         self.directory = Path(tempfile.mkdtemp())
         initialize_test_database(self.directory / "poc1.duckdb")
         self.coordinator = POC1Coordinator(self.directory / "poc1.duckdb")
@@ -588,13 +665,21 @@ class ConfiguredPlanningTests(unittest.TestCase):
         )
 
     def tearDown(self):
-        """Close the coordinator and remove its temporary directory."""
+        """Purpose: Release all configured-planning fixture state.
+
+        Inputs: The current coordinator and temporary-directory attributes.
+        Outputs: None; closes DuckDB and recursively removes the temporary directory.
+        """
         self.coordinator.close()
         shutil.rmtree(self.directory)
 
     @staticmethod
     def _description(limit: int) -> dict:
-        """Build a GiftEval-style M4 Daily description for the official prefix."""
+        """Purpose: Build a deterministic GiftEval-style M4 Daily description.
+
+        Inputs: Integer number of official-prefix instances to include.
+        Outputs: Description mapping with benchmark metadata and synthetic context/actual arrays.
+        """
         return {
             "configuration_name": "m4_daily/D/short",
             "dataset_name": "m4_daily",
@@ -622,7 +707,11 @@ class ConfiguredPlanningTests(unittest.TestCase):
         }
 
     def _gift_bridge(self, *arguments, **_kwargs):
-        """Emulate the GiftEval bridge by honoring its --limit argument."""
+        """Purpose: Emulate the GiftEval describe bridge for planning tests.
+
+        Inputs: Command-style arguments containing ``--limit``; ignored keyword arguments.
+        Outputs: A description mapping from ``_description``; no process or file side effects.
+        """
         limit = int(arguments[arguments.index("--limit") + 1])
         return self._description(limit)
 
@@ -643,7 +732,11 @@ class ConfiguredPlanningTests(unittest.TestCase):
     def test_plan_rejects_duplicate_official_series(self):
         """Planning rejects a bridge response that duplicates one configured prefix series."""
         def duplicate_bridge(*arguments, **_kwargs):
-            """Duplicate the final item in the 100-series bridge response."""
+            """Purpose: Produce an invalid bridge response with a duplicate official series.
+
+            Inputs: Command-style bridge arguments and ignored keyword arguments.
+            Outputs: Description mapping; mutates its final item ID when the requested limit is 100.
+            """
             result = self._gift_bridge(*arguments, **_kwargs)
             if int(arguments[arguments.index("--limit") + 1]) == 100:
                 result["instances"][-1]["item_id"] = "0"

@@ -22,11 +22,19 @@ from util.import_execution import ImportCoordinator
 
 
 class Stage1ImportTests(unittest.TestCase):
-    """Verify deterministic Stage 1 import, restart, parallelism, and source fidelity."""
+    """Purpose: Verify deterministic Stage 1 import, restart, parallelism, and source fidelity.
+
+    Inputs: Pinned M4 Daily source files and the committed import configuration.
+    Outputs: Import/schema assertions; tests create temporary DuckDB files and worker processes.
+    """
 
     @classmethod
     def setUpClass(cls):
-        """Load the pinned ten-series source configuration and source revision."""
+        """Purpose: Load shared source paths and bounded import settings for this class.
+
+        Inputs: Repository paths and the committed 100-series experiment configuration.
+        Outputs: Class attributes for source, config, and revision; reads configuration only.
+        """
         cls.root = Path(__file__).resolve().parents[4]
         cls.source = cls.root / "data/source/gift_eval/m4_daily"
         configuration = load_experiment_configuration(
@@ -38,7 +46,11 @@ class Stage1ImportTests(unittest.TestCase):
 
     @staticmethod
     def snapshot(path: Path):
-        """Read ordered series/window rows and import counts from a completed database."""
+        """Purpose: Capture deterministic import state from a completed database.
+
+        Inputs: Path to an existing DuckDB import database.
+        Outputs: Tuple of ordered row records and count values; opens then closes read-only DuckDB.
+        """
         connection = duckdb.connect(str(path), read_only=True)
         rows = connection.execute(
             """

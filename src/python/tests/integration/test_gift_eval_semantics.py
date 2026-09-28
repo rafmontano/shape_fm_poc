@@ -4,7 +4,7 @@
 # Purpose: Verify pinned GIFT-Eval dataset metadata, split, metric, and quantile semantics used by experiment planning.
 # Inputs: unittest fixtures, temporary databases/files, deterministic synthetic records, and mocked process or cluster boundaries.
 # Outputs: unittest pass/fail assertions and captured diagnostics; no production artifacts or external services.
-# Run from: PYTHONPATH=src/python .tools/uv/uv run --locked --no-sync python -m unittest tests.integration.test_gift_eval_semantics
+# Run from: PYTHONPATH=src/python .tools/uv/uv run --project environments/gift-eval --locked --no-sync python -m unittest tests.integration.test_gift_eval_semantics
 # ==============================================================================
 
 """Verify pinned GIFT-Eval dataset metadata, split, metric, and quantile semantics used by experiment planning."""
@@ -18,10 +18,16 @@ from util.configuration import load_experiment_configuration
 
 
 class GiftEvalSemanticsTests(unittest.TestCase):
-    """Verify pinned GIFT-Eval metadata and temporal split semantics."""
+    """Purpose: Verify pinned GIFT-Eval metadata and temporal split semantics.
+
+    Inputs: The committed experiment configuration and local pinned M4 Daily dataset.
+    Outputs: Metadata and split assertions; sets ``GIFT_EVAL`` and reads dataset files only.
+    """
     def test_m4_daily_contract_matches_official_package(self):
         """M4 Daily configuration and train, validation, and test boundaries match GIFT-Eval."""
         root = Path(__file__).resolve().parents[4]
+        # Test/calibration value: SHAPEFM_GIFT_EVAL_ROOT is a machine-environment
+        # override for this fixture; it does not override production data authority.
         source_root = Path(
             os.environ.get("SHAPEFM_GIFT_EVAL_ROOT", root / "data/source/gift_eval")
         )

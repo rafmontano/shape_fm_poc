@@ -22,28 +22,44 @@ from unittest.mock import MagicMock, patch
 import duckdb
 
 
-# ROOT: repository root resolved from this source file.
+# Test/calibration value: repository root derived from this fixture's location.
 ROOT = Path(__file__).resolve().parents[3]
-# SPEC: loaded researcher-entry-point module fixture used by these tests.
+# Test/calibration value: import specification derived from ROOT for isolated CLI tests.
 SPEC = importlib.util.spec_from_file_location("shapefm_main", ROOT / "src/python/00_main.py")
 assert SPEC is not None and SPEC.loader is not None
-# MAIN: loaded researcher-entry-point module fixture used by these tests.
+# Test/calibration value: in-memory CLI module loaded from SPEC; tests patch its interfaces.
 MAIN = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MAIN)
 
 
 @dataclass(frozen=True)
 class StoredForecast:
-    """Minimal stored forecast returned by mocks, with identity, candidate, and mean values."""
+    """Represent an immutable forecast returned by CLI test doubles.
+
+    Purpose: Supply the fields serialized by the results action.
+    Inputs: Forecast identity, candidate name, and ordered mean values.
+    Outputs: Immutable fixture state only; this data object owns no side effects.
+    """
     forecast_id: str
     candidate: str
     mean: tuple[float, ...]
 
 
 class MainResultsTests(unittest.TestCase):
-    """Verify CLI result selection, JSON rendering, and read-only failure handling."""
+    """Exercise CLI result selection, JSON rendering, and read-only failures.
+
+    Purpose: Verify results dispatch without invoking production coordinators.
+    Inputs: Temporary database paths, selectors, and patched result providers.
+    Outputs: Captured stdout/stderr and assertions; tests own temporary files only.
+    """
     def run_main(self, arguments):
-        """Invoke the CLI with a fixed invocation record and capture status and output streams."""
+        """Invoke the CLI while capturing its process-style result.
+
+        Purpose: Patch deterministic invocation metadata and isolate CLI stream output.
+        Inputs: Command-line argument sequence accepted by ``MAIN.main``.
+        Outputs: Return ``(status, stdout, stderr)`` strings; mutate no persistent
+        state beyond side effects deliberately exercised by the selected action.
+        """
         stdout = io.StringIO()
         stderr = io.StringIO()
         with (
@@ -290,16 +306,31 @@ class MainResultsTests(unittest.TestCase):
 
 
 class MainRunTests(unittest.TestCase):
-    """Verify creation, DuckDB-only resume, prerequisites, skipping, and event state."""
+    """Exercise configured run creation, resume, prerequisites, and event state.
+
+    Purpose: Verify process dispatch and durable lifecycle records with mocked workers.
+    Inputs: The reference configuration and per-test temporary DuckDB paths.
+    Outputs: DuckDB process/event mutations and assertions; this class owns cleanup.
+    """
 
     def setUp(self):
-        """Create a temporary directory and retain the complete reference configuration."""
+        """Create isolated run-test state.
+
+        Purpose: Provide paths for disposable configuration and DuckDB artifacts.
+        Inputs: The committed reference configuration path.
+        Outputs: Sets ``temporary``, ``root``, and ``configuration`` on the fixture.
+        """
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)
         self.configuration = ROOT / "config/experiments/poc2_m4_daily_100.json"
 
     def tearDown(self):
-        """Remove temporary databases and copied configuration documents."""
+        """Release all run-test filesystem state.
+
+        Purpose: Prevent databases and copied configurations leaking between tests.
+        Inputs: The ``TemporaryDirectory`` owned by this fixture.
+        Outputs: Deletes its directory and every contained file.
+        """
         self.temporary.cleanup()
 
     def test_new_database_requires_configuration_without_creating_a_file(self):

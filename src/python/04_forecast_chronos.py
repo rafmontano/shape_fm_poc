@@ -43,7 +43,11 @@ def _apple_device_name() -> str:
 
 
 def select_device(requested: str) -> str:
-    """Resolve auto/cpu/cuda/mps and reject an unavailable or unknown requested accelerator."""
+    """Purpose: Resolve the configured accelerator against the current Torch environment.
+
+    Inputs: ``auto``, ``cpu``, ``cuda``, or ``mps`` from worker CLI/configuration.
+    Outputs: The selected Torch device string, or an exception when explicit hardware is unavailable.
+    """
     if requested == "cuda":
         if not torch.cuda.is_available():
             raise RuntimeError("CUDA profile requested but torch.cuda.is_available() is false")
@@ -92,7 +96,12 @@ def accelerator_memory(device: str) -> dict[str, int | None]:
 
 
 def hardware(device: str) -> dict[str, Any]:
-    """Return the selected accelerator identity, memory counters, and runtime versions for provenance."""
+    """Purpose: Describe the worker hardware and runtime for provenance validation.
+
+    Inputs: A configured device selector resolved against local Torch/backend state.
+    Outputs: A JSON-ready identity with accelerator memory and Python/Torch/Chronos versions.
+    Side effects: Queries accelerator state and package metadata.
+    """
     selected = select_device(device)
     if selected == "cuda":
         device_name = torch.cuda.get_device_name(0)
@@ -132,7 +141,13 @@ def predict(
     request: dict[str, Any],
     device: str,
 ) -> dict[str, Any]:
-    """Run one Chronos batch and return keyed means, medians, quantiles, timing, and memory telemetry."""
+    """Purpose: Execute one prediction request against an already-loaded Chronos-2 model.
+
+    Inputs: Stateful pipeline, request jobs containing float contexts/IDs, one shared horizon, batch size,
+        configured quantile levels, and the selected device.
+    Outputs: A protocol result containing per-job mean/median/quantile arrays shaped by horizon, plus timing and memory.
+    Side effects: Advances model/backend state and may allocate accelerator and process memory.
+    """
     started = time.monotonic()
     jobs = request["jobs"]
     if request["predict_batches_jointly"] is not False:
@@ -175,7 +190,15 @@ def predict(
 
 
 def serve(args: argparse.Namespace) -> None:
-    """Load the pinned Chronos-2 model once and serve predict/shutdown requests until EOF or shutdown."""
+    """Purpose: Run the persistent JSON-lines Chronos worker protocol around one model instance.
+
+    Inputs: Parsed model/revision/device/dtype/thread configuration and predict/shutdown JSON lines on stdin.
+    Outputs: Ready, result, error, and shutdown JSON lines on stdout; returns at stdin EOF or shutdown.
+    Side effects: Sets thread environment defaults, loads model/cache state once, and retains accelerator state across requests.
+    """
+    # Execution globals: use one OpenMP/MKL thread unless the launching machine
+    # environment overrides these source fallbacks; effective values are not yet
+    # recorded separately in worker provenance.
     os.environ.setdefault("OMP_NUM_THREADS", "1")
     os.environ.setdefault("MKL_NUM_THREADS", "1")
     torch.set_num_threads(args.internal_cpu_threads)
@@ -228,14 +251,22 @@ def serve(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
-    """Dispatch the internal hardware probe or persistent worker protocol."""
+    """Purpose: Parse and dispatch the internal worker command line.
+
+    Inputs: ``hardware`` or ``serve`` arguments from the launching subprocess.
+    Outputs: Compact JSON on stdout, either one hardware record or the persistent stdin/stdout protocol.
+    """
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", required=True)
     hardware_parser = subparsers.add_parser("hardware")
+    # Bootstrap/interface default: auto-detect hardware when the internal caller
+    # supplies no device; configured worker launches override this value.
     hardware_parser.add_argument("--device", default="auto")
     serve_parser = subparsers.add_parser("serve")
     serve_parser.add_argument("--model", required=True)
     serve_parser.add_argument("--revision", required=True)
+    # Bootstrap/interface default: auto-detect hardware only for direct internal
+    # launches; the coordinator normally supplies the execution-profile device.
     serve_parser.add_argument("--device", default="auto")
     serve_parser.add_argument("--dtype", required=True)
     serve_parser.add_argument("--internal-cpu-threads", type=int, required=True)

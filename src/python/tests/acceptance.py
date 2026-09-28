@@ -4,7 +4,7 @@
 # Purpose: Run the fixed two-machine acceptance workflow and record auditable evidence.
 # Inputs: Repository, database, report, and invocation metadata; both hosts and their prepared locked environments.
 # Outputs: Acceptance DuckDB state and a JSON report containing scientific, restart, topology, and resource evidence.
-# Run from: Imported by `src/python/00_main.py test`; not run directly.
+# Run from: Imported; not run directly.
 # ==============================================================================
 
 """Run and audit the fixed two-machine ShapeFM acceptance workflow."""
@@ -38,12 +38,17 @@ from util.experiment_execution import POC1Coordinator
 from util.import_execution import ImportCoordinator
 
 
-# Runtime acceptance values are activated from the new JSON or existing DuckDB authority.
+# Experiment globals: acceptance scope and expected scientific row/task counts are
+# derived from authoritative experiment JSON on creation or DuckDB on resume and
+# recorded in database/report evidence; zero/empty values are pre-activation only.
 SERIES_LIMIT = 0
 EXPECTED_TASK_COUNTS: dict[int, int] = {}
 EXPECTED_FORECASTS = 0
 EXPECTED_EVALUATIONS = 0
 EXPECTED_CHRONOS_TASKS = 0
+# Execution globals: worker topology, concurrency, and host-memory evidence limits
+# are activated from JSON or DuckDB and recorded in the acceptance report; zero
+# values are pre-activation only and cannot override authoritative configuration.
 MAC_CPU_WORKERS = 0
 UBUNTU_CPU_WORKERS = 0
 UBUNTU_GPU_WORKERS = 0
@@ -52,24 +57,32 @@ EXPECTED_WORKERS = 0
 MAX_IN_FLIGHT = 0
 MAC_SYSTEM_MEMORY_BYTES = 0
 UBUNTU_SYSTEM_MEMORY_BYTES = 0
-# Active contract is set exactly once per acceptance invocation from JSON or DuckDB.
+# Execution global: active contract, set once per invocation from JSON or DuckDB authority.
 _ACTIVE_CONFIGURATION: ExperimentConfiguration | None = None
-# Bytes per gibibyte for worker limits and safety thresholds.
+# Code constant: exact bytes per GiB used to interpret configured memory values.
 GIB = 1024**3
-# Minimum free host and GPU memory accepted by telemetry checks.
+# Execution globals: minimum free-memory thresholds activated from the authoritative
+# experiment JSON or DuckDB; zero is only the pre-activation bootstrap value.
 MAC_MEMORY_HEADROOM_BYTES = 0
 UBUNTU_MEMORY_HEADROOM_BYTES = 0
 GPU_MEMORY_HEADROOM_BYTES = 0
-# Per-worker Dask memory limits in GiB.
+# Execution globals: per-worker Dask limits activated from JSON or DuckDB authority;
+# zero is only the pre-activation bootstrap value.
 MAC_CPU_MEMORY_GIB = 0
 UBUNTU_CPU_MEMORY_GIB = 0
 UBUNTU_GPU_MEMORY_GIB = 0
-# Consecutive unsafe samples that trigger controlled cluster shutdown.
+# Execution global: unsafe-sample limit activated from JSON or DuckDB authority;
+# zero is only the pre-activation bootstrap value.
 PERSISTENT_UNSAFE_SAMPLES = 0
 
 
 def _activate_configuration(configuration: ExperimentConfiguration) -> None:
-    """Resolve all acceptance expectations from one authoritative configuration object."""
+    """Activate one authoritative acceptance contract.
+
+    Purpose: Resolve all workload, topology, and safety expectations for this invocation.
+    Inputs: A validated experiment configuration.
+    Outputs: Mutates this module's active configuration and acceptance expectation globals.
+    """
     global SERIES_LIMIT, EXPECTED_TASK_COUNTS, EXPECTED_FORECASTS
     global EXPECTED_EVALUATIONS, EXPECTED_CHRONOS_TASKS, MAC_CPU_WORKERS
     global UBUNTU_CPU_WORKERS, UBUNTU_GPU_WORKERS, PHYSICAL_GPU_COUNT
@@ -126,7 +139,12 @@ def _mark_process(
     summary: dict[str, Any] | None = None,
     error: str | None = None,
 ) -> None:
-    """Record acceptance Process 01–06 state through the active coordinator connection."""
+    """Persist one acceptance process transition.
+
+    Purpose: Keep Process 01–06 lifecycle state synchronized with orchestration.
+    Inputs: Open DuckDB connection, process ID, status, and optional summary/error.
+    Outputs: Updates the matching ``experiment_processes`` row in the caller's transaction.
+    """
     connection.execute(
         """UPDATE experiment_processes SET status=?,
            started_at=CASE WHEN ?='running' THEN current_timestamp ELSE started_at END,
@@ -145,7 +163,12 @@ def _mark_process(
 
 
 def _memory_budget() -> dict[str, Any]:
-    """Describe worker ceilings and required host-memory headroom."""
+    """Derive acceptance host-memory evidence.
+
+    Purpose: Compare configured worker ceilings with required host headroom.
+    Inputs: Activated topology, system-memory, worker-limit, and threshold globals.
+    Outputs: Returns Mac/Ubuntu budget details and rationale; mutates no state.
+    """
     mac_total = MAC_SYSTEM_MEMORY_BYTES
     ubuntu_total = UBUNTU_SYSTEM_MEMORY_BYTES
     mac_workers = MAC_CPU_WORKERS * MAC_CPU_MEMORY_GIB * GIB
@@ -179,7 +202,12 @@ def _memory_budget() -> dict[str, Any]:
 
 
 def _resolve_acceptance_profile():
-    """Build the Dask execution profile from the active authoritative configuration."""
+    """Resolve the Dask profile used by acceptance.
+
+    Purpose: Combine stored execution settings with the required two-host topology.
+    Inputs: The active module-level experiment configuration and resolved globals.
+    Outputs: Returns an execution profile and recorded overrides; mutates no state.
+    """
     if _ACTIVE_CONFIGURATION is None:
         raise RuntimeError("acceptance configuration has not been activated")
     values = _ACTIVE_CONFIGURATION.resolved["execution"]["default"]
@@ -218,7 +246,12 @@ def _run(
     timeout: float = 30,
     check: bool = True,
 ) -> subprocess.CompletedProcess[str]:
-    """Run a command from the repository root with captured text output."""
+    """Execute a bounded repository command.
+
+    Purpose: Standardize environment, working directory, capture, and timeout behavior.
+    Inputs: Argument vector, repository root, timeout, and check policy.
+    Outputs: Returns captured stdout/stderr; starts a subprocess and may raise on failure.
+    """
     return subprocess.run(
         arguments,
         cwd=root,
@@ -241,7 +274,12 @@ def _python_identity_script(packages: tuple[str, ...]) -> str:
 def _python_environment_identity(
     executable: Path, packages: tuple[str, ...], root: Path
 ) -> str:
-    """Read an interpreter's Python and requested package versions as a pipe-delimited identity."""
+    """Read a locked Python environment identity.
+
+    Purpose: Compare interpreter and package versions across acceptance hosts.
+    Inputs: Python executable, package names, and repository root.
+    Outputs: Returns a pipe-delimited identity; runs a captured Python subprocess.
+    """
     return _run(
         [str(executable), "-c", _python_identity_script(packages)], root=root
     ).stdout.strip()
@@ -250,7 +288,12 @@ def _python_environment_identity(
 def _local_environment_identity(
     root: Path, configuration: ExperimentConfiguration
 ) -> dict[str, str]:
-    """Verify configured locked Python environments and local R package versions."""
+    """Verify all local locked runtime identities.
+
+    Purpose: Reject drift in project, GiftEval, Chronos, or R environments.
+    Inputs: Repository root and authoritative configuration paths.
+    Outputs: Returns version identities; runs Python/R subprocesses and raises on mismatch.
+    """
     paths = configuration.resolved["execution"]["paths"]
     gift_environment = configuration.resolved["evaluation"]["gift_eval"]["environment"]
     r = _run(
@@ -310,7 +353,12 @@ def _sha256(value: Any) -> str:
 def _require_existing_environment(
     root: Path, configuration: ExperimentConfiguration
 ) -> dict[str, str]:
-    """Require configured environments and source data without installing anything."""
+    """Validate pre-existing acceptance prerequisites.
+
+    Purpose: Ensure tools, locked interpreters, and source data exist without installation.
+    Inputs: Repository root and authoritative configuration.
+    Outputs: Returns resolved prerequisite paths; reads filesystem state only.
+    """
     paths_config = configuration.resolved["execution"]["paths"]
     evaluation = configuration.resolved["evaluation"]["gift_eval"]
     data = configuration.resolved["data"]
@@ -344,7 +392,12 @@ def _summarize_resources(
     errors: list[str],
     topology: dict[str, Any],
 ) -> dict[str, Any]:
-    """Aggregate telemetry and report worker, memory, swap, spill, and GPU violations."""
+    """Reduce telemetry into acceptance safety evidence.
+
+    Purpose: Detect worker churn and memory, swap, spill, or GPU safety violations.
+    Inputs: Resource snapshots, sampler errors, and expected topology.
+    Outputs: Returns observations, reasons, thresholds, and pass status; mutates no inputs.
+    """
     expected_workers = set(topology["workers"])
     worker_sets = [set(sample["workers"]) for sample in snapshots]
     all_workers = set().union(*worker_sets) if worker_sets else set()
@@ -474,17 +527,25 @@ def _summarize_resources(
 
 
 class _ResourceSampler:
-    """Sample Dask resources and stop the cluster after persistent unsafe conditions."""
+    """Own acceptance telemetry sampling and safety-triggered cluster shutdown.
+
+    Purpose: Sample scheduler/worker resources in a background thread and stop
+    the cluster after persistent unsafe conditions.
+    Inputs: Scheduler address, expected topology, and an idempotent stop callback.
+    Outputs: Owned snapshots, errors, stop reason, and a summarized evidence mapping;
+    the callback may terminate cluster subprocesses.
+    """
     def __init__(
         self,
         address: str,
         topology: dict[str, Any],
         stop_cluster: Callable[[], None],
     ):
-        """Prepare a sampler for `address` and its expected `topology`.
+        """Prepare owned telemetry state and its background thread.
 
-        Samples, errors, and a controlled-stop reason are accumulated on the
-        instance. `stop_cluster` is invoked if connection or safety checks fail.
+        Purpose: Configure sampling and controlled shutdown without starting either.
+        Inputs: Scheduler address, expected topology, and idempotent stop callback.
+        Outputs: Initializes snapshot/error/events/thread fields; performs no I/O yet.
         """
         self.address = address
         self.topology = topology
@@ -497,7 +558,12 @@ class _ResourceSampler:
         self._thread = threading.Thread(target=self._sample, daemon=True)
 
     def _sample(self) -> None:
-        """Poll scheduler and worker telemetry until stopped or safety shutdown."""
+        """Run the sampler thread.
+
+        Purpose: Poll resources and trigger shutdown after persistent unsafe samples.
+        Inputs: Instance scheduler address, topology, events, and stop callback.
+        Outputs: Mutates snapshots/errors/reason and may close client and cluster processes.
+        """
         from distributed import Client
 
         client = None
@@ -563,37 +629,62 @@ class _ResourceSampler:
                 client.close(timeout=5)
 
     def __enter__(self) -> "_ResourceSampler":
-        """Start sampling and wait up to 35 seconds for the first result."""
+        """Start background sampling.
+
+        Purpose: Establish telemetry before scientific work proceeds.
+        Inputs: The prepared sampler thread.
+        Outputs: Starts the thread, may append a timeout error, and returns ``self``.
+        """
         self._thread.start()
         if not self._first_sample.wait(35):
             self.errors.append("resource sampler produced no result within 35 seconds")
         return self
 
     def __exit__(self, *_: object) -> None:
-        """Request sampler shutdown and wait for its background thread."""
+        """Stop background sampling.
+
+        Purpose: Bound telemetry lifetime to the managed acceptance phase.
+        Inputs: Context-manager exit values, which are ignored.
+        Outputs: Sets the stop event and joins the owned thread for up to 60 seconds.
+        """
         self._stop.set()
         self._thread.join(timeout=60)
 
     def summary(self) -> dict[str, Any]:
-        """Summarize collected telemetry and include any controlled-stop reason."""
+        """Build final resource evidence.
+
+        Purpose: Combine captured samples/errors with any controlled-stop reason.
+        Inputs: Sampler-owned telemetry and expected topology.
+        Outputs: Returns a new summary mapping; performs no external side effects.
+        """
         summary = _summarize_resources(self.snapshots, self.errors, self.topology)
         summary["controlled_stop_reason"] = self.unsafe_stop_reason
         return summary
 
 
 class _TwoMachineCluster:
-    """Manage the acceptance scheduler and fixed Mac/Ubuntu worker topology."""
+    """Own processes for the fixed Mac/Ubuntu acceptance cluster.
+
+    Purpose: Validate environments and start, inspect, and stop the scheduler and
+    workers required by the acceptance topology.
+    Inputs: Repository root, authoritative configuration, and documented SHAPEFM_*
+    machine-environment overrides.
+    Outputs: Cluster topology and process evidence; the instance owns local and
+    remote subprocess lifecycle side effects.
+    """
 
     def __init__(self, root: Path, configuration: ExperimentConfiguration):
-        """Configure cluster commands and runtime paths beneath repository `root`.
+        """Configure owned cluster state without starting processes.
 
-        Host names, roots, bind addresses, and scheduler addresses may come from
-        SHAPEFM_* environment variables. Started local processes are retained for
-        cleanup; no cluster process is started by construction.
+        Purpose: Resolve commands, hosts, addresses, and runtime paths for acceptance.
+        Inputs: Repository root, configuration, and optional SHAPEFM_* environment values.
+        Outputs: Initializes topology/process fields and may probe the Mac bind address.
         """
         self.root = root
         self.configuration = configuration
         self.configuration_hash = configuration.scientific_hash
+        # Machine environment: SHAPEFM_* values override source fallbacks for hosts,
+        # installation, and Dask addresses; effective values are retained in evidence.
         self.ubuntu_host = os.environ.get(
             "SHAPEFM_UBUNTU_HOST", "rafmontano@WSUbuntu1.local"
         )
@@ -617,7 +708,12 @@ class _TwoMachineCluster:
         self.processes: list[subprocess.Popen[Any]] = []
 
     def _ssh(self, command: str, timeout: float = 30) -> str:
-        """Run a noninteractive command on the configured Ubuntu host."""
+        """Execute a bounded remote command.
+
+        Purpose: Standardize noninteractive Ubuntu operations.
+        Inputs: Shell command and timeout seconds.
+        Outputs: Returns stripped stdout; starts SSH and may change remote state.
+        """
         return _run(
             [
                 "ssh",
@@ -633,7 +729,12 @@ class _TwoMachineCluster:
         ).stdout.strip()
 
     def preflight(self) -> dict[str, Any]:
-        """Verify clean matching hosts, free ports, locked environments, and the GPU."""
+        """Validate both hosts before process startup.
+
+        Purpose: Require matching clean revisions, free ports, locked runtimes, and GPU.
+        Inputs: Configured local/remote paths, hosts, and acceptance contract.
+        Outputs: Returns provenance/environment evidence; runs local and SSH probes only.
+        """
         commit = _run(["git", "rev-parse", "HEAD"], root=self.root).stdout.strip()
         dirty = _run(
             ["git", "status", "--porcelain", "--untracked-files=all"], root=self.root
@@ -752,7 +853,12 @@ class _TwoMachineCluster:
         }
 
     def _start_local(self, arguments: list[str], log_name: str) -> None:
-        """Start a detached local process, append its output to runtime logs, and retain it for cleanup."""
+        """Start and retain one local cluster process.
+
+        Purpose: Give the cluster explicit lifecycle ownership of local daemons.
+        Inputs: Process argument vector and runtime log filename.
+        Outputs: Appends stdout/stderr to a log and adds the subprocess to ``processes``.
+        """
         log = (self.runtime / log_name).open("a", encoding="utf-8")
         environment = {
             **os.environ,
@@ -772,7 +878,12 @@ class _TwoMachineCluster:
         self.processes.append(process)
 
     def start(self, preflight: dict[str, Any]) -> dict[str, Any]:
-        """Start all scheduler and worker processes, validate topology, and return worker reports."""
+        """Create the fixed two-machine cluster.
+
+        Purpose: Start scheduler/workers and prove their advertised topology.
+        Inputs: Successful preflight evidence and configured runtime settings.
+        Outputs: Starts local/remote subprocesses, writes logs/PIDs, and returns topology evidence.
+        """
         commit = preflight["repository_revision"]
         self.runtime.mkdir(parents=True, exist_ok=True)
         thread_limit = str(
@@ -937,7 +1048,12 @@ class _TwoMachineCluster:
             client.close(timeout=5)
 
     def stop(self) -> None:
-        """Best-effort shutdown of the scheduler and all owned local and remote workers."""
+        """Release every cluster process owned by this instance.
+
+        Purpose: Make acceptance cleanup safe after success or partial startup failure.
+        Inputs: Retained local processes and configured scheduler/Ubuntu host.
+        Outputs: Closes scheduler workers and terminates local/remote subprocesses best-effort.
+        """
         from distributed import Client
 
         try:
@@ -968,7 +1084,12 @@ class _TwoMachineCluster:
 
 
 def _database_evidence(database: Path, experiment_id: str) -> dict[str, Any]:
-    """Collect task, result, contribution, retry, and provenance evidence for an experiment."""
+    """Read complete scientific evidence from DuckDB.
+
+    Purpose: Audit cardinalities, contributions, retries, results, and provenance.
+    Inputs: Existing database path and experiment identifier.
+    Outputs: Returns an evidence mapping; opens and closes a read-only DuckDB connection.
+    """
     connection = duckdb.connect(str(database), read_only=True)
     try:
         series_count, instance_count = connection.execute(
@@ -1149,7 +1270,12 @@ def _database_evidence(database: Path, experiment_id: str) -> dict[str, Any]:
 def _contribution_checks(
     evidence: dict[str, Any], topology: dict[str, Any]
 ) -> dict[str, Any]:
-    """Check CPU participation on both hosts and Chronos work on every GPU worker."""
+    """Evaluate host and GPU task participation.
+
+    Purpose: Prove both hosts contributed and every expected GPU worker ran Chronos work.
+    Inputs: Database evidence and the applicable initial/current topology.
+    Outputs: Returns counts, worker identities, and pass status; mutates no state.
+    """
     mac_hosts = set(topology["topology"]["mac_hosts"])
     ubuntu_hosts = set(topology["topology"]["ubuntu_hosts"])
     gpu_workers = set(topology["topology"]["gpu_worker_addresses"])
@@ -1230,7 +1356,12 @@ def _report_document(
     entry_invocation: dict[str, Any],
     metadata: dict[str, Any],
 ) -> dict[str, Any]:
-    """Create or refresh the report envelope while preserving run history."""
+    """Build an acceptance report envelope.
+
+    Purpose: Refresh invocation metadata while retaining initial/restart and failure history.
+    Inputs: Optional previous report, database, invocation, and preflight metadata.
+    Outputs: Returns a new report mapping; performs no file or database writes.
+    """
     report = dict(previous or {})
     report.update(
         {
@@ -1249,7 +1380,12 @@ def _report_document(
 def _record_success(
     report: dict[str, Any], run_kind: str, run: dict[str, Any]
 ) -> dict[str, Any]:
-    """Record a successful initial or restart run and derive the acceptance decision."""
+    """Derive report state after a successful run phase.
+
+    Purpose: Preserve phase evidence and decide reuse/final acceptance status.
+    Inputs: Existing report, ``initial`` or ``restart`` kind, and run evidence.
+    Outputs: Returns an updated report mapping; mutates no files or DuckDB state.
+    """
     updated = dict(report)
     recorded_run = dict(run)
     recorded_run["database_reusable"] = run_kind == "initial"
@@ -1295,7 +1431,12 @@ def _write_failure_report(
     runtime_seconds: float,
     diagnostics: dict[str, Any],
 ) -> dict[str, Any]:
-    """Persist phase-specific failure diagnostics and database reuse status."""
+    """Persist an auditable acceptance failure.
+
+    Purpose: Preserve phase diagnostics and determine whether DuckDB may resume.
+    Inputs: Report path/state, run kind, phase, exception, timing, and diagnostics.
+    Outputs: Rewrites the JSON report and returns its mapping; does not mutate DuckDB.
+    """
     database_reusable = _failure_database_reusable(phase)
     failure = {
         "status": "failed",
@@ -1342,7 +1483,15 @@ def run_acceptance(
     report_path: Path,
     entry_invocation: dict[str, Any],
 ) -> dict[str, Any]:
-    """Run or restart the 100-series acceptance case and persist its evidence report."""
+    """Run or restart the fixed acceptance case and persist auditable evidence.
+
+    Purpose: Execute both acceptance passes, verify restart and resource evidence,
+    and reject use of the authoritative production database.
+    Inputs: Repository root, isolated database/report paths, and CLI invocation
+    metadata; configuration comes from JSON on creation and DuckDB on resume.
+    Outputs: Return the report mapping and write the isolated DuckDB database and
+    JSON report; start and stop local/remote cluster subprocesses as required.
+    """
     database = database.resolve()
     report_path = report_path.resolve()
     authoritative = (root / "data/shapefm.duckdb").resolve()

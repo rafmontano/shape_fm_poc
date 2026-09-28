@@ -40,7 +40,7 @@ from gluonts.model.forecast import QuantileForecast
 from gluonts.time_feature import get_seasonality
 
 
-# REQUIRED_RESULT_COLUMNS: official evaluation columns required in exported result order.
+# Code constant: official GIFT-Eval output schema/order, governed by this bridge implementation.
 REQUIRED_RESULT_COLUMNS = [
     "dataset",
     "model",
@@ -61,15 +61,27 @@ REQUIRED_RESULT_COLUMNS = [
 
 
 class ShapeFMPredictor:
-    """Convert ordered ShapeFM forecasts to GluonTS objects at configured levels."""
+    """Purpose: Adapt ordered ShapeFM forecast arrays to the GluonTS predictor protocol.
+
+    Inputs: Forecast records and quantile levels supplied by the evaluation payload.
+    Outputs: Stateful, single-pass production of identity-aligned ``QuantileForecast`` objects.
+    """
 
     def __init__(self, records: list[dict], quantile_levels: list[float]):
-        """Retain ordered forecast records and their explicitly configured levels."""
+        """Purpose: Initialize ordered forecast and quantile state for later prediction.
+
+        Inputs: Records with mean/quantile horizon arrays and their configured quantile levels.
+        Outputs: None; stores references on this predictor instance.
+        """
         self.records = records
         self.quantile_levels = quantile_levels
 
     def predict(self, test_data_input):
-        """Yield GluonTS forecasts aligned to each context's item identity and forecast start."""
+        """Purpose: Bridge stored ShapeFM arrays into evaluator-ready GluonTS forecasts.
+
+        Inputs: Ordered test contexts whose identities and starts correspond one-to-one with stored records.
+        Outputs: A generator of mean/quantile arrays with forecast horizons, item IDs, and computed start dates.
+        """
         for item, context in zip(self.records, test_data_input, strict=True):
             arrays = np.asarray([item["mean"], *item["quantiles"]], dtype=np.float64)
             yield QuantileForecast(
@@ -98,7 +110,12 @@ def metrics(quantile_levels: list[float]):
 
 
 def official_dataset(source_root: str, dataset_name: str, term: str) -> Dataset:
-    """Point GIFT-Eval at the pinned source and open the task-selected dataset."""
+    """Purpose: Open an official dataset from the pinned GIFT-Eval source tree.
+
+    Inputs: Source root plus dataset and term selected by configuration/payload.
+    Outputs: A GIFT-Eval ``Dataset`` preserving multivariate structure.
+    Side effects: Sets the process ``GIFT_EVAL`` environment variable used by the library.
+    """
     os.environ["GIFT_EVAL"] = source_root
     return Dataset(dataset_name, term=term, to_univariate=False)
 
@@ -120,7 +137,12 @@ def describe(
     num_variates: int,
     limit: int,
 ) -> dict:
-    """Return metadata and an explicitly selected official instance prefix."""
+    """Purpose: Describe and materialize the configured prefix of an official evaluation task.
+
+    Inputs: Pinned source identity, dataset/term/domain metadata, variate count, and instance limit.
+    Outputs: JSON-ready metadata plus float32 context/actual arrays and the official prediction horizon.
+    Side effects: Sets ``GIFT_EVAL`` while opening source data.
+    """
     dataset = official_dataset(source_root, dataset_name, term)
     require_single_window(dataset)
     if dataset.target_dim != num_variates:
@@ -158,7 +180,13 @@ def describe(
 
 
 def evaluate(source_root: str, payload_path: Path) -> dict:
-    """Score forecasts using only dataset, quantile, and evaluator settings in the payload."""
+    """Purpose: Bridge ShapeFM forecast arrays into the pinned official GIFT-Eval scorer.
+
+    Inputs: Pinned source root and a JSON payload path containing dataset, horizon-aligned forecasts,
+        quantile levels, and validated evaluator options.
+    Outputs: One JSON-ready mapping of official aggregate metric names to finite numeric values.
+    Side effects: Reads the payload/source files, sets ``GIFT_EVAL``, and executes evaluator batches.
+    """
     payload = json.loads(payload_path.read_text(encoding="utf-8"))
     dataset = official_dataset(
         source_root, payload["dataset_name"], payload["term"]
@@ -204,7 +232,12 @@ def evaluate(source_root: str, payload_path: Path) -> dict:
 
 
 def manifest(root: Path, gift_eval_directory: str) -> dict:
-    """Read and validate the task-selected framework's qualified result manifest."""
+    """Purpose: Build a validated configuration manifest from pinned official result files.
+
+    Inputs: Repository root and configured GIFT-Eval checkout directory.
+    Outputs: The 97-entry qualified manifest, source paths, consensus details, and configuration-set hash.
+    Side effects: Reads CSV/JSON files and all candidate ``results/*/all_results.csv`` files.
+    """
     gift_eval_root = root / gift_eval_directory
     csv_path = gift_eval_root / "results/chronos-2/all_results.csv"
     results_root = gift_eval_root / "results"
@@ -317,7 +350,12 @@ def manifest(root: Path, gift_eval_directory: str) -> dict:
 
 
 def main() -> None:
-    """Dispatch the internal dataset-description, evaluation, or manifest bridge command."""
+    """Purpose: Parse and dispatch the isolated GIFT-Eval bridge CLI.
+
+    Inputs: ``describe``, ``evaluate``, or ``manifest`` arguments from the parent subprocess.
+    Outputs: One compact finite JSON record on stdout; argparse/exceptions determine failure status.
+    Side effects: Reads pinned sources/payloads and may set the process ``GIFT_EVAL`` environment variable.
+    """
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", required=True)
     describe_parser = subparsers.add_parser("describe")
