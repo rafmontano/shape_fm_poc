@@ -34,7 +34,8 @@ request a writable DuckDB connection.
 
 The development grid is:
 
-- cleaning: `identity`, `tsclean` (`forecast::tsclean`, context only);
+- preprocessing: `standard` (`forecast::na.interp`) and `robust`
+  (`forecast::tsclean`, default), both context only;
 - transformation: `identity`, `minmax_then_standardize` (context-fitted and
   reversed in the opposite order; constant series are explicit);
 - model: AutoARIMA and pinned Chronos-2;
@@ -66,12 +67,12 @@ touches DuckDB; it commits each returned result with its task completion. Thus a
 later batch failure retains completed earlier batches and restart retries only
 unfinished tasks.
 
-The official framework reports M4 Daily seasonality through
-`get_seasonality("D")` (currently `1` in the pinned environment). ShapeFM passes
-that value to both `forecast::tsclean` and AutoARIMA and constructs their R
+GIFT-Eval supplies the official M4 Daily frequency `D`. The approved POC2
+benchmark metadata records its weekly seasonality as `7`; ShapeFM passes that
+value to preprocessing, AutoARIMA, and evaluation and constructs their R
 `ts` inputs with it; no frequency is hard-coded in the R worker.
 
-The provisional demonstration candidate is identity cleaning,
+The provisional demonstration candidate is robust preprocessing,
 min-max-then-standardize, identity adjustment, and equal-weight AutoARIMA plus
 Chronos-2. It is not selected using test results and is not called “best.”
 The provisional label is not part of scientific experiment identity, so any

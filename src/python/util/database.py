@@ -30,7 +30,7 @@ from .configuration import (
 
 
 # Code constant: latest DuckDB migration version implemented by this source revision.
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 7
 # Bootstrap/interface default: legacy library database path; an explicit path from the
 # coordinator overrides it, and the path does not define scientific identity.
 DEFAULT_DATABASE = Path("data/shapefm.duckdb")
@@ -314,6 +314,12 @@ CREATE TABLE IF NOT EXISTS preprocessed_series (
     method_configuration JSON NOT NULL,
     package_versions JSON NOT NULL,
     parent_result_id VARCHAR,
+    official_frequency VARCHAR NOT NULL,
+    official_seasonality INTEGER NOT NULL CHECK (official_seasonality > 0),
+    preprocessing_status VARCHAR NOT NULL CHECK (preprocessing_status = 'success'),
+    missing_count_before INTEGER NOT NULL CHECK (missing_count_before >= 0),
+    missing_count_after INTEGER NOT NULL CHECK (missing_count_after >= 0),
+    values_changed BOOLEAN NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
     UNIQUE (experiment_id, forecast_instance_id, cleaning_method)
 );
@@ -344,14 +350,42 @@ CREATE TABLE IF NOT EXISTS forecasts (
     parent_result_id VARCHAR,
     scale VARCHAR NOT NULL,
     mean DOUBLE[] NOT NULL,
-    median DOUBLE[] NOT NULL,
-    quantile_levels DOUBLE[] NOT NULL,
-    quantiles DOUBLE[][] NOT NULL,
+    median DOUBLE[],
+    quantile_levels DOUBLE[],
+    quantiles DOUBLE[][],
     runtime_seconds DOUBLE,
     execution_metadata JSON NOT NULL,
     content_hash VARCHAR NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
+    forecast_capability VARCHAR NOT NULL DEFAULT 'probabilistic'
+        CHECK (forecast_capability IN ('probabilistic', 'mean_only')),
+    CHECK (
+        (forecast_capability = 'probabilistic' AND median IS NOT NULL
+            AND quantile_levels IS NOT NULL AND quantiles IS NOT NULL)
+        OR
+        (forecast_capability = 'mean_only' AND median IS NULL
+            AND quantile_levels IS NULL AND quantiles IS NULL)
+    ),
     UNIQUE (experiment_id, variant_id, forecast_instance_id, candidate)
+);
+
+CREATE TABLE IF NOT EXISTS reference_forecasts (
+    reference_forecast_id VARCHAR PRIMARY KEY,
+    dataset_id VARCHAR NOT NULL,
+    series_id VARCHAR NOT NULL,
+    official_m4_series_id VARCHAR NOT NULL,
+    forecast_id VARCHAR NOT NULL,
+    submission_id INTEGER NOT NULL,
+    submission_rank INTEGER NOT NULL,
+    submission_author VARCHAR NOT NULL,
+    horizon INTEGER NOT NULL CHECK (horizon > 0),
+    mean DOUBLE[] NOT NULL,
+    point_semantics VARCHAR NOT NULL,
+    forecast_capability VARCHAR NOT NULL CHECK (forecast_capability = 'mean_only'),
+    source_metadata JSON NOT NULL,
+    content_hash VARCHAR NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
+    UNIQUE (dataset_id, series_id, forecast_id)
 );
 
 CREATE TABLE IF NOT EXISTS forecast_components (
@@ -497,6 +531,29 @@ def migrate_database(path: Path = DEFAULT_DATABASE) -> Path:
         connection.execute(
             "ALTER TABLE experiment_configuration ADD COLUMN IF NOT EXISTS configuration_integrity_hash VARCHAR"
         )
+        connection.execute("ALTER TABLE forecasts ALTER median DROP NOT NULL")
+        connection.execute("ALTER TABLE forecasts ALTER quantile_levels DROP NOT NULL")
+        connection.execute("ALTER TABLE forecasts ALTER quantiles DROP NOT NULL")
+        connection.execute(
+            "ALTER TABLE forecasts ADD COLUMN IF NOT EXISTS forecast_capability "
+            "VARCHAR DEFAULT 'probabilistic'"
+        )
+        connection.execute(
+            "ALTER TABLE forecasts ALTER forecast_capability SET NOT NULL"
+        )
+        # Version 7 keeps historical rows readable: newly added provenance columns
+        # are nullable on upgraded databases and fully populated for new results.
+        for definition in (
+            "official_frequency VARCHAR",
+            "official_seasonality INTEGER",
+            "preprocessing_status VARCHAR",
+            "missing_count_before INTEGER",
+            "missing_count_after INTEGER",
+            "values_changed BOOLEAN",
+        ):
+            connection.execute(
+                f"ALTER TABLE preprocessed_series ADD COLUMN IF NOT EXISTS {definition}"
+            )
         connection.execute(
             "INSERT INTO schema_versions (version, description) VALUES (?, ?) "
             "ON CONFLICT (version) DO NOTHING",
@@ -520,7 +577,17 @@ def migrate_database(path: Path = DEFAULT_DATABASE) -> Path:
         connection.execute(
             "INSERT INTO schema_versions (version, description) VALUES (?, ?) "
             "ON CONFLICT (version) DO NOTHING",
-            [SCHEMA_VERSION, "POC 2 authoritative experiment configuration"],
+            [5, "POC 2 authoritative experiment configuration"],
+        )
+        connection.execute(
+            "INSERT INTO schema_versions (version, description) VALUES (?, ?) "
+            "ON CONFLICT (version) DO NOTHING",
+            [6, "POC 2 archived M4 point forecasts and capabilities"],
+        )
+        connection.execute(
+            "INSERT INTO schema_versions (version, description) VALUES (?, ?) "
+            "ON CONFLICT (version) DO NOTHING",
+            [SCHEMA_VERSION, "Gate 1 missingness and Gate 2 preprocessing provenance"],
         )
         connection.execute("COMMIT")
     except BaseException:

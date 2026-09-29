@@ -1,0 +1,23 @@
+[project]
+name = "shapefm-conventional-classifiers-environment"
+version = "0.1.0"
+description = "Conventional sktime classifiers including Rotation Forest, ROCKET, and distance methods."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "joblib==1.5.2",
+  "numba==0.61.2",
+  "numpy==2.0.2",
+  "pandas==2.3.3",
+  "rdata==1.0.0",
+  "rpy2==3.5.17",
+  "scikit-learn==1.7.2",
+  "sktime==0.40.1",
+]
+
+[tool.uv]
+required-version = "==0.12.18"
+package = false
+environments = [
+  "sys_platform == 'darwin' and platform_machine == 'arm64'",
+  "sys_platform == 'linux' and platform_machine == 'x86_64'",
+]

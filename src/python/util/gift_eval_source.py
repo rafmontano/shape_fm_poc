@@ -3,7 +3,7 @@
 #
 # Purpose: Bounded, read-only streaming adapter for GIFT-Eval Arrow source data.
 # Inputs: A pinned GIFT-Eval Arrow snapshot directory, expected frequency, and optional row limit.
-# Outputs: Source file provenance/metadata and validated finite univariate series streamed in source order.
+# Outputs: Source provenance/metadata and validated univariate series, including missingness.
 # Run from: Imported; not run directly.
 # ==============================================================================
 
@@ -35,14 +35,14 @@ class SourceSeries:
     """Purpose: Represent one validated source row ready for canonical import.
 
     Inputs: Zero-based row and item identity, first-observation timestamp, source
-    frequency code, and finite float32-derived target observations.
-    Outputs: Immutable series state preserving source order and scientific values.
+    frequency code, and float32-derived target observations with missing values intact.
+    Outputs: Immutable series state preserving source order, values, and missingness.
     """
     source_row: int
     source_series_id: str
     start_timestamp: Any
     frequency: str
-    target: tuple[float, ...]
+    target: tuple[float | None, ...]
 
 
 def source_fingerprint(source_dir: Path) -> dict[str, Any]:
@@ -103,8 +103,9 @@ def iter_source_series(
 
     Inputs: Source directory, required frequency code, and optional positive row limit.
     Outputs: ``SourceSeries`` values in source order without materializing the dataset.
-    Notes: Rejects nulls, duplicate IDs, frequency mismatches, empty/non-finite targets,
-    and an empty source; targets retain the source float32 values.
+    Notes: Rejects malformed rows, duplicate IDs, frequency mismatches, infinities,
+    empty targets, and an empty source. Element-level nulls and NaNs are valid missing
+    observations and their positions remain present in the imported raw target.
     """
     arrow_path = source_dir / SOURCE_ARROW_NAME
     seen: set[str] = set()
@@ -118,8 +119,10 @@ def iter_source_series(
                     return
                 values = [batch.column(index)[batch_row].as_py() for index in range(4)]
                 item_id, start, frequency, target_values = values
-                if any(value is None for value in values):
-                    raise ImportValidationError(f"source row {source_row} contains null values")
+                if any(value is None for value in values[:3]) or target_values is None:
+                    raise ImportValidationError(
+                        f"source row {source_row} contains null identity or target structure"
+                    )
                 if item_id in seen:
                     raise ImportValidationError(f"duplicate source item_id: {item_id}")
                 seen.add(item_id)
@@ -129,10 +132,18 @@ def iter_source_series(
                         f"expected {expected_frequency!r}"
                     )
                 target = tuple(target_values)
-                if not target or not all(math.isfinite(value) for value in target):
+                if not target:
                     raise ImportValidationError(
-                        f"source row {source_row} target is empty or non-finite"
+                        f"source row {source_row} target is empty"
                     )
+                for position, value in enumerate(target):
+                    if value is not None and (
+                        not isinstance(value, (int, float)) or math.isinf(value)
+                    ):
+                        raise ImportValidationError(
+                            f"source row {source_row} target position {position} "
+                            "must be numeric, missing, or NaN and cannot be infinite"
+                        )
                 yield SourceSeries(source_row, item_id, start, frequency, target)
                 source_row += 1
     if source_row == 0:

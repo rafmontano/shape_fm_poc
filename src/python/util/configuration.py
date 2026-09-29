@@ -126,6 +126,7 @@ class ExperimentConfiguration:
             "data": data,
             "pipeline": self.resolved["pipeline"],
             "models": self.resolved["models"],
+            "archived_forecasts": self.resolved["archived_forecasts"],
             "evaluation": {
                 "method": evaluation["method"],
                 "gift_eval": {
@@ -208,12 +209,15 @@ class ExperimentConfiguration:
             "source_system": data["source"]["system"],
             "benchmark": {
                 "frequency": benchmark["frequency"],
+                "seasonality": benchmark["seasonality"],
+                "seasonality_source": benchmark["seasonality_source"],
                 "term": benchmark["term"],
                 "prediction_length": benchmark["prediction_length"],
                 "evaluation_windows": benchmark["evaluation_windows"],
                 "boundary_convention": benchmark["boundary_convention"],
             },
             "max_series": self.series_count,
+            "archived_forecasts": deepcopy(self.resolved["archived_forecasts"]),
         }
 
     @property
@@ -234,9 +238,13 @@ class ExperimentConfiguration:
                 "term": data["benchmark"]["term"],
                 "gift_eval_revision": evaluation["gift_eval"]["code_revision"],
             },
-            "cleaning": list(pipeline["cleaning"]["methods"]),
+            # ``cleaning`` remains the internal workflow key and database column
+            # name for schema compatibility; its values are preprocessing modes.
+            "cleaning": list(pipeline["preprocessing"]["modes"]),
+            "default_preprocessing": pipeline["preprocessing"]["default"],
             "transformations": list(pipeline["transformations"]["methods"]),
             "models": deepcopy(self.resolved["models"]),
+            "archived_forecasts": deepcopy(self.resolved["archived_forecasts"]),
             "adjustment": pipeline["adjustment"],
             "combination": deepcopy(pipeline["combination"]),
             "provisional_candidate": deepcopy(evaluation["provisional_candidate"]),
@@ -267,7 +275,7 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
     """
     _require_keys(
         value,
-        {"configuration_version", "experiment", "reproducibility", "data", "pipeline", "models", "evaluation", "execution"},
+        {"configuration_version", "experiment", "reproducibility", "data", "pipeline", "models", "archived_forecasts", "evaluation", "execution"},
         "configuration",
     )
     if value["configuration_version"] != SUPPORTED_CONFIGURATION_VERSION:
@@ -318,6 +326,8 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
     expected_benchmark = {
         "configuration": "m4_daily/D/short",
         "frequency": "D",
+        "seasonality": 7,
+        "seasonality_source": "approved M4 Daily weekly cycle from official frequency",
         "term": "short",
         "domain": "Econ/Fin",
         "num_variates": 1,
@@ -338,7 +348,7 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
     pipeline = _require_mapping(value["pipeline"], "pipeline")
     _require_keys(
         pipeline,
-        {"processes", "cleaning", "transformations", "adjustment", "combination"},
+        {"processes", "preprocessing", "transformations", "adjustment", "combination"},
         "pipeline",
     )
     expected_processes = [
@@ -346,8 +356,13 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
     ]
     if pipeline["processes"] != expected_processes:
         raise ExperimentConfigurationError("pipeline.processes must define ordered Processes 01-06")
-    if pipeline["cleaning"] != {"methods": ["identity", "tsclean"]}:
-        raise ExperimentConfigurationError("unsupported cleaning configuration")
+    if pipeline["preprocessing"] != {
+        "default": "robust",
+        "modes": ["standard", "robust"],
+    }:
+        raise ExperimentConfigurationError(
+            "preprocessing must expose standard and robust with robust as default"
+        )
     if pipeline["transformations"] != {
         "methods": ["identity", "minmax_then_standardize"]
     }:
@@ -394,6 +409,27 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
     ):
         raise ExperimentConfigurationError("unsupported Chronos-2 settings")
 
+    archived = _require_mapping(value["archived_forecasts"], "archived_forecasts")
+    approved_archived = {
+        "m4_smyl": {"submission_id": 118},
+        "m4_fforma": {"submission_id": 245},
+    }
+    enabled_archived = archived.get("enabled")
+    if (
+        archived.get("providers") != approved_archived
+        or not isinstance(enabled_archived, list)
+        or not enabled_archived
+        or len(enabled_archived) != len(set(enabled_archived))
+        or any(provider not in approved_archived for provider in enabled_archived)
+        or archived.get("forecast_capability") != "mean_only"
+        or archived.get("reference_designation") != "official_reference"
+        or set(archived)
+        != {"providers", "enabled", "forecast_capability", "reference_designation"}
+    ):
+        raise ExperimentConfigurationError(
+            "archived_forecasts must select only the approved Smyl/FFORMA mappings"
+        )
+
     evaluation = _require_mapping(value["evaluation"], "evaluation")
     _require_keys(
         evaluation,
@@ -421,7 +457,7 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
         "axis": None,
         "mask_invalid_label": True,
         "allow_nan_forecast": False,
-        "seasonality": "official get_seasonality(freq)",
+        "seasonality": "configured official benchmark seasonality",
     }
     if evaluation["options"] != expected_evaluation_options:
         raise ExperimentConfigurationError("unsupported GIFT-Eval options")
@@ -535,6 +571,7 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
         "chronos_worker",
         "r_preprocess_worker",
         "r_auto_arima_worker",
+        "r_m4comp2018_worker",
     }
     if set(paths) != required_paths or any(
         not isinstance(path, str) or not path for path in paths.values()
@@ -559,7 +596,7 @@ def resolve_experiment_configuration(value: dict[str, Any]) -> ExperimentConfigu
     original = deepcopy(value)
     resolved = deepcopy(value)
     series_count = int(resolved["data"]["selection"]["count"])
-    cleaning_count = len(resolved["pipeline"]["cleaning"]["methods"])
+    cleaning_count = len(resolved["pipeline"]["preprocessing"]["modes"])
     transformation_count = len(resolved["pipeline"]["transformations"]["methods"])
     variant_count = cleaning_count * transformation_count
     model_count = len(resolved["models"])

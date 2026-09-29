@@ -224,19 +224,19 @@ class PersistentWorkerTests(unittest.TestCase):
         """R cleaning and forecasting entry points preserve their JSON response schemas."""
         root = Path(__file__).parents[3]
         clean_payload = {
-            "action": "clean",
+            "action": "preprocess",
             "jobs": [
                 {
-                    "id": "identity",
+                    "id": "standard",
                     "context": [1, None, 3, 4],
-                    "method": "identity",
-                    "seasonality": 1,
+                    "mode": "standard",
+                    "seasonality": 7,
                 },
                 {
-                    "id": "tsclean",
+                    "id": "robust",
                     "context": [1, 2, 100, 4, 5, 6, 7, 8],
-                    "method": "tsclean",
-                    "seasonality": 1,
+                    "mode": "robust",
+                    "seasonality": 7,
                 },
             ],
         }
@@ -273,17 +273,23 @@ class PersistentWorkerTests(unittest.TestCase):
             responses.append(json.loads(completed.stdout))
 
         clean, forecast = responses
-        self.assertEqual(
-            clean["results"],
-            [
-                {"id": "identity", "values": [1, 3, 4]},
-                {"id": "tsclean", "values": list(range(1, 9))},
-            ],
-        )
+        standard, robust = clean["results"]
+        self.assertEqual(standard["id"], "standard")
+        self.assertEqual(standard["values"], [1, 2, 3, 4])
+        self.assertEqual(standard["missing_count_before"], 1)
+        self.assertEqual(standard["missing_count_after"], 0)
+        self.assertEqual(robust["id"], "robust")
+        self.assertEqual(robust["values"], list(range(1, 9)))
         expected = [13, 14, 15]
-        self.assertEqual(forecast["results"][0]["mean"], expected)
-        self.assertEqual(forecast["results"][0]["median"], expected)
-        self.assertEqual(forecast["results"][0]["quantiles"], [expected] * 9)
+        forecast_result = forecast["results"][0]
+        self.assertEqual(forecast_result["mean"], expected)
+        self.assertEqual(forecast_result["median"], expected)
+        self.assertEqual(forecast_result["quantiles"], [expected] * 9)
+        self.assertEqual(forecast_result["requested_method_id"], "auto_arima_forec")
+        self.assertEqual(forecast_result["executed_method_id"], "auto_arima_forec")
+        self.assertFalse(forecast_result["fallback_used"])
+        self.assertIsNone(forecast_result["fallback_reason"])
+        self.assertEqual(forecast_result["provenance"]["package"], "forecast")
         for response in responses:
             self.assertEqual(set(response), {"results", "packages"})
             self.assertEqual(set(response["packages"]), {"R", "forecast", "jsonlite"})

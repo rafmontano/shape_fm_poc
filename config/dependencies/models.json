@@ -1,0 +1,18 @@
+{
+  "chronos_2": {
+    "repository": "amazon/chronos-2",
+    "revision": "29ec3766d36d6f73f0696f85560a422f50e8498c",
+    "required_files": {
+      "config.json": "ef1143bfdc9c0376d9a056eefca46cb4b1ec3d0ffacd541ff56feb40fb708031",
+      "model.safetensors": "ddcda3c7508bf2528087723e98a20707cc04b7f370ae275a9fd88078ddba4f42"
+    }
+  },
+  "mantis": {
+    "repository": "paris-noah/Mantis-8M",
+    "revision": "bc7d5ab40c02133386a28e2c127f35c17c86901d",
+    "required_files": {
+      "config.json": "c9e8b1e5d9b95510c7d446d1e1ef46d5d36c3eae0c7a9b409c8d3c6c7ce7837c",
+      "model.safetensors": "d5077b60438c477a627feeef0e7365588bdb351eaa5b5bcfb0b3d5fc5804f8c8"
+    }
+  }
+}

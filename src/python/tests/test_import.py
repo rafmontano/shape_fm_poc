@@ -10,6 +10,7 @@
 """Verify M4 import identity, batching, retries, window construction, and atomic DuckDB persistence with synthetic sources."""
 
 import json
+import math
 import shutil
 import tempfile
 import unittest
@@ -30,6 +31,7 @@ from util.configuration import (
     validate_config,
 )
 from util.database import ShapeFMDatabase, initialize_experiment_database, migrate_database
+from util.gift_eval_source import iter_source_series
 from util.import_execution import (
     ImportCoordinator,
     SeriesResult,
@@ -180,6 +182,50 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(result.window["validation_start"], 3)
         self.assertEqual(result.window["test_start"], 17)
         self.assertRegex(result.content_hash, r"^[0-9a-f]{64}$")
+
+
+class MissingObservationImportTests(unittest.TestCase):
+    """Verify Gate 1 preserves missingness while rejecting infinities."""
+
+    def setUp(self):
+        self.temp = Path(tempfile.mkdtemp())
+
+    def tearDown(self):
+        shutil.rmtree(self.temp)
+
+    def test_missing_and_nan_positions_are_preserved(self):
+        """Arrow null and NaN observations survive streaming and canonical storage."""
+        source = self.temp / "source"
+        values = [float(value) for value in range(30)]
+        values[3] = None
+        values[7] = float("nan")
+        write_source(source, [values])
+        streamed = next(iter_source_series(source, "D", 1))
+        self.assertIsNone(streamed.target[3])
+        self.assertTrue(math.isnan(streamed.target[7]))
+
+        database = self.temp / "missing.duckdb"
+        initialize_test_database(database)
+        with ImportCoordinator(database) as coordinator:
+            result = coordinator.import_m4_daily(
+                source, config(1), "revision", workers=1, batch_size=1
+            )
+        self.assertEqual(result["series_count"], 1)
+        with ShapeFMDatabase.open(database) as database_api:
+            stored = database_api.get_series("m4_daily", "0").target
+        self.assertIsNone(stored[3])
+        # DuckDB normalizes IEEE NaN to SQL NULL in FLOAT[]; both original
+        # missing positions remain missing and every finite value is unchanged.
+        self.assertIsNone(stored[7])
+        self.assertEqual(stored[2], 2.0)
+
+    def test_infinite_observation_is_rejected_clearly(self):
+        """Positive and negative infinity are malformed rather than missing."""
+        for index, value in enumerate((float("inf"), float("-inf"))):
+            source = self.temp / f"source-{index}"
+            write_source(source, [[1.0, value, 3.0]])
+            with self.assertRaisesRegex(ImportValidationError, "cannot be infinite"):
+                list(iter_source_series(source, "D", 1))
 
 
 class DatabaseTests(unittest.TestCase):

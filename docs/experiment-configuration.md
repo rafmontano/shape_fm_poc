@@ -30,7 +30,7 @@ host/code provenance, result, or failure.
 | `data.benchmark` | `m4_daily/D/short`, `Econ/Fin`, one variate, daily frequency, 14-step horizon, one window, zero-based end-exclusive boundaries | import, planning, workers, evaluation |
 | `data.selection` | deterministic `first_official`, count `100` | import and plan |
 | `pipeline.processes` | ordered IDs/names 01–06 | process state, CLI selection, status |
-| `pipeline.cleaning.methods` | `identity`, `tsclean` | Process 02 task creation and R payload |
+| `pipeline.preprocessing` | modes `standard`, `robust`; default `robust` | Process 02 task creation and R payload |
 | `pipeline.transformations.methods` | `identity`, `minmax_then_standardize` | Process 03 task creation and worker payload |
 | `pipeline.adjustment` | `identity` | variant identity |
 | `pipeline.combination` | equal weight; AutoARIMA `0.5`, Chronos-2 `0.5` | Process 05 payload and provenance |
@@ -38,7 +38,8 @@ host/code provenance, result, or failure.
 | `models.chronos_2` | repository, revision, package version, float32, nine quantiles, and batch/cross-learning policy | Process 04 Python/Dask payload and preflight |
 | `evaluation.method` | `gift_eval` | Process 06 selection |
 | `evaluation.gift_eval` | code revision, locked environment, submodule directory | bridge launch and distributed preflight |
-| `evaluation.options` | axis, invalid-label, NaN, and official seasonality policy | Process 06 payload |
+| `data.benchmark.frequency`, `seasonality` | official GIFT-Eval frequency and approved M4 cycle (`D`, `7`) | Gates 1–6 |
+| `evaluation.options` | axis, invalid-label, NaN, and benchmark seasonality policy | Process 06 payload |
 | `evaluation.provisional_candidate` | development candidate selector | result export logic |
 | `evaluation.submission_metadata` | explicit draft/non-submittable fields | export validation only |
 | `execution.default` | mode, process/import workers, batch/in-flight/retry/timeout/thread controls, memory floors, one writer | ordinary `run` and execution provenance |

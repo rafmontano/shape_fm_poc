@@ -16,7 +16,7 @@ Experiment (research object), an Evidence Report (information object), and the
 Research Schema (data structure). They move through one six-process cycle:
 
 ```text
-01 Import → 02 Clean → 03 Transform → 04 Forecast → 05 Combine → 06 Evaluate
+01 Import → 02 Preprocess → 03 Transform → 04 Forecast → 05 Combine → 06 Evaluate
      ▲                                                                    │
      └──────────────────────────── Iterate ────────────────────────────────┘
 ```
@@ -33,10 +33,20 @@ The technical view has three layers:
 1. **DuckDB data layer.** One database stores canonical series, evaluation
    boundaries, scientific results, task/attempt state, and provenance.
 2. **Python/R application layer.** Python coordinates and is the sole writable
-   database owner. R receives ordinary JSON jobs for specialised `tsclean` and
-   AutoARIMA computation and returns ordinary JSON results.
+   database owner. R receives ordinary JSON jobs for approved `standard` and
+   `robust` preprocessing and allowlisted forecast-method computation, then
+   returns ordinary JSON results.
 3. **Dask/concurrent.futures execution layer.** Bounded local or distributed
    queues execute serializable work. Workers never open writable DuckDB.
+
+Gate 3 owns fitted transformations and their inversion state. The R forecast
+pool receives an already prepared numeric series at Gate 4 and returns
+independent probabilistic base forecasts; it does not interpret transformation
+expressions, combine forecasts, evaluate them, or write to DuckDB. The common
+request, result, probabilistic assumptions, and visible seasonal-naive fallback
+are documented in [`forecast-methods.md`](forecast-methods.md).
+Gate 1 missingness preservation, Gate 2 modes, and evaluation masking are
+documented in [`preprocessing.md`](preprocessing.md).
 
 ## Identity, transactions, and restart
 

@@ -52,6 +52,13 @@ class ExperimentConfigurationTests(unittest.TestCase):
         self.assertEqual(configuration.date, "2026-09-28")
         self.assertEqual(configuration.seed, 1234)
         self.assertEqual(
+            configuration.resolved["pipeline"]["preprocessing"],
+            {"default": "robust", "modes": ["standard", "robust"]},
+        )
+        self.assertEqual(
+            configuration.resolved["data"]["benchmark"]["seasonality"], 7
+        )
+        self.assertEqual(
             configuration.resolved["derived"]["expected_task_counts"],
             {"1": 100, "2": 200, "3": 400, "4": 800, "5": 1200, "6": 12},
         )
@@ -87,6 +94,20 @@ class ExperimentConfigurationTests(unittest.TestCase):
                 with self.assertRaisesRegex(ExperimentConfigurationError, "seed"):
                     initialize_experiment_database(database, invalid)
                 self.assertFalse(database.exists())
+
+    def test_archived_provider_selection_is_bounded_to_approved_ids(self) -> None:
+        """Either approved archived provider can be enabled, but no other ID can."""
+        original = json.loads(REFERENCE_CONFIGURATION.read_text(encoding="utf-8"))
+        fforma = deepcopy(original)
+        fforma["archived_forecasts"]["enabled"] = ["m4_fforma"]
+        self.assertEqual(
+            resolve_experiment_configuration(fforma).resolved["archived_forecasts"]["enabled"],
+            ["m4_fforma"],
+        )
+        invalid = deepcopy(original)
+        invalid["archived_forecasts"]["enabled"] = ["m4_other"]
+        with self.assertRaisesRegex(ExperimentConfigurationError, "approved"):
+            resolve_experiment_configuration(invalid)
 
     def test_database_preserves_original_resolved_metadata_and_process_state(self) -> None:
         """Creation stores both documents, required metadata, digest, and six pending processes."""

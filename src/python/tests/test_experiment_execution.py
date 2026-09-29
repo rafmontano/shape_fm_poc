@@ -276,7 +276,7 @@ class TransactionTests(unittest.TestCase):
              domain, num_variates, metadata)
             VALUES ('benchmark', 'revision', 'm4_daily/D/short', 'm4_daily',
                     'D', 'short', 2, 1, 'Econ/Fin', 1,
-                    '{"official_seasonality":1}')"""
+                    '{"official_seasonality":7}')"""
         )
         for index in range(2):
             connection.execute(
@@ -347,7 +347,7 @@ class TransactionTests(unittest.TestCase):
             connection.execute(
                 """INSERT INTO experiment_tasks
                 (task_id, experiment_id, stage, forecast_instance_id, candidate, status)
-                VALUES (?, 'experiment', 2, ?, 'identity', 'pending')""",
+                VALUES (?, 'experiment', 2, ?, 'robust', 'pending')""",
                 [f"task-{index}", f"instance-{index}"],
             )
         calls = 0
@@ -363,7 +363,18 @@ class TransactionTests(unittest.TestCase):
             if calls == 2:
                 raise RuntimeError("second external batch failed")
             job = payload["jobs"][0]
-            return {"results": [{"id": job["id"], "values": job["context"]}], "packages": {}}
+            return {
+                "results": [{
+                    "id": job["id"],
+                    "values": job["context"],
+                    "preprocessing_mode": job["mode"],
+                    "status": "success",
+                    "missing_count_before": 0,
+                    "missing_count_after": 0,
+                    "values_changed": False,
+                }],
+                "packages": {},
+            }
 
         self.coordinator._r_worker = failing_worker
         with self.assertRaisesRegex(RuntimeError, "Process 2 failed"):
@@ -378,7 +389,16 @@ class TransactionTests(unittest.TestCase):
 
         self.coordinator._r_worker = lambda payload: {
             "results": [
-                {"id": job["id"], "values": job["context"]} for job in payload["jobs"]
+                {
+                    "id": job["id"],
+                    "values": job["context"],
+                    "preprocessing_mode": job["mode"],
+                    "status": "success",
+                    "missing_count_before": 0,
+                    "missing_count_after": 0,
+                    "values_changed": False,
+                }
+                for job in payload["jobs"]
             ],
             "packages": {},
         }
@@ -391,6 +411,16 @@ class TransactionTests(unittest.TestCase):
         )
         self.assertEqual(result["selected"], 1)
         self.assertEqual(connection.execute("SELECT count(*) FROM preprocessed_series").fetchone()[0], 2)
+        provenance = connection.execute(
+            """SELECT DISTINCT cleaning_method, official_frequency,
+                      official_seasonality, preprocessing_status,
+                      missing_count_before, missing_count_after, values_changed
+               FROM preprocessed_series"""
+        ).fetchall()
+        self.assertEqual(
+            provenance,
+            [("robust", "D", 7, "success", 0, 0, False)],
+        )
         self.assertEqual(
             connection.execute(
                 "SELECT attempt_count FROM experiment_tasks ORDER BY task_id"
@@ -464,7 +494,17 @@ class TransactionTests(unittest.TestCase):
             values = [3.0, 3.0]
             return {
                 "results": [
-                    {"id": job["id"], "mean": values, "median": values, "quantiles": [values] * 9}
+                    {
+                        "id": job["id"],
+                        "mean": values,
+                        "median": values,
+                        "quantiles": [values] * 9,
+                        "requested_method_id": "auto_arima_forec",
+                        "executed_method_id": "snaive_forec",
+                        "fallback_used": True,
+                        "fallback_reason": "controlled model-fit failure",
+                        "provenance": {"method_id": "snaive_forec"},
+                    }
                 ],
                 "packages": {"forecast": "test"},
             }
@@ -473,6 +513,13 @@ class TransactionTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Process 4 failed"):
             self.coordinator.run_process("experiment", 4, workers=1, batch_size=1)
         self.assertEqual(connection.execute("SELECT count(*) FROM forecasts").fetchone()[0], 1)
+        provenance = json.loads(
+            connection.execute("SELECT execution_metadata FROM forecasts").fetchone()[0]
+        )["forecast_method"]
+        self.assertEqual(provenance["requested_method_id"], "auto_arima_forec")
+        self.assertEqual(provenance["executed_method_id"], "snaive_forec")
+        self.assertTrue(provenance["fallback_used"])
+        self.assertEqual(provenance["fallback_reason"], "controlled model-fit failure")
         self.assertTrue(received_settings)
         self.assertTrue(all(
             settings == self.coordinator.configuration.auto_arima_settings
@@ -687,7 +734,7 @@ class ConfiguredPlanningTests(unittest.TestCase):
             "term": "short",
             "prediction_length": 14,
             "window_count": 1,
-            "seasonality": 1,
+            "seasonality": 7,
             "domain": "Econ/Fin",
             "num_variates": 1,
             "available_instances": 4_227,

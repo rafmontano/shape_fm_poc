@@ -51,7 +51,7 @@ rsconnect/
 # Legacy generated Stage 1 output (no longer authoritative)
 /stage/
 
-# Immutable downloaded source, model weights, caches, and canonical DuckDB database
+# Setup-managed data, model weights, reports, downloads, and asset caches
 /data/
 /models/
 /.cache/
@@ -60,8 +60,11 @@ rsconnect/
 # Generated environments inside independently locked uv projects
 /environments/*/.venv/
 
-# Repository-local tools and Python environment
-/.tools/
+# Repository-local tools, interpreters, and package caches
+/.tools/uv/
+/.tools/cache/
+/.tools/python/
+/.tools/renv-cache/
 /.venv/
 __pycache__/
 *.py[cod]
@@ -80,3 +83,16 @@ __pycache__/
 /renv/cellar/
 /renv/sandbox/
 /renv/lock/
+
+# Full-rebuild archives (moves only; suffix is DDMMYY)
+/.venv_[0-9][0-9][0-9][0-9][0-9][0-9]/
+/data_[0-9][0-9][0-9][0-9][0-9][0-9]/
+/models_[0-9][0-9][0-9][0-9][0-9][0-9]/
+/results_[0-9][0-9][0-9][0-9][0-9][0-9]/
+/.cache_[0-9][0-9][0-9][0-9][0-9][0-9]/
+/.tools/uv_[0-9][0-9][0-9][0-9][0-9][0-9]/
+/.tools/cache_[0-9][0-9][0-9][0-9][0-9][0-9]/
+/.tools/python_[0-9][0-9][0-9][0-9][0-9][0-9]/
+/.tools/renv-cache_[0-9][0-9][0-9][0-9][0-9][0-9]/
+/environments/*/.venv_[0-9][0-9][0-9][0-9][0-9][0-9]/
+/renv/library_[0-9][0-9][0-9][0-9][0-9][0-9]/

@@ -1,125 +1,176 @@
-# Historical environment reconstruction record
+# Environment installation and verification
 
-> **Historical document.** This preserves how the locked environments were
-> originally built. It is not an active execution guide and its former console
-> and workflow commands have been removed. Current commands use
-> `src/python/00_main.py` with `--locked --no-sync` as documented in the README.
-
-Installed environments must never be copied between macOS and Ubuntu. Git
-stores declarations, interpreter selections, activation files, and lockfiles;
-each worker recreates environments locally. The NAS stores data, weights, and
-results—not executable environments.
-
-## Core Python environment
-
-The importer and distributed execution layer use uv 0.12.18, uv-managed
-CPython 3.12.14, and one `uv.lock` resolved for macOS ARM64 and Linux x86_64.
-Dask and Distributed are pinned together at 2026.8.0; scheduler and workers
-must report that exact pair before an experiment starts.
+The repository has one installation interface for the complete approved
+dependency superset:
 
 ```sh
-mkdir -p .tools/uv
-curl -LsSf https://astral.sh/uv/0.12.18/install.sh | \
-  env UV_INSTALL_DIR="$PWD/.tools/uv" UV_NO_MODIFY_PATH=1 sh
-export UV_PYTHON_INSTALL_DIR="$PWD/.tools/python"
-export UV_CACHE_DIR="$PWD/.tools/cache"
-export UV_PYTHON_PREFERENCE=only-managed
-.tools/uv/uv python install 3.12.14
-.tools/uv/uv sync --locked
+scripts/setup.sh
 ```
 
-Run Python tools with `.tools/uv/uv run --locked`.
+Run it from the repository root on macOS Apple silicon or Ubuntu x86-64. It
+installs every environment; selective component installation is deliberately
+unsupported. Environments are always built locally and must not be copied
+between operating systems or machines.
 
-Each machine restores this same lockfile independently. Never copy `.venv`
-between machines. The two-machine launcher runs `uv sync --locked` on both
-hosts and rejects a worker if Python, Dask, Git, configuration, R, GIFT-Eval,
-Chronos, checkpoint, CUDA, or GPU identity differs from the expected contract.
+## Prerequisites
 
-## Official GIFT-Eval environment
+Install these system prerequisites before running setup:
 
-GIFT-Eval is an HTTPS Git submodule pinned by the parent repository. Either
-clone ShapeFM with its submodules:
+- Git with HTTPS access, including Git submodule support;
+- a bootstrap Python 3.10 or newer interpreter for the setup verifier;
+- R 4.6.1 and the operating-system build libraries required by the locked R
+  packages; and
+- on NVIDIA Linux hosts, a compatible system NVIDIA driver.
+
+The script installs and pins uv 0.12.18 under `.tools/uv` and uses uv-managed
+project-local Python interpreters. It does not use Conda. The committed renv
+activation and `renv.lock` provide project-local R isolation. Setup never
+installs, replaces, or removes system R, system Python, Git, GPU drivers, global
+caches, shell startup settings, or user directories.
+
+## Install and verify
+
+These two installation commands are equivalent:
 
 ```sh
-git clone --recurse-submodules <shape-fm-repository-url>
+scripts/setup.sh
+scripts/setup.sh install all
 ```
 
-or initialize them after a normal clone:
+Normal installation is non-destructive and idempotent. It creates missing
+project directories, initializes pinned submodules, restores `renv.lock`,
+synchronizes all six `uv.lock` files, acquires pinned data and model assets,
+and runs the complete verification. Existing environments, data, models,
+results, and valid caches are retained and reused; no working folder is moved,
+renamed, or removed.
+
+Run a complete read-only audit without installing or downloading anything:
 
 ```sh
-git submodule update --init --recursive
+scripts/setup.sh verify
 ```
 
-Its full software stack is isolated from the lightweight ShapeFM importer:
+Verification checks repository structure, submodule revisions, the R lock and
+installed packages, M4 data objects, all Python locks and critical imports,
+model and dataset identities, and TensorFlow and PyTorch device operations. It
+returns nonzero for missing or mismatched required components. A supported
+CPU-only host passes dependency validation while reporting unavailable
+accelerator workloads as warnings.
+
+## Full rebuild without deletion
+
+The only rebuild command is:
 
 ```sh
-.tools/uv/uv sync --project environments/gift-eval --locked
-environments/gift-eval/.venv/bin/python -c 'import gift_eval'
+scripts/setup.sh rebuild all --confirm-delete
 ```
 
-The parent submodule reference and `config/dependencies/gift_eval.json` pin code
-commit `4d5ab3fa0fe7451bbf59bb1ff6dd76e6e414d64a`. Do not edit the submodule.
+The confirmation flag retains its approved interface name, but rebuild never
+deletes folders. It verifies the repository root and prints the complete move
+plan before changing anything. One local date is used for every archive, with
+the form `original-folder-name_DDMMYY`. Managed locations include the root and
+five specialist virtual environments, `renv/library`, `data`, `models`,
+`results`, and project-local asset, uv, Python, and renv caches.
 
-## Gate 00 data acquisition
+Every source and destination is constrained to the repository. If any dated
+destination already exists, the whole rebuild stops before its first move; it
+never overwrites or merges an earlier archive. A failed move stops immediately
+and names the affected folder. After all moves succeed, setup recreates the
+required structure and performs a complete installation.
 
-One researcher-facing operation initializes the submodule when needed, restores
-both locked environments, downloads only pinned M4 Daily, validates code and
-data, and reports what is ready:
+The active setup-owned folders and every `_DDMMYY` archive form are ignored by
+repository-relative Git rules. Coverage includes root and specialist `.venv`
+folders, `renv/library`, `data`, `models`, `results`, `.cache`, and the local
+uv, interpreter, package, and renv caches under `.tools`. Incomplete `.part`
+downloads, Hugging Face incomplete files, and uv temporary interpreter files
+are inside those ignored cache roots; renv staging and other transient private
+state remain ignored under `renv`. The rules do not ignore environment manifests,
+lockfiles, source, configuration, documentation, tests, or unrelated similarly
+named paths.
 
-```sh
-Rscript workflows/gate_00_setup/01_prepare_gift_eval.R
-```
+## Python environment inventory
 
-The default source is `data/source/gift_eval`; the canonical database is
-`data/shapefm.duckdb`. `SHAPEFM_GIFT_EVAL_ROOT` and `SHAPEFM_DATABASE` are
-optional overrides. To verify without acquisition, run
-`02_verify_gift_eval.R`.
+Each environment has a readable `pyproject.toml`, committed `uv.lock`, local
+`.venv`, and independent import/version checks.
 
-The locked acquisition command always uses dataset revision
-`30841734ac5cfddbd0c3bad6d09d2b6b32becbb0`:
+| Environment | Location | Purpose |
+| --- | --- | --- |
+| Core pipeline | repository root | DuckDB, Arrow, Dask, Hugging Face acquisition, and shared execution |
+| GIFT-Eval | `environments/gift-eval` | pinned official GIFT-Eval submodule and evaluation dependencies |
+| Chronos-2 | `environments/chronos-2` | Chronos 2.2.2 and its compatible PyTorch stack |
+| Mantis | `environments/mantis` | Mantis 1.1.0 and its separate compatible PyTorch stack |
+| Conventional classifiers | `environments/classifiers` | sktime 0.40.1, scikit-learn 1.7.2, Rotation Forest, ROCKET, and distance classifiers |
+| TensorFlow classifiers | `environments/tensorflow` | InceptionTime and an isolated platform-specific TensorFlow stack |
 
-```sh
-.tools/uv/uv run --locked shapefm-acquire m4_daily
-.tools/uv/uv run --locked shapefm-acquire complete  # later; not Stage 1
-```
+TensorFlow is never combined with PyTorch. Mantis and Chronos-2 remain separate
+because their foundation-model dependency ranges can evolve independently.
 
-It resumes Hugging Face downloads, skips a hash-valid snapshot, validates Arrow
-and metadata, and writes an ignored local `source-manifest.json` with file
-hashes. Dataset licence and citation references are recorded in the dependency
-declaration.
+## R dependency superset
 
-## R environment
+`renv.lock` is the authoritative definition and contains the union of the
+current ShapeFM packages and the previous project's analysis, classification,
+parallelism, plotting, and reporting packages, including all transitive
+dependencies. Setup runs `renv::restore()` and never takes an uncontrolled
+snapshot.
 
-Foundation Stage 1 requires R 4.6.1 and renv 1.2.4. On Ubuntu, install the same R version,
-preferably with rig, before restoring packages.
+`M4comp2018` 0.2.0 is pinned to its established immutable GitHub release
+tarball. Verification loads the package and checks that both `M4` and
+`submission_info` are available. `scmamp` 0.3.2 is pinned to Git commit
+`3cf4d8b9759769cdf20771afa0efc33a5265c7f9`. DBI, DuckDB, forecast,
+tsfeatures, dtw, xgboost, caret, tidyverse component packages, parallel tools,
+graphics packages, reticulate, cachem, and memoise are also locked in the
+project-local library.
 
-```sh
-RENV_PATHS_CACHE="$PWD/.tools/renv-cache" \
-  Rscript -e 'renv::restore(prompt = FALSE)'
-```
+## GPU and platform behavior
 
-Foundation Stage 1 uses DBI and DuckDB. POC 1 adds `forecast` for `tsclean` and
-AutoARIMA plus `jsonlite` for the isolated R worker protocol. R Arrow remains
-unnecessary. Training environments are deliberately deferred to POC 2, which
-will address Mantis and MOMENT separately.
+On Apple silicon, the TensorFlow environment uses TensorFlow 2.18.1 with
+TensorFlow Metal 1.2.0; PyTorch uses MPS when available. On Ubuntu x86-64 with
+an NVIDIA driver and GPU, the Linux locks provide the CUDA-enabled TensorFlow
+and PyTorch dependencies inside their respective environments. CPU-only Linux
+installation remains supported for compatible operations.
 
-## Chronos-2 environment (POC 1)
+Verification independently reports TensorFlow version, CUDA build status,
+visible GPU or Metal devices, selected device, and a small tensor operation. It
+also reports PyTorch version, CUDA runtime, CUDA or MPS availability, device
+name, selected device, and a small tensor operation for each PyTorch
+environment. `nvidia-smi` is diagnostic only.
 
-Chronos-2 is isolated and locked separately:
+On Linux, NVIDIA library and executable directories are discovered from the
+environment being checked and applied only to that child process. Setup never
+writes a global `LD_LIBRARY_PATH`, changes shell configuration, or exposes
+TensorFlow's NVIDIA packages to PyTorch (or vice versa).
 
-```sh
-.tools/uv/uv sync --project environments/chronos-2 --locked
-```
+## Data, models, timeouts, and retries
 
-The model is `amazon/chronos-2` at revision
-`29ec3766d36d6f73f0696f85560a422f50e8498c`, used through
-`chronos-forecasting==2.2.2`. Weights are cached outside Git. The
-`sequential_safe` profile may auto-select an available accelerator.
-Hardware-specific profiles are strict: the Mac profile requires MPS and the
-Ubuntu profile requires CUDA plus an RTX 5090; neither may silently fall back
-to CPU. The actual backend, device, float32 dtype, package versions, and model
-revision are recorded. Environments are restored independently on macOS and
-Ubuntu rather than copied between them. See
-[local execution](local-execution.md) for exact validation commands.
+The GIFT-Eval code and M4 Daily data identities remain pinned in
+`config/dependencies/gift_eval.json`. Chronos-2 and Mantis repository revisions
+and required-file SHA-256 checksums are pinned in
+`config/dependencies/models.json`. Valid local snapshots are reused.
 
-POC 1 also adds locked R packages `forecast` 8.24.0 and `jsonlite` 2.0.0.
+Network operations use a 7,200-second default timeout and at least three
+attempts with a delay. Override these values for slow networks with
+`SHAPEFM_DOWNLOAD_TIMEOUT`, `SHAPEFM_DOWNLOAD_ATTEMPTS` (minimum 3), and
+`SHAPEFM_DOWNLOAD_RETRY_DELAY`. Hugging Face timeout variables are scoped to
+the acquisition process. Ordinary files download through `.part` names and
+become final only after validation; Hugging Face's incomplete-file cache and
+the committed checksums provide the same publication boundary for model
+snapshots. Exhausted retries produce a final corrective error.
+
+## Reports and recovery
+
+A successful installation writes a timestamped report to
+`results/installation-report_YYYYMMDDTHHMMSSZ.txt`. Because read-only
+verification cannot create files, `scripts/setup.sh verify` prints the same
+report to standard output. Reports show date, platform, CPU architecture,
+accelerator and driver status, R, Python, uv and renv versions, every
+environment and critical package version, submodule and asset identities,
+device checks, warnings, and failures. They never include credentials, tokens,
+or sensitive environment variables.
+
+After an interrupted normal installation, correct the reported prerequisite or
+network error and run `scripts/setup.sh` again. Existing valid downloads and
+installed packages are reused; temporary or incomplete downloads are not
+treated as valid. After an interrupted rebuild move, do not merge folders or
+delete archives. Resolve the named filesystem problem, preserve the dated
+folders, and choose a later rebuild date if the collision safeguard reports an
+existing destination.

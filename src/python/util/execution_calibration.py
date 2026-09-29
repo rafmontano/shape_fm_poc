@@ -330,7 +330,7 @@ def calibrate(
                     "id": f"auto-{index}",
                     "context": contexts[index % 3]["context"],
                     "horizon": benchmark["prediction_length"],
-                    "seasonality": 1 if benchmark["frequency"] == "D" else None,
+                    "seasonality": benchmark["seasonality"],
                 }
                 for index in range(12)
             ]
@@ -849,12 +849,13 @@ def calibrate_dask_profile(
                     {
                         "id": f"clean/{method}/{item['series_id']}",
                         "context": item["context"],
-                        "method": method,
-                        "seasonality": 1,
+                        "mode": method,
+                        "seasonality": config["data"]["benchmark"]["seasonality"],
+                        "official_frequency": config["data"]["benchmark"]["frequency"],
                         "series_id": item["series_id"],
                     }
                     for item in contexts
-                    for method in config["pipeline"]["cleaning"]["methods"]
+                    for method in config["pipeline"]["preprocessing"]["modes"]
                 ]
                 cleaned: dict[str, dict[str, Any]] = {}
                 for batch, response in run_batches(
@@ -888,11 +889,11 @@ def calibrate_dask_profile(
 
                 transform_jobs = [
                     {
-                        "id": f"transform/{cleaned_job['method']}/{method}/{cleaned_job['series_id']}",
+                        "id": f"transform/{cleaned_job['mode']}/{method}/{cleaned_job['series_id']}",
                         "values": cleaned_job["values"],
                         "method": method,
                         "series_id": cleaned_job["series_id"],
-                        "cleaning": cleaned_job["method"],
+                        "cleaning": cleaned_job["mode"],
                     }
                     for cleaned_job in cleaned.values()
                     for method in config["pipeline"]["transformations"]["methods"]
@@ -930,7 +931,7 @@ def calibrate_dask_profile(
                         "id": f"model/auto_arima/{item['id']}",
                         "context": item["context"],
                         "horizon": config["data"]["benchmark"]["prediction_length"],
-                        "seasonality": 1,
+                        "seasonality": config["data"]["benchmark"]["seasonality"],
                     }
                     for item in transformed.values()
                 ]

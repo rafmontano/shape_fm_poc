@@ -1,0 +1,411 @@
+#!/usr/bin/env Rscript
+# ==============================================================================
+# test_forecast_methods.R
+#
+# Purpose: Verify the approved nine-method R forecast pool and fallback contract.
+# Inputs: Project R library plus src/r/util/forecast_methods.R.
+# Outputs: Test progress on stdout and nonzero exit on assertion failure; writes nothing.
+# Run from: Rscript src/r/tests/test_forecast_methods.R
+# ==============================================================================
+
+source("src/r/util/forecast_methods.R")
+
+# Test constant: exact approved identifiers and FFORMA order.
+APPROVED_METHODS <- c(
+  "auto_arima_forec",
+  "ets_forec",
+  "nnetar_forec",
+  "tbats_forec",
+  "stlm_ar_forec",
+  "rw_drift_forec",
+  "thetaf_forec",
+  "naive_forec",
+  "snaive_forec"
+)
+# Test constant: current GIFT-Eval probabilistic levels.
+GIFT_EVAL_QUANTILES <- seq(0.1, 0.9, by = 0.1)
+# Test constant: deterministic positive seasonal series long enough for STL and TBATS.
+TEST_CONTEXT <- as.numeric(
+  50 + seq_len(84) * 0.2 +
+    rep(c(-3, -1, 0, 2, 4, 1, -2), 12) + sin(seq_len(84))
+)
+
+# Purpose: Run one named assertion and print concise progress.
+# Inputs: Human-readable name and zero-argument assertion function.
+# Outputs: TRUE invisibly after success; assertion errors stop the test script.
+check <- function(name, assertion) {
+  assertion()
+  cat(sprintf("ok - %s\n", name))
+  invisible(TRUE)
+}
+
+# Purpose: Require one logical condition to be true.
+# Inputs: Condition and failure message.
+# Outputs: TRUE invisibly; false or missing conditions raise a test error.
+assert_true <- function(condition, message) {
+  if (length(condition) != 1L || is.na(condition) || !condition) {
+    stop(message, call. = FALSE)
+  }
+  invisible(TRUE)
+}
+
+# Purpose: Require exact object identity.
+# Inputs: Observed value, expected value, and failure message.
+# Outputs: TRUE invisibly; non-identical values raise a test error.
+assert_identical <- function(observed, expected, message) {
+  if (!identical(observed, expected)) {
+    stop(message, call. = FALSE)
+  }
+  invisible(TRUE)
+}
+
+# Purpose: Require an operation to fail with matching diagnostic text.
+# Inputs: Zero-argument operation, regular expression, and failure message.
+# Outputs: Captured error invisibly; missing or mismatched errors raise a test error.
+assert_error <- function(operation, pattern, message) {
+  error <- tryCatch(operation(), error = function(error) error)
+  if (!inherits(error, "error") || !grepl(pattern, conditionMessage(error))) {
+    stop(message, call. = FALSE)
+  }
+  invisible(error)
+}
+
+# Purpose: Construct one deterministic common request for a selected method.
+# Inputs: Registered method identifier and optional method settings.
+# Outputs: Complete request with no future actual observations.
+test_request <- function(method_id = "naive_forec", settings = list()) {
+  list(
+    task_id = "task-1",
+    run_id = "run-1",
+    dataset_id = "m4_daily",
+    series_id = "D1",
+    context = TEST_CONTEXT,
+    horizon = 3L,
+    frequency = 7L,
+    method_id = method_id,
+    settings = settings,
+    quantile_levels = GIFT_EVAL_QUANTILES
+  )
+}
+
+# Purpose: Select practical deterministic settings for real-adapter tests.
+# Inputs: Registered method identifier.
+# Outputs: Settings preserving model behavior while bounding test runtime.
+test_settings <- function(method_id) {
+  if (identical(method_id, "auto_arima_forec")) {
+    return(list(
+      stepwise = FALSE,
+      approximation = FALSE,
+      allowdrift = TRUE,
+      allowmean = TRUE,
+      parallel = FALSE,
+      num_cores = 1L,
+      interval_levels = c(20, 40, 60, 80)
+    ))
+  }
+  if (identical(method_id, "nnetar_forec")) {
+    return(list(seed = 1234L, repeats = 20L, npaths = 100L, bootstrap = FALSE))
+  }
+  list()
+}
+
+# Purpose: Reproduce the original FFORMA point-forecast implementation directly.
+# Inputs: Approved method identifier and the same ts/horizon used by the adapter.
+# Outputs: Original numeric point forecast, with the NNETAR fit under the same seed.
+original_fforma_mean <- function(method_id, series, horizon) {
+  switch(
+    method_id,
+    auto_arima_forec = as.numeric(forecast::forecast(
+      forecast::auto.arima(series, stepwise = FALSE, approximation = FALSE), h = horizon
+    )$mean),
+    ets_forec = as.numeric(forecast::forecast(
+      forecast::ets(series, opt.crit = "mae"), h = horizon
+    )$mean),
+    nnetar_forec = .with_seed(1234L, function() {
+      as.numeric(forecast::forecast(forecast::nnetar(series), h = horizon)$mean)
+    }),
+    tbats_forec = as.numeric(forecast::forecast(
+      forecast::tbats(series, use.parallel = FALSE), h = horizon
+    )$mean),
+    stlm_ar_forec = {
+      fit <- tryCatch(
+        forecast::stlm(series, modelfunction = stats::ar),
+        error = function(error) forecast::auto.arima(series, d = 0, D = 0)
+      )
+      as.numeric(forecast::forecast(fit, h = horizon)$mean)
+    },
+    rw_drift_forec = as.numeric(forecast::forecast(
+      forecast::rwf(series, drift = TRUE, h = length(series)), h = horizon
+    )$mean),
+    thetaf_forec = as.numeric(forecast::thetaf(series, h = horizon)$mean),
+    naive_forec = as.numeric(forecast::forecast(
+      forecast::naive(series, h = length(series)), h = horizon
+    )$mean),
+    snaive_forec = {
+      frequency <- stats::frequency(series)
+      as.numeric(utils::tail(series, frequency)[((seq_len(horizon) - 1L) %% frequency) + 1L])
+    },
+    stop("unsupported original FFORMA method", call. = FALSE)
+  )
+}
+
+# Purpose: Construct a valid synthetic result for controlled registry tests.
+# Inputs: Validated request and executed method identifier.
+# Outputs: Common result with deterministic finite non-crossing arrays.
+synthetic_result <- function(request, method_id = request$method_id) {
+  request$method_id <- method_id
+  request <- validate_forecast_request(request, method_id)
+  quantiles <- outer(
+    request$quantile_levels,
+    seq_len(request$horizon),
+    function(level, step) 10 + level + step
+  )
+  median_row <- which(abs(request$quantile_levels - 0.5) < 1e-12)
+  .normal_result(
+    request,
+    method_id,
+    list(
+      mean = as.numeric(quantiles[median_row, ]),
+      median = as.numeric(quantiles[median_row, ]),
+      quantiles = quantiles
+    ),
+    list(method_id = method_id, package = "test", package_version = "1")
+  )
+}
+
+check("M4 method names preserve the approved order", function() {
+  assert_identical(M4_forec_methods(), APPROVED_METHODS, "approved method order changed")
+})
+
+check("registry names and callables match the allowlist", function() {
+  registry <- forecast_method_registry()
+  assert_identical(names(registry), APPROVED_METHODS, "registry names or order changed")
+  assert_true(all(vapply(registry, is.function, logical(1L))), "registry contains a non-function")
+})
+
+check("unknown method identifiers are rejected", function() {
+  assert_error(
+    function() run_forecast_method(test_request("arbitrary_code")),
+    "unknown forecast method_id",
+    "unknown method was not rejected"
+  )
+})
+
+check("generic dispatch uses the selected callable", function() {
+  registry <- forecast_method_registry()
+  called <- FALSE
+  registry[["naive_forec"]] <- function(request) {
+    called <<- TRUE
+    synthetic_result(request)
+  }
+  result <- run_forecast_method(test_request("naive_forec"), registry)
+  assert_true(called, "selected registry callable did not execute")
+  assert_identical(result$executed_method_id, "naive_forec", "wrong callable result")
+})
+
+# Real model execution demonstrates that every registered adapter can provide the
+# common probabilistic output; failure mechanics are tested separately and deterministically.
+real_results <- list()
+for (method_id in APPROVED_METHODS) {
+  check(sprintf("%s returns valid finite probabilistic output", method_id), function() {
+    result <- run_forecast_method(test_request(method_id, test_settings(method_id)))
+    assert_identical(result$requested_method_id, method_id, "requested method changed")
+    assert_identical(result$executed_method_id, method_id, "unexpected real-model fallback")
+    assert_identical(result$fallback_used, FALSE, "normal result recorded fallback")
+    assert_true(is.null(result$fallback_reason), "normal result recorded fallback reason")
+    assert_identical(length(result$mean), 3L, "mean length is not horizon")
+    assert_identical(length(result$median), 3L, "median length is not horizon")
+    assert_identical(dim(result$quantiles), c(9L, 3L), "quantile shape is not levels by horizon")
+    assert_true(all(is.finite(c(result$mean, result$median, result$quantiles))), "non-finite forecast")
+    assert_true(
+      all(apply(result$quantiles, 2L, function(values) all(diff(values) >= 0))),
+      "forecast contains crossing quantiles"
+    )
+    assert_true(!any(c("actual", "actuals", "future_actuals") %in% names(result)), "actuals leaked")
+    real_results[[method_id]] <<- result
+  })
+}
+
+for (method_id in APPROVED_METHODS) {
+  check(sprintf("%s mean matches original FFORMA", method_id), function() {
+    series <- stats::ts(TEST_CONTEXT, frequency = 7L)
+    expected <- original_fforma_mean(method_id, series, 3L)
+    observed <- real_results[[method_id]]$mean
+    assert_true(
+      isTRUE(all.equal(observed, expected, tolerance = 1e-10)),
+      sprintf("%s adapter changed the original FFORMA point forecast", method_id)
+    )
+  })
+}
+
+check("central interval bounds map to the approved quantile rows", function() {
+  request <- test_request("naive_forec")
+  expected <- forecast::naive(
+    stats::ts(request$context, frequency = request$frequency),
+    h = request$horizon,
+    level = c(20, 40, 60, 80),
+    lambda = NULL
+  )
+  observed <- real_results[["naive_forec"]]$quantiles
+  lower_80 <- as.numeric(expected$lower[, "80%"])
+  lower_20 <- as.numeric(expected$lower[, "20%"])
+  upper_20 <- as.numeric(expected$upper[, "20%"])
+  upper_80 <- as.numeric(expected$upper[, "80%"])
+  assert_true(isTRUE(all.equal(observed[1L, ], lower_80)), "q0.1 mapping")
+  assert_true(isTRUE(all.equal(observed[4L, ], lower_20)), "q0.4 mapping")
+  assert_true(isTRUE(all.equal(observed[5L, ], as.numeric(expected$mean))), "q0.5 mapping")
+  assert_true(isTRUE(all.equal(observed[6L, ], upper_20)), "q0.6 mapping")
+  assert_true(isTRUE(all.equal(observed[9L, ], upper_80)), "q0.9 mapping")
+})
+
+check("NNETAR simulation is deterministic and records its method", function() {
+  request <- test_request("nnetar_forec", test_settings("nnetar_forec"))
+  repeated <- run_forecast_method(request)
+  assert_true(
+    isTRUE(all.equal(repeated$mean, real_results$nnetar_forec$mean, tolerance = 0)),
+    "NNETAR mean changed under the same seed"
+  )
+  assert_true(
+    isTRUE(all.equal(repeated$quantiles, real_results$nnetar_forec$quantiles, tolerance = 0)),
+    "NNETAR quantiles changed under the same seed"
+  )
+  assert_true(grepl("predictive simulation", repeated$provenance$distribution), "simulation not recorded")
+  expected <- original_fforma_mean(
+    "nnetar_forec", stats::ts(TEST_CONTEXT, frequency = 7L), request$horizon
+  )
+  assert_true(
+    isTRUE(all.equal(repeated$mean, expected, tolerance = 1e-10)),
+    "NNETAR simulation replaced the original FFORMA point mean"
+  )
+})
+
+check("requested-model failure produces one visible seasonal-naive fallback", function() {
+  registry <- forecast_method_registry()
+  registry[["auto_arima_forec"]] <- function(request) stop("controlled model failure")
+  warning_text <- NULL
+  result <- withCallingHandlers(
+    run_forecast_methods(test_request("auto_arima_forec"), registry = registry),
+    warning = function(warning) {
+      warning_text <<- conditionMessage(warning)
+      invokeRestart("muffleWarning")
+    }
+  )
+  assert_identical(length(result), 1L, "fallback changed one-request/one-result ordering")
+  result <- result[[1L]]
+  assert_identical(result$requested_method_id, "auto_arima_forec", "fallback lost requested method")
+  assert_identical(result$executed_method_id, "snaive_forec", "fallback execution not recorded")
+  assert_identical(result$fallback_used, TRUE, "fallback flag is false")
+  assert_true(grepl("controlled model failure", result$fallback_reason), "original error missing")
+  assert_true(grepl("executed snaive_forec fallback", warning_text), "fallback warning missing")
+})
+
+check("invalid requested-model output is eligible for fallback", function() {
+  registry <- forecast_method_registry()
+  registry[["ets_forec"]] <- function(request) {
+    result <- synthetic_result(request)
+    result$quantiles <- result$quantiles[, -1L, drop = FALSE]
+    result
+  }
+  result <- suppressWarnings(run_forecast_method(test_request("ets_forec"), registry))
+  assert_identical(result$executed_method_id, "snaive_forec", "invalid output did not fallback")
+  assert_true(grepl("quantile dimensions", result$fallback_reason), "validation error not retained")
+})
+
+check("direct seasonal-naive failure never recurses", function() {
+  registry <- forecast_method_registry()
+  registry[["snaive_forec"]] <- function(request) stop("controlled snaive failure")
+  assert_error(
+    function() run_forecast_method(test_request("snaive_forec"), registry),
+    "no recursive fallback attempted: controlled snaive failure",
+    "direct seasonal-naive failure recursed or lost its error"
+  )
+})
+
+check("double failure reports both model and fallback errors", function() {
+  registry <- forecast_method_registry()
+  registry[["tbats_forec"]] <- function(request) stop("controlled TBATS failure")
+  registry[["snaive_forec"]] <- function(request) stop("controlled fallback failure")
+  error <- assert_error(
+    function() run_forecast_method(test_request("tbats_forec"), registry),
+    "controlled TBATS failure.*controlled fallback failure",
+    "double failure did not report both errors"
+  )
+  assert_true(grepl("seasonal-naive fallback also failed", conditionMessage(error)), "terminal context missing")
+})
+
+check("JSON round trip preserves values, dimensions, and fallback metadata", function() {
+  registry <- forecast_method_registry()
+  registry[["rw_drift_forec"]] <- function(request) stop("round-trip fallback")
+  result <- suppressWarnings(run_forecast_method(test_request("rw_drift_forec"), registry))
+  decoded <- jsonlite::fromJSON(forecast_result_to_json(result), simplifyVector = TRUE)
+  assert_identical(dim(decoded$quantiles), c(9L, 3L), "JSON changed quantile orientation")
+  assert_true(isTRUE(all.equal(decoded$mean, result$mean, tolerance = 0)), "JSON changed means")
+  assert_true(isTRUE(all.equal(decoded$quantiles, result$quantiles, tolerance = 0)), "JSON changed quantiles")
+  assert_identical(decoded$requested_method_id, "rw_drift_forec", "JSON lost requested method")
+  assert_identical(decoded$executed_method_id, "snaive_forec", "JSON lost executed method")
+  assert_identical(decoded$fallback_used, TRUE, "JSON lost fallback flag")
+  assert_true(grepl("round-trip fallback", decoded$fallback_reason), "JSON lost fallback reason")
+})
+
+check("invalid request fields fail before model fallback", function() {
+  cases <- list(
+    list(field = "context", value = numeric(), pattern = "context"),
+    list(field = "context", value = c(1, Inf), pattern = "context"),
+    list(field = "horizon", value = 0, pattern = "horizon"),
+    list(field = "frequency", value = 1.5, pattern = "frequency"),
+    list(field = "quantile_levels", value = c(0.2, 0.1), pattern = "quantile_levels"),
+    list(field = "quantile_levels", value = c(0.1, 0.1), pattern = "quantile_levels"),
+    list(field = "quantile_levels", value = c(0, 0.5), pattern = "quantile_levels")
+  )
+  for (case in cases) {
+    request <- test_request()
+    request[[case$field]] <- case$value
+    assert_error(
+      function() run_forecast_method(request),
+      case$pattern,
+      sprintf("invalid %s did not fail clearly", case$field)
+    )
+  }
+  request <- test_request()
+  request$actuals <- c(1, 2, 3)
+  assert_error(
+    function() run_forecast_method(request),
+    "future actual observations",
+    "request accepted actual observations"
+  )
+})
+
+check("output validator rejects non-finite, crossing, and malformed arrays", function() {
+  valid <- synthetic_result(test_request())
+  non_finite <- valid
+  non_finite$mean[[1L]] <- Inf
+  assert_error(function() validate_forecast_result(non_finite), "non-finite", "non-finite output accepted")
+  crossing <- valid
+  crossing$quantiles[1L, 1L] <- crossing$quantiles[9L, 1L] + 1
+  assert_error(function() validate_forecast_result(crossing), "crossing", "crossing output accepted")
+  malformed <- valid
+  malformed$median <- malformed$median[-1L]
+  assert_error(function() validate_forecast_result(malformed), "lengths", "bad median shape accepted")
+})
+
+check("forecast library has no database writer or arbitrary expression execution", function() {
+  source_lines <- readLines("src/r/util/forecast_methods.R", warn = FALSE)
+  code_lines <- source_lines[!grepl("^\\s*#", source_lines)]
+  code <- paste(code_lines, collapse = "\n")
+  assert_true(!grepl("DBI::|duckdb::|dbConnect|dbExecute", code), "database-writing code introduced")
+  assert_true(!grepl("\\b(get|eval|parse)\\s*\\(", code), "arbitrary expression primitive introduced")
+  assert_true(!grepl("transform_registry|compose_transform|inverse_pipeline", code), "transformation engine introduced")
+})
+
+check("existing AutoARIMA linear-series output remains compatible", function() {
+  request <- test_request("auto_arima_forec", test_settings("auto_arima_forec"))
+  request$context <- as.numeric(seq_len(12L))
+  request$frequency <- 1L
+  expected <- c(13, 14, 15)
+  result <- run_forecast_method(request)
+  assert_true(isTRUE(all.equal(result$mean, expected)), "AutoARIMA means changed")
+  assert_true(isTRUE(all.equal(result$median, expected)), "AutoARIMA medians changed")
+  assert_true(all(result$quantiles == rep(expected, each = 9L)), "AutoARIMA quantiles changed")
+})
+
+cat(sprintf("All forecast-method tests passed for %d registered methods.\n", length(APPROVED_METHODS)))

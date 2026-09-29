@@ -23,6 +23,8 @@
     "benchmark": {
       "configuration": "m4_daily/D/short",
       "frequency": "D",
+      "seasonality": 7,
+      "seasonality_source": "approved M4 Daily weekly cycle from official frequency",
       "term": "short",
       "domain": "Econ/Fin",
       "num_variates": 1,
@@ -41,7 +43,7 @@
       {"id": 5, "name": "combine"},
       {"id": 6, "name": "evaluate"}
     ],
-    "cleaning": {"methods": ["identity", "tsclean"]},
+    "preprocessing": {"default": "robust", "modes": ["standard", "robust"]},
     "transformations": {"methods": ["identity", "minmax_then_standardize"]},
     "adjustment": "identity",
     "combination": {"method": "equal_weight", "weights": {"auto_arima": 0.5, "chronos_2": 0.5}}
@@ -67,6 +69,15 @@
       "cross_learning": false
     }
   },
+  "archived_forecasts": {
+    "providers": {
+      "m4_smyl": {"submission_id": 118},
+      "m4_fforma": {"submission_id": 245}
+    },
+    "enabled": ["m4_smyl"],
+    "forecast_capability": "mean_only",
+    "reference_designation": "official_reference"
+  },
   "evaluation": {
     "method": "gift_eval",
     "gift_eval": {
@@ -78,10 +89,10 @@
       "axis": null,
       "mask_invalid_label": true,
       "allow_nan_forecast": false,
-      "seasonality": "official get_seasonality(freq)"
+      "seasonality": "configured official benchmark seasonality"
     },
     "provisional_candidate": {
-      "cleaning": "identity",
+      "preprocessing": "robust",
       "transformation": "minmax_then_standardize",
       "candidate": "equal_weight",
       "label": "provisional"
@@ -153,7 +164,8 @@
       "chronos_environment": "environments/chronos-2/.venv",
       "chronos_worker": "src/python/04_02_forecast_chronos.py",
       "r_preprocess_worker": "src/r/02_01_preprocess_series.R",
-      "r_auto_arima_worker": "src/r/04_01_forecast_auto_arima.R"
+      "r_auto_arima_worker": "src/r/04_01_forecast_auto_arima.R",
+      "r_m4comp2018_worker": "src/r/01_02_import_m4comp2018.R"
     },
     "restart": {
       "completed_tasks": "skip",

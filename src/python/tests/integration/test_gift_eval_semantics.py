@@ -13,7 +13,14 @@ import os
 import unittest
 from pathlib import Path
 
+import numpy as np
+import pandas as pd
 from gift_eval.data import Dataset
+from gluonts.dataset.common import ListDataset
+from gluonts.dataset.split import split
+from gluonts.ev.metrics import MAE
+from gluonts.model import evaluate_forecasts
+from gluonts.model.forecast import QuantileForecast
 from util.configuration import load_experiment_configuration
 
 
@@ -53,6 +60,38 @@ class GiftEvalSemanticsTests(unittest.TestCase):
         self.assertEqual(len(validation["target"]), source_length - horizon)
         self.assertEqual(len(test_input["target"]), source_length - horizon)
         self.assertEqual(len(test_label["target"]), horizon)
+
+    def test_missing_actual_is_masked_instead_of_becoming_zero_or_failure(self):
+        """Official masking excludes NaN labels while finite forecasts remain valid."""
+        dataset = ListDataset(
+            [{
+                "item_id": "missing-label",
+                "start": pd.Period("2020-01-01", freq="D"),
+                "target": [1.0, 2.0, 3.0, np.nan, 5.0],
+            }],
+            freq="D",
+        )
+        _, template = split(dataset, offset=-2)
+        test_data = template.generate_instances(prediction_length=2, windows=1)
+        context = next(iter(test_data.input))
+        forecast = QuantileForecast(
+            forecast_arrays=np.asarray([[4.0, 4.0], [4.0, 4.0]]),
+            forecast_keys=["mean", "0.5"],
+            start_date=context["start"] + len(context["target"]),
+            item_id="missing-label",
+        )
+        result = evaluate_forecasts(
+            iter([forecast]),
+            test_data=test_data,
+            metrics=[MAE()],
+            axis=None,
+            mask_invalid_label=True,
+            allow_nan_forecast=False,
+            seasonality=1,
+        )
+        # Only the finite label 5 is scored: abs(5 - 4) = 1. Treating the
+        # missing label as zero would instead produce an aggregate MAE of 2.5.
+        self.assertEqual(float(result["MAE[0.5]"].iloc[0]), 1.0)
 
 
 if __name__ == "__main__":

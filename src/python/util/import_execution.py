@@ -13,7 +13,10 @@ from __future__ import annotations
 
 import hashlib
 import importlib.metadata
+import json
+import math
 import multiprocessing
+import os
 import platform
 import struct
 import subprocess
@@ -58,7 +61,7 @@ class SeriesTask:
     source_row: int
     frequency: str
     start_timestamp: Any
-    target: tuple[float, ...]
+    target: tuple[float | None, ...]
     horizon: int
     window_id: str
     boundary_convention: str
@@ -79,7 +82,7 @@ class SeriesResult:
     source_row: int
     frequency: str
     start_timestamp: Any
-    target: tuple[float, ...]
+    target: tuple[float | None, ...]
     observation_count: int
     content_hash: str
     window: dict[str, Any]
@@ -105,7 +108,20 @@ def compute_series(task: SeriesTask) -> SeriesResult:
     zero-based, end-exclusive validation/test window.
     Notes: Performs no database access and cross-checks window logic centrally.
     """
-    packed = struct.pack(f"<{len(task.target)}f", *task.target)
+    # Preserve legacy hashes for complete series. Missing series use an explicit
+    # per-value marker so Arrow null and NaN positions remain deterministic.
+    if all(value is not None and not math.isnan(value) for value in task.target):
+        packed = struct.pack(f"<{len(task.target)}f", *task.target)
+    else:
+        parts = []
+        for value in task.target:
+            if value is None:
+                parts.append(b"N")
+            elif math.isnan(value):
+                parts.append(b"A")
+            else:
+                parts.append(b"V" + struct.pack("<f", value))
+        packed = b"".join(parts)
     content_hash = hashlib.sha256(packed).hexdigest()
     window = {
         "window_id": task.window_id,
@@ -581,6 +597,190 @@ class ImportCoordinator:
                 failed += 1
         return completed, failed
 
+    def _read_m4_reference_forecasts(
+        self, dataset_id: str, config: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        """Purpose: Ask the bounded R adapter for selected official M4 point forecasts.
+
+        Inputs: Imported dataset identity and authoritative Stage 1 settings.
+        Outputs: Validated adapter records for selected series/providers; the subprocess
+        reads package data only and neither it nor this method writes DuckDB.
+        """
+        archived = config.get("archived_forecasts")
+        if archived is None:
+            return []
+        enabled = list(archived["enabled"])
+        if not enabled:
+            return []
+        horizon = int(config["benchmark"]["prediction_length"])
+        rows = self.connection.execute(
+            """SELECT series_id, source_row, frequency, target
+               FROM series WHERE dataset_id=? ORDER BY source_row
+               LIMIT ?""",
+            [dataset_id, config["max_series"]],
+        ).fetchall()
+        if any(
+            str(row[0]) != str(row[1])
+            or row[2] != config["benchmark"]["frequency"]
+            or len(row[3]) <= horizon
+            for row in rows
+        ):
+            raise ImportValidationError(
+                "canonical series identities, frequency, or lengths are incompatible with M4 Daily"
+            )
+        payload = {
+            "action": "read",
+            "dataset_id": dataset_id,
+            "dataset_name": config["dataset_name"],
+            "forecast_ids": enabled,
+            "expected_frequency": config["benchmark"]["frequency"],
+            "expected_horizon": horizon,
+            "series": [
+                {
+                    "series_id": row[0],
+                    "source_position": row[1],
+                    "official_m4_series_id": f"D{row[1] + 1}",
+                    "history": list(row[3][:-horizon]),
+                    "future": list(row[3][-horizon:]),
+                    "horizon": horizon,
+                }
+                for row in rows
+            ],
+        }
+        worker = self.configuration.execution_paths["r_m4comp2018_worker"]
+        try:
+            completed = subprocess.run(
+                ["Rscript", str(repository_root() / worker)],
+                cwd=repository_root(),
+                input=canonical_json(payload),
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=float(
+                    self.configuration.execution["worker_timeouts_seconds"]["r"]
+                ),
+                env={**os.environ, "RENV_CONFIG_SYNCHRONIZED_CHECK": "false"},
+            )
+        except subprocess.CalledProcessError as error:
+            detail = (error.stderr or error.stdout or str(error)).strip()
+            raise ImportValidationError(
+                f"M4comp2018 reference adapter failed: {detail}"
+            ) from error
+        try:
+            records = json.loads(completed.stdout)["records"]
+        except (json.JSONDecodeError, KeyError, TypeError) as error:
+            raise ImportValidationError(
+                "M4comp2018 reference adapter returned invalid JSON"
+            ) from error
+        expected = {(str(row[0]), provider) for row in rows for provider in enabled}
+        observed: set[tuple[str, str]] = set()
+        for record in records:
+            identity = (str(record.get("series_id")), record.get("forecast_id"))
+            mean = record.get("mean")
+            if (
+                identity not in expected
+                or identity in observed
+                or record.get("dataset_id") != dataset_id
+                or record.get("official_m4_series_id")
+                != f"D{int(identity[0]) + 1}"
+                or record.get("horizon") != horizon
+                or not isinstance(mean, list)
+                or len(mean) != horizon
+                or any(not isinstance(value, (int, float)) or not math.isfinite(value) for value in mean)
+                or record.get("forecast_capability") != "mean_only"
+                or record.get("point_semantics") != "M4 competition point forecast"
+                or record.get("source_package") != "M4comp2018"
+                or record.get("submission_id")
+                != archived["providers"][identity[1]]["submission_id"]
+                or record.get("submission_rank")
+                != {"m4_smyl": 1, "m4_fforma": 2}[identity[1]]
+                or not isinstance(record.get("source_package_version"), str)
+                or not record["source_package_version"]
+                or not isinstance(record.get("source_revision"), str)
+                or not record["source_revision"]
+                or not isinstance(record.get("content_hash"), str)
+                or not record["content_hash"]
+            ):
+                raise ImportValidationError(
+                    "M4comp2018 reference adapter returned incompatible identity or values"
+                )
+            observed.add(identity)
+        if observed != expected:
+            raise ImportValidationError(
+                "M4comp2018 reference adapter omitted a selected series or provider"
+            )
+        return records
+
+    def _store_reference_forecasts(self, records: list[dict[str, Any]]) -> tuple[int, int]:
+        """Purpose: Atomically insert identical archived forecasts or reject conflicts.
+
+        Inputs: Fully validated adapter records.
+        Outputs: Counts of inserted and already-identical records after one transaction.
+        """
+        inserted = skipped = 0
+        self.connection.execute("BEGIN TRANSACTION")
+        try:
+            for record in records:
+                key = [record["dataset_id"], str(record["series_id"]), record["forecast_id"]]
+                source_metadata = canonical_json({
+                    "source_package": record["source_package"],
+                    "source_package_version": record["source_package_version"],
+                    "source_revision": record["source_revision"],
+                    "scale": "original",
+                })
+                existing = self.connection.execute(
+                    """SELECT official_m4_series_id, submission_id, submission_rank,
+                              submission_author, horizon, mean, point_semantics,
+                              forecast_capability, source_metadata, content_hash
+                       FROM reference_forecasts
+                       WHERE dataset_id=? AND series_id=? AND forecast_id=?""",
+                    key,
+                ).fetchone()
+                expected = (
+                    record["official_m4_series_id"],
+                    int(record["submission_id"]),
+                    int(record["submission_rank"]),
+                    record["submission_author"],
+                    int(record["horizon"]),
+                    record["mean"],
+                    record["point_semantics"],
+                    record["forecast_capability"],
+                    source_metadata,
+                    record["content_hash"],
+                )
+                if existing is not None:
+                    if tuple(existing) != expected:
+                        raise ImportValidationError(
+                            "conflicting archived forecast exists for "
+                            f"{record['series_id']}/{record['forecast_id']}"
+                        )
+                    skipped += 1
+                    continue
+                reference_id = (
+                    "reference/"
+                    + json_fingerprint(
+                        {"dataset_id": key[0], "series_id": key[1], "forecast_id": key[2]}
+                    )[:32]
+                )
+                self.connection.execute(
+                    """INSERT INTO reference_forecasts
+                    (reference_forecast_id, dataset_id, series_id,
+                     official_m4_series_id, forecast_id, submission_id,
+                     submission_rank, submission_author, horizon, mean,
+                     point_semantics, forecast_capability, source_metadata,
+                     content_hash)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    [reference_id, *key[:2], record["official_m4_series_id"], key[2],
+                     *expected[1:6], expected[6], expected[7],
+                     expected[8], expected[9]],
+                )
+                inserted += 1
+            self.connection.execute("COMMIT")
+        except BaseException:
+            self.connection.execute("ROLLBACK")
+            raise
+        return inserted, skipped
+
     def import_m4_daily(
         self,
         source_dir: Path,
@@ -669,6 +869,12 @@ class ImportCoordinator:
 
             if source_fingerprint(source_dir) != source_before:
                 raise ImportValidationError("source files changed during import")
+            reference_records = self._read_m4_reference_forecasts(dataset_id, config)
+            reference_inserted, reference_skipped = self._store_reference_forecasts(
+                reference_records
+            )
+            summary["reference_forecasts_inserted"] = reference_inserted
+            summary["reference_forecasts_skipped"] = reference_skipped
             counts = dict(
                 self.connection.execute(
                     "SELECT status, count(*) FROM tasks WHERE run_id = ? GROUP BY status",

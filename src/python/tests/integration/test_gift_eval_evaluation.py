@@ -71,13 +71,17 @@ class OfficialAdapterTests(unittest.TestCase):
             self.configuration["data"]["benchmark"]["domain"],
             "--num-variates",
             str(self.configuration["data"]["benchmark"]["num_variates"]),
+            "--seasonality",
+            str(self.configuration["data"]["benchmark"]["seasonality"]),
             "--limit",
             "2",
         )
         self.assertEqual(description["configuration_name"], "m4_daily/D/short")
         self.assertEqual(description["prediction_length"], 14)
         self.assertEqual(description["window_count"], 1)
-        self.assertEqual(description["seasonality"], 1)
+        self.assertEqual(description["seasonality"], 7)
+        self.assertEqual(description["frequency"], "D")
+        self.assertEqual(description["available_instances"], 4_227)
         forecasts = []
         for instance in description["instances"]:
             value = instance["context"][-1]
@@ -92,6 +96,7 @@ class OfficialAdapterTests(unittest.TestCase):
                     "term": self.configuration["data"]["benchmark"]["term"],
                     "quantile_levels": self.configuration["models"]["chronos_2"]["quantile_levels"],
                     "options": self.experiment_configuration.evaluation_options,
+                    "seasonality": description["seasonality"],
                     "forecasts": forecasts,
                 },
                 stream,

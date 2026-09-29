@@ -5,7 +5,7 @@
 # Purpose: Serve the bounded R subprocess that produces AutoARIMA forecasts.
 # Inputs: JSON on stdin: action="forecast", authoritative AutoARIMA settings,
 #   and jobs with id, numeric context, seasonal frequency, and horizon.
-# Outputs: JSON on stdout with same-scale forecasts and package versions;
+# Outputs: JSON on stdout with same-scale forecasts, fallback provenance, and package versions;
 #   invalid settings, actions, or series terminate the subprocess with an R error.
 # Run from: printf '%s' '{"action":"forecast","settings":{},"jobs":[]}' | Rscript src/r/04_01_forecast_auto_arima.R
 # ==============================================================================
@@ -15,7 +15,7 @@ suppressPackageStartupMessages({
   library(jsonlite)
 })
 
-source("src/r/util/time_series_input.R")
+source("src/r/util/forecast_methods.R")
 
 # Execution global: payload is the coordinator-authored request for this subprocess;
 # scientific and execution values remain authoritative from DuckDB and have no local override.
@@ -26,37 +26,35 @@ payload <- jsonlite::fromJSON(file("stdin"), simplifyVector = FALSE)
 #   seasonality/frequency, and positive integer horizon h; settings supplies
 #   coordinator-authoritative AutoARIMA booleans, core count, and interval levels.
 # Outputs: List with id; h same-scale mean and median values; and nine h-value
-#   quantile vectors ordered 0.1 through 0.9. Writes nothing to stdout; fitting,
-#   malformed input, or unavailable expected 20/40/60/80% intervals raises an R error.
+#   quantile vectors ordered 0.1 through 0.9, plus explicit fallback provenance.
+#   Writes nothing to stdout; malformed input or terminal model/fallback failure raises.
 forecast_one <- function(job, settings) {
-  input <- time_series_input(job)
-  fit <- forecast::auto.arima(
-    input$series,
-    stepwise = isTRUE(settings$stepwise),
-    approximation = isTRUE(settings$approximation),
-    allowdrift = isTRUE(settings$allowdrift),
-    allowmean = isTRUE(settings$allowmean),
-    parallel = isTRUE(settings$parallel),
-    num.cores = as.integer(settings$num_cores)
+  result <- run_forecast_method(list(
+    task_id = job$id,
+    dataset_id = job$dataset_id %||% job$id,
+    series_id = job$series_id %||% job$id,
+    context = job$context,
+    horizon = job$horizon,
+    frequency = job$seasonality,
+    method_id = "auto_arima_forec",
+    settings = settings,
+    quantile_levels = seq(0.1, 0.9, by = 0.1)
+  ))
+  quantiles <- lapply(
+    seq_len(nrow(result$quantiles)),
+    function(row) as.numeric(result$quantiles[row, ])
   )
-  predicted <- forecast::forecast(
-    fit,
-    h = as.integer(job$horizon),
-    level = as.numeric(unlist(settings$interval_levels))
+  list(
+    id = job$id,
+    mean = result$mean,
+    median = result$median,
+    quantiles = quantiles,
+    requested_method_id = result$requested_method_id,
+    executed_method_id = result$executed_method_id,
+    fallback_used = result$fallback_used,
+    fallback_reason = result$fallback_reason,
+    provenance = result$provenance
   )
-  mean <- as.numeric(predicted$mean)
-  quantiles <- list(
-    as.numeric(predicted$lower[, "80%"]),
-    as.numeric(predicted$lower[, "60%"]),
-    as.numeric(predicted$lower[, "40%"]),
-    as.numeric(predicted$lower[, "20%"]),
-    mean,
-    as.numeric(predicted$upper[, "20%"]),
-    as.numeric(predicted$upper[, "40%"]),
-    as.numeric(predicted$upper[, "60%"]),
-    as.numeric(predicted$upper[, "80%"])
-  )
-  list(id = job$id, mean = mean, median = mean, quantiles = quantiles)
 }
 
 # Execution global: results preserves coordinator job order for this invocation;

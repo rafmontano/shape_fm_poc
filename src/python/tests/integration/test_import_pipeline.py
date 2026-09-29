@@ -9,6 +9,7 @@
 
 """Verify Process 01 imports the pinned local M4 Daily sample into the expected schema, identities, windows, and counts."""
 
+import math
 import tempfile
 import unittest
 from pathlib import Path
@@ -130,6 +131,20 @@ class Process01ImportTests(unittest.TestCase):
                 for source in source_rows:
                     canonical = database.get_series("m4_daily", source.source_series_id)
                     self.assertEqual(canonical.target, source.target)
+
+    def test_complete_source_has_4227_unchanged_finite_series(self):
+        """The pinned M4 Daily source remains complete and unchanged at Gate 1."""
+        rows = list(iter_source_series(self.source, "D", None))
+        self.assertEqual(len(rows), 4_227)
+        self.assertEqual(rows[0].source_series_id, "0")
+        self.assertEqual(rows[-1].source_series_id, "4226")
+        self.assertTrue(
+            all(
+                value is not None and math.isfinite(value)
+                for row in rows
+                for value in row.target
+            )
+        )
 
 
 if __name__ == "__main__":

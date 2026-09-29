@@ -129,12 +129,31 @@ def require_single_window(dataset: Dataset) -> None:
         )
 
 
+def json_observations(values) -> list[float | None]:
+    """Convert official observations to JSON while preserving missing positions.
+
+    NaN is represented as JSON null for the subprocess protocol; infinities remain
+    malformed source values and are rejected. Gate 1 independently preserves each
+    missing position in the canonical raw series.
+    """
+    result = []
+    for value in np.asarray(values, dtype=np.float32).tolist():
+        if value is None or math.isnan(value):
+            result.append(None)
+        elif math.isinf(value):
+            raise ValueError("official observations cannot contain infinity")
+        else:
+            result.append(float(value))
+    return result
+
+
 def describe(
     source_root: str,
     dataset_name: str,
     term: str,
     domain: str,
     num_variates: int,
+    seasonality: int,
     limit: int,
 ) -> dict:
     """Purpose: Describe and materialize the configured prefix of an official evaluation task.
@@ -145,6 +164,8 @@ def describe(
     """
     dataset = official_dataset(source_root, dataset_name, term)
     require_single_window(dataset)
+    if seasonality < 1:
+        raise ValueError("configured official seasonality must be positive")
     if dataset.target_dim != num_variates:
         raise ValueError(
             f"configured num_variates={num_variates} does not match source {dataset.target_dim}"
@@ -160,8 +181,8 @@ def describe(
                 "window_id": f"{term}/000",
                 "start": str(context["start"]),
                 "forecast_start": str(context["start"] + len(context["target"])),
-                "context": np.asarray(context["target"], dtype=np.float32).tolist(),
-                "actual": np.asarray(label["target"], dtype=np.float32).tolist(),
+                "context": json_observations(context["target"]),
+                "actual": json_observations(label["target"]),
             }
         )
     return {
@@ -171,7 +192,10 @@ def describe(
         "term": dataset.term.value,
         "prediction_length": dataset.prediction_length,
         "window_count": dataset.windows,
-        "seasonality": get_seasonality(dataset.freq),
+        # Frequency is read from GIFT-Eval. The configured benchmark seasonality
+        # records the approved M4 Daily weekly cycle (7), rather than a hidden map.
+        "seasonality": seasonality,
+        "gluonts_default_seasonality": get_seasonality(dataset.freq),
         "domain": domain,
         "num_variates": num_variates,
         "available_instances": len(dataset.test_data),
@@ -198,7 +222,7 @@ def evaluate(source_root: str, payload_path: Path) -> dict:
         "axis": None,
         "mask_invalid_label": True,
         "allow_nan_forecast": False,
-        "seasonality": "official get_seasonality(freq)",
+        "seasonality": "configured official benchmark seasonality",
     }
     if (
         {key: value for key, value in options.items() if key != "batch_size"}
@@ -218,6 +242,9 @@ def evaluate(source_root: str, payload_path: Path) -> dict:
     )
     predictor = ShapeFMPredictor(payload["forecasts"], quantile_levels)
     forecasts = predictor.predict(test_data.input)
+    seasonality = payload.get("seasonality")
+    if isinstance(seasonality, bool) or not isinstance(seasonality, int) or seasonality < 1:
+        raise ValueError("evaluation payload requires a positive official seasonality")
     result = evaluate_forecasts(
         forecasts,
         test_data=test_data,
@@ -226,7 +253,7 @@ def evaluate(source_root: str, payload_path: Path) -> dict:
         axis=options["axis"],
         mask_invalid_label=options["mask_invalid_label"],
         allow_nan_forecast=options["allow_nan_forecast"],
-        seasonality=get_seasonality(dataset.freq),
+        seasonality=seasonality,
     ).reset_index(drop=True)
     return {key: float(value) for key, value in result.iloc[0].to_dict().items()}
 
@@ -364,6 +391,7 @@ def main() -> None:
     describe_parser.add_argument("--term", required=True)
     describe_parser.add_argument("--domain", required=True)
     describe_parser.add_argument("--num-variates", type=int, required=True)
+    describe_parser.add_argument("--seasonality", type=int, required=True)
     describe_parser.add_argument("--limit", type=int, required=True)
     evaluate_parser = subparsers.add_parser("evaluate")
     evaluate_parser.add_argument("--source-root", required=True)
@@ -379,6 +407,7 @@ def main() -> None:
             args.term,
             args.domain,
             args.num_variates,
+            args.seasonality,
             args.limit,
         )
     elif args.command == "evaluate":

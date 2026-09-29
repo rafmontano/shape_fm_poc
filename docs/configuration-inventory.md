@@ -12,7 +12,7 @@ creation. Derived counts and identities are calculated rather than configured.
 | `configuration_version`, `experiment` | version 1; name, date, objective | validator, DuckDB metadata, status |
 | `reproducibility.seed` | `1234` | scientific identity and future stochastic workers |
 | `data` | pinned GIFT-Eval M4 Daily source; first 100 official series; 14-step, one-window benchmark | import, planning, evaluation |
-| `pipeline` | Processes 01–06; identity/`tsclean`; identity/min-max-standardize; identity adjustment; equal-weight combination | task planning and Processes 02–05 |
+| `pipeline` | Processes 01–06; standard/robust preprocessing (robust default); identity/min-max-standardize; identity adjustment; equal-weight combination | task planning and Processes 02–05 |
 | `models` | AutoARIMA settings; pinned Chronos-2 identity, dtype, quantiles, and prediction policies | Process 04 workers and provenance |
 | scientific `evaluation` fields | GIFT-Eval revision, method, options, provisional candidate and submission metadata | Process 06 and export validation |
 

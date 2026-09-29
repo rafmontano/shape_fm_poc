@@ -163,8 +163,8 @@ class ExperimentForecast:
     """Purpose: Represent one persisted candidate forecast and held-out target.
 
     Inputs: Constructed by :func:`get_forecast` from forecast and instance rows.
-    Outputs: Immutable IDs plus horizon-length mean, median, and actual vectors;
-    ``quantiles`` has shape ``(levels, horizon)`` aligned to ``quantile_levels``.
+    Outputs: Immutable IDs plus horizon-length mean and actual vectors. Median and
+    quantiles are complete for probabilistic forecasts and absent for mean-only ones.
     """
     forecast_id: str
     experiment_id: str
@@ -172,9 +172,10 @@ class ExperimentForecast:
     forecast_instance_id: str
     candidate: str
     mean: tuple[float, ...]
-    median: tuple[float, ...]
-    quantile_levels: tuple[float, ...]
-    quantiles: tuple[tuple[float, ...], ...]
+    median: tuple[float, ...] | None
+    quantile_levels: tuple[float, ...] | None
+    quantiles: tuple[tuple[float, ...], ...] | None
+    forecast_capability: str
     actual: tuple[float, ...]
 
 
@@ -348,6 +349,11 @@ class ExperimentCoordinator:
                 "The experiment supports exactly one official forecast window; "
                 f"{official['configuration_name']} has {official['window_count']}"
             )
+        benchmark = self.configuration.resolved["data"]["benchmark"]
+        if official["frequency"] != benchmark["frequency"]:
+            raise RuntimeError("official GIFT-Eval frequency does not match configuration")
+        if official["seasonality"] != benchmark["seasonality"]:
+            raise RuntimeError("official preprocessing seasonality does not match configuration")
 
     def _configured_execution(self) -> tuple[ExecutionProfile, ExecutionSettings]:
         """Purpose: Materialize execution controls from authoritative stored settings.
@@ -406,6 +412,8 @@ class ExperimentCoordinator:
             self.configuration.resolved["data"]["benchmark"]["domain"],
             "--num-variates",
             str(self.configuration.resolved["data"]["benchmark"]["num_variates"]),
+            "--seasonality",
+            str(self.configuration.resolved["data"]["benchmark"]["seasonality"]),
             "--limit",
             "1",
         )
@@ -469,6 +477,8 @@ class ExperimentCoordinator:
             self.configuration.resolved["data"]["benchmark"]["domain"],
             "--num-variates",
             str(self.configuration.resolved["data"]["benchmark"]["num_variates"]),
+            "--seasonality",
+            str(self.configuration.resolved["data"]["benchmark"]["seasonality"]),
             "--limit",
             str(limit),
         )
@@ -1373,8 +1383,8 @@ class ExperimentCoordinator:
         """
         jobs = []
         for task_id, instance_id, _, method in rows:
-            context, metadata = self.connection.execute(
-                """SELECT i.context_target, b.metadata FROM forecast_instances i
+            context, frequency, metadata = self.connection.execute(
+                """SELECT i.context_target, b.frequency, b.metadata FROM forecast_instances i
                 JOIN benchmark_configurations b USING (benchmark_configuration_id)
                 WHERE i.forecast_instance_id=?""",
                 [instance_id],
@@ -1384,7 +1394,8 @@ class ExperimentCoordinator:
                 {
                     "id": task_id,
                     "context": context,
-                    "method": method,
+                    "mode": method,
+                    "official_frequency": frequency,
                     "seasonality": seasonality,
                     "instance_id": instance_id,
                 }
@@ -1399,7 +1410,17 @@ class ExperimentCoordinator:
             """
             started = time.monotonic()
             response = self._r_worker(
-                {"action": "clean", "jobs": [{k: v for k, v in job.items() if k != "instance_id"} for job in batch]}
+                {
+                    "action": "preprocess",
+                    "jobs": [
+                        {
+                            k: v
+                            for k, v in job.items()
+                            if k not in {"instance_id", "official_frequency"}
+                        }
+                        for job in batch
+                    ],
+                }
             )
             return batch, response, time.monotonic() - started
 
@@ -1443,9 +1464,37 @@ class ExperimentCoordinator:
             }:
                 raise RuntimeError("Process 02 worker returned missing, duplicate, or unexpected task IDs")
             for job in batch:
-                task_id, instance_id, method = job["id"], job["instance_id"], job["method"]
+                task_id, instance_id, method = job["id"], job["instance_id"], job["mode"]
                 result = by_id[task_id]
                 original = job["context"]
+                values = result.get("values")
+                if (
+                    result.get("preprocessing_mode") != method
+                    or result.get("status") != "success"
+                    or not isinstance(values, list)
+                    or len(values) != len(original)
+                    or any(
+                        not isinstance(value, (int, float)) or not math.isfinite(value)
+                        for value in values
+                    )
+                    or result.get("missing_count_after") != 0
+                ):
+                    raise RuntimeError(
+                        "Process 02 worker returned invalid preprocessing values or provenance"
+                    )
+                if method == "standard" and any(
+                    original_value is not None
+                    and not (
+                        isinstance(original_value, float) and math.isnan(original_value)
+                    )
+                    and original_value != processed_value
+                    for original_value, processed_value in zip(
+                        original, values, strict=True
+                    )
+                ):
+                    raise RuntimeError(
+                        "standard preprocessing changed a finite observation"
+                    )
                 preprocessing_id = f"preprocessed/{json_fingerprint({'experiment': experiment_id, 'instance': instance_id, 'method': method})[:32]}"
 
                 def insert(
@@ -1456,6 +1505,7 @@ class ExperimentCoordinator:
                     result=result,
                     seasonality=job["seasonality"],
                     packages=response["packages"],
+                    official_frequency=job["official_frequency"],
                 ):
                     """Purpose: Write one cleaned context within its task transaction.
 
@@ -1464,8 +1514,15 @@ class ExperimentCoordinator:
                     Outputs: None; inserts an idempotent ``preprocessed_series`` row.
                     """
                     self.connection.execute(
-                        """INSERT INTO preprocessed_series VALUES
-                        (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, current_timestamp)
+                        """INSERT INTO preprocessed_series
+                        (preprocessing_id, experiment_id, forecast_instance_id,
+                         cleaning_method, input_hash, output_hash, context_target,
+                         method_configuration, package_versions, parent_result_id,
+                         official_frequency, official_seasonality,
+                         preprocessing_status, missing_count_before,
+                         missing_count_after, values_changed, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?,
+                                current_timestamp)
                         ON CONFLICT (preprocessing_id) DO NOTHING""",
                         [
                             preprocessing_id,
@@ -1474,9 +1531,21 @@ class ExperimentCoordinator:
                             method,
                             json_fingerprint(original),
                             json_fingerprint(result["values"]),
-                            result["values"],
-                            canonical_json({"seasonality": seasonality, "source": "official get_seasonality(freq)"}),
+                            values,
+                            canonical_json(
+                                {
+                                    "mode": method,
+                                    "seasonality": seasonality,
+                                    "seasonality_source": "approved benchmark metadata from official GIFT-Eval frequency",
+                                }
+                            ),
                             canonical_json(packages),
+                            official_frequency,
+                            seasonality,
+                            result["status"],
+                            result["missing_count_before"],
+                            result["missing_count_after"],
+                            result["values_changed"],
                         ],
                     )
 
@@ -1712,6 +1781,25 @@ class ExperimentCoordinator:
                 mean = inverse(result["mean"], method, params)
                 median = inverse(result["median"], method, params)
                 quantiles = [inverse(values, method, params) for values in result["quantiles"]]
+                validate_forecast_capability(
+                    list(mean),
+                    list(median),
+                    list(self.quantiles),
+                    [list(values) for values in quantiles],
+                    "probabilistic",
+                )
+                result_metadata = metadata
+                if "requested_method_id" in result:
+                    result_metadata = {
+                        **metadata,
+                        "forecast_method": {
+                            "requested_method_id": result["requested_method_id"],
+                            "executed_method_id": result["executed_method_id"],
+                            "fallback_used": result["fallback_used"],
+                            "fallback_reason": result["fallback_reason"],
+                            "provenance": result["provenance"],
+                        },
+                    }
                 forecast_id = f"forecast/{json_fingerprint({'experiment': experiment_id, 'variant': variant_id, 'instance': instance_id, 'candidate': model})[:32]}"
                 model_revision = (
                     self.config["models"][model].get("revision")
@@ -1728,7 +1816,7 @@ class ExperimentCoordinator:
                     instance_id=instance_id,
                     variant_id=variant_id,
                     model=model,
-                    metadata=metadata,
+                    metadata=result_metadata,
                 ):
                     """Purpose: Write one original-scale base forecast transactionally.
 
@@ -1737,8 +1825,14 @@ class ExperimentCoordinator:
                     Outputs: None; inserts an idempotent ``forecasts`` row with hash.
                     """
                     self.connection.execute(
-                        """INSERT INTO forecasts VALUES
-                        (?, ?, ?, ?, ?, ?, ?, 'original', ?, ?, ?, ?, ?, ?, ?, current_timestamp)
+                        """INSERT INTO forecasts
+                        (forecast_id, experiment_id, variant_id, forecast_instance_id,
+                         candidate, model_revision, parent_result_id, scale, mean,
+                         median, quantile_levels, quantiles, runtime_seconds,
+                         execution_metadata, content_hash, created_at,
+                         forecast_capability)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, 'original', ?, ?, ?, ?, ?, ?, ?,
+                                current_timestamp, 'probabilistic')
                         ON CONFLICT (forecast_id) DO NOTHING""",
                         [
                             forecast_id,
@@ -1759,7 +1853,11 @@ class ExperimentCoordinator:
                     )
 
                 self._commit_task(
-                    task_id, attempts[task_id], runtime / len(batch), insert, metadata
+                    task_id,
+                    attempts[task_id],
+                    runtime / len(batch),
+                    insert,
+                    result_metadata,
                 )
 
         if dask_client is not None:
@@ -2079,8 +2177,14 @@ class ExperimentCoordinator:
                 Outputs: None; inserts ``forecasts`` and ``forecast_components`` rows.
                 """
                 self.connection.execute(
-                    """INSERT INTO forecasts VALUES
-                    (?, ?, ?, ?, 'equal_weight', NULL, NULL, 'original', ?, ?, ?, ?, 0, ?, ?, current_timestamp)
+                    """INSERT INTO forecasts
+                    (forecast_id, experiment_id, variant_id, forecast_instance_id,
+                     candidate, model_revision, parent_result_id, scale, mean,
+                     median, quantile_levels, quantiles, runtime_seconds,
+                     execution_metadata, content_hash, created_at,
+                     forecast_capability)
+                    VALUES (?, ?, ?, ?, 'equal_weight', NULL, NULL, 'original', ?, ?, ?,
+                            ?, 0, ?, ?, current_timestamp, 'probabilistic')
                     ON CONFLICT (forecast_id) DO NOTHING""",
                     [
                         forecast_id,
@@ -2214,7 +2318,7 @@ class ExperimentCoordinator:
         for task_id, _, variant_id, candidate in rows:
             records = self.connection.execute(
                 """SELECT f.forecast_instance_id, i.official_position, f.mean,
-                          f.quantiles, f.content_hash
+                          f.quantiles, f.content_hash, f.forecast_capability
                    FROM forecasts f JOIN forecast_instances i USING (forecast_instance_id)
                 WHERE f.experiment_id=? AND f.variant_id=? AND f.candidate=?
                 ORDER BY i.official_position""",
@@ -2222,6 +2326,10 @@ class ExperimentCoordinator:
             ).fetchall()
             instance_ids = [record[0] for record in records]
             positions = [int(record[1]) for record in records]
+            if any(record[5] != "probabilistic" or record[3] is None for record in records):
+                raise RuntimeError(
+                    "full probabilistic GIFT-Eval does not support mean-only forecasts"
+                )
             if (
                 len(records) != expected_count
                 or len(set(instance_ids)) != expected_count
@@ -2256,6 +2364,13 @@ class ExperimentCoordinator:
                         "term": self.configuration.resolved["data"]["benchmark"]["term"],
                         "quantile_levels": list(self.quantiles),
                         "options": self.configuration.evaluation_options,
+                        "seasonality": json.loads(
+                            self.connection.execute(
+                                "SELECT metadata FROM benchmark_configurations "
+                                "WHERE benchmark_configuration_id=?",
+                                [benchmark_id],
+                            ).fetchone()[0]
+                        )["official_seasonality"],
                         "forecasts": [
                             {"mean": row[2], "quantiles": row[3]} for row in records
                         ]
@@ -2561,7 +2676,7 @@ def get_forecast(
     try:
         row = connection.execute(
             """SELECT f.forecast_id, f.forecast_instance_id, f.mean, f.median,
-               f.quantile_levels, f.quantiles, i.actual_target
+               f.quantile_levels, f.quantiles, f.forecast_capability, i.actual_target
             FROM forecasts f JOIN forecast_instances i USING (forecast_instance_id)
             WHERE f.experiment_id=? AND f.variant_id=? AND i.series_id=? AND f.candidate=?""",
             [experiment_id, variant_id, str(series_id), candidate],
@@ -2570,9 +2685,134 @@ def get_forecast(
             raise KeyError("forecast not found")
         return ExperimentForecast(
             row[0], experiment_id, variant_id, row[1], candidate,
-            tuple(row[2]), tuple(row[3]), tuple(row[4]),
-            tuple(tuple(values) for values in row[5]), tuple(row[6]),
+            tuple(row[2]),
+            None if row[3] is None else tuple(row[3]),
+            None if row[4] is None else tuple(row[4]),
+            None if row[5] is None else tuple(tuple(values) for values in row[5]),
+            row[6], tuple(row[7]),
         )
+    finally:
+        connection.close()
+
+
+def validate_forecast_capability(
+    mean: Any,
+    median: Any,
+    quantile_levels: Any,
+    quantiles: Any,
+    forecast_capability: str,
+) -> None:
+    """Validate required mean and all-or-none probabilistic forecast fields."""
+    if (
+        mean is None
+        or not isinstance(mean, (list, tuple))
+        or not mean
+        or any(
+            not isinstance(value, (int, float)) or not math.isfinite(value)
+            for value in mean
+        )
+    ):
+        raise ValueError("forecast mean is required")
+    probabilistic = (median, quantile_levels, quantiles)
+    if forecast_capability == "probabilistic":
+        if any(value is None for value in probabilistic):
+            raise ValueError("probabilistic forecasts require median, levels, and quantiles")
+        numeric_values = [*median, *quantile_levels]
+        numeric_values.extend(
+            value for quantile in quantiles for value in quantile
+        )
+        if any(
+            not isinstance(value, (int, float)) or not math.isfinite(value)
+            for value in numeric_values
+        ):
+            raise ValueError("probabilistic forecast fields must contain only finite values")
+    elif forecast_capability == "mean_only":
+        if any(value is not None for value in probabilistic):
+            raise ValueError("mean-only forecasts must omit every probabilistic field")
+    else:
+        raise ValueError(f"unsupported forecast capability: {forecast_capability}")
+
+
+def get_forecast_mean(
+    database_path: Path,
+    dataset_id: str,
+    series_id: str,
+    forecast_id: str,
+    experiment_id: str | None = None,
+    preprocessing_mode: str | None = None,
+    variant_id: str | None = None,
+) -> tuple[float, ...]:
+    """Return a generated or archived forecast mean through one public interface.
+
+    Live forecast identifiers use their registered name (for example
+    ``auto_arima_forec``); archived IDs are ``m4_smyl`` and ``m4_fforma``.
+    Live lookup uses an explicit mode or the configured robust default. A variant ID
+    is required when that still identifies multiple transformed forecasts. Archived
+    forecasts bypass preprocessing and retain the internal official-reference source.
+    """
+    connection = duckdb.connect(str(Path(database_path).resolve()), read_only=True)
+    try:
+        if forecast_id in {"m4_smyl", "m4_fforma"}:
+            if preprocessing_mode is not None or variant_id not in {None, "official_reference"}:
+                raise ValueError(
+                    "archived M4 forecasts use official_reference, not a preprocessing mode"
+                )
+            row = connection.execute(
+                """SELECT mean FROM reference_forecasts
+                   WHERE dataset_id=? AND series_id=? AND forecast_id=?""",
+                [dataset_id, str(series_id), forecast_id],
+            ).fetchone()
+        else:
+            candidates = {"auto_arima_forec": "auto_arima", "chronos_2": "chronos_2"}
+            candidate = candidates.get(forecast_id, forecast_id)
+            if preprocessing_mode is None:
+                configuration_row = connection.execute(
+                    """SELECT resolved_configuration FROM experiment_configuration
+                       WHERE configuration_key='experiment'"""
+                ).fetchone()
+                if configuration_row is None:
+                    raise RuntimeError("database has no authoritative preprocessing default")
+                preprocessing_mode = json.loads(configuration_row[0])["pipeline"][
+                    "preprocessing"
+                ]["default"]
+            if preprocessing_mode not in {"standard", "robust"}:
+                raise ValueError("preprocessing_mode must be standard or robust")
+            parameters: list[Any] = [
+                dataset_id,
+                str(series_id),
+                candidate,
+                preprocessing_mode,
+            ]
+            experiment_filter = ""
+            if experiment_id is not None:
+                experiment_filter = " AND f.experiment_id=?"
+                parameters.append(experiment_id)
+            variant_filter = ""
+            if variant_id is not None:
+                variant_filter = " AND f.variant_id=?"
+                parameters.append(variant_id)
+            rows = connection.execute(
+                """SELECT f.mean, f.variant_id
+                   FROM forecasts f
+                   JOIN forecast_instances i USING (forecast_instance_id)
+                   JOIN experiment_variants v USING (variant_id)
+                   WHERE i.dataset_id=? AND i.series_id=? AND f.candidate=?
+                     AND v.cleaning_method=?"""
+                + experiment_filter
+                + variant_filter,
+                parameters,
+            ).fetchall()
+            if len(rows) > 1:
+                raise ValueError(
+                    "forecast mean lookup is ambiguous; provide experiment_id and variant_id"
+                )
+            row = rows[0] if rows else None
+        if row is None:
+            raise KeyError("forecast mean not found")
+        mean = tuple(float(value) for value in row[0])
+        if not mean or any(not math.isfinite(value) for value in mean):
+            raise ValueError("stored forecast mean must contain only finite values")
+        return mean
     finally:
         connection.close()
 

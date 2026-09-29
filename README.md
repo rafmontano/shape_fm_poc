@@ -1,7 +1,7 @@
 # ShapeFM
 
 ShapeFM is one traceable, restartable time-series research system. Its only
-researcher-facing entry point is:
+researcher-facing experiment entry point is:
 
 ```sh
 .tools/uv/uv run --locked --no-sync python src/python/00_main.py --help
@@ -10,6 +10,36 @@ researcher-facing entry point is:
 `--no-sync` is required when using the already prepared locked environments;
 the command does not install or update dependencies. The public actions are
 `plan`, `run`, `status`, `results`, and `test`.
+
+## Installation
+
+From the repository root, install the complete R and Python dependency superset,
+submodules, datasets, and pinned model assets with:
+
+```sh
+scripts/setup.sh
+```
+
+This is equivalent to `scripts/setup.sh install all`. It is non-destructive,
+reuses valid existing environments and downloads, and validates the complete
+installation. Selective installation is intentionally unsupported. Run the
+read-only audit at any time with:
+
+```sh
+scripts/setup.sh verify
+```
+
+For a clean reconstruction, `scripts/setup.sh rebuild all --confirm-delete`
+moves every managed folder to an `original-folder-name_DDMMYY` sibling before
+installing. It never deletes the old folders and stops before any move if a
+dated destination already exists. See the [environment guide](docs/environment.md)
+for prerequisites, all six Python environments, R and M4 handling, accelerator
+behavior, recovery, download safeguards, and installation reports.
+
+Setup-managed environments, generated data/models/results, local tool and
+download caches, temporary downloads, and their dated rebuild archives are
+ignored by narrowly scoped repository-relative rules. Environment manifests,
+lockfiles, source, configuration, documentation, and tests remain trackable.
 
 ## Research workflow
 
@@ -20,7 +50,12 @@ The six ordered processes are:
 ```
 
 Python coordinates every process and is the sole DuckDB writer. R is a
-specialised worker for `tsclean` preprocessing and AutoARIMA forecasting.
+specialised worker for standard/robust preprocessing and an allowlisted nine-method
+forecast pool. The pool's common probabilistic contract and explicit
+seasonal-naive fallback are documented in
+[`docs/forecast-methods.md`](docs/forecast-methods.md).
+Import missingness and the two preprocessing modes are documented in
+[`docs/preprocessing.md`](docs/preprocessing.md).
 Completed task state and scientific provenance are stored transactionally, so
 rerunning the same experiment skips completed work without changing experiment,
 task, forecast, or evaluation identity.
@@ -95,7 +130,9 @@ src/python/util/                         shared Python implementation
 src/python/tests/                        unit, integration, and acceptance tests
 src/r/02_01_preprocess_series.R          R preprocessing substep
 src/r/04_01_forecast_auto_arima.R        R AutoARIMA substep
+src/r/util/forecast_methods.R             shared registered R forecast pool
 src/r/util/time_series_input.R           shared R time-series input contract
+src/r/tests/                              focused R contract tests
 ```
 
 ## POC2 phases and topology

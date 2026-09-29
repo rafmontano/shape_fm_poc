@@ -128,13 +128,22 @@ def clean_batch(
     threads: int,
     retry_count: int = 0,
 ) -> dict[str, Any]:
-    """Purpose: Clean a serializable batch through the R worker. Inputs: ``batch`` contains job mappings with IDs and series values from the coordinator, ``script`` is repository-relative, ``timeout`` is seconds, ``threads`` is the R thread limit, and ``retry_count`` is the zero-based Dask attempt. Outputs: Cleaned results, R package versions, elapsed seconds, and worker provenance; launches one R subprocess and omits coordinator-only instance IDs."""
+    """Purpose: Preprocess a serializable batch through the bounded R worker.
+
+    Inputs: Jobs with IDs, contexts, approved modes, and official seasonality plus
+    worker execution controls. Outputs: Finite model inputs, preprocessing provenance,
+    package versions, runtime, and worker identity; no database access occurs here.
+    """
     started = time.monotonic()
     response = _run_r(
         {
-            "action": "clean",
+            "action": "preprocess",
             "jobs": [
-                {key: value for key, value in job.items() if key != "instance_id"}
+                {
+                    key: value
+                    for key, value in job.items()
+                    if key not in {"instance_id", "official_frequency"}
+                }
                 for job in batch
             ],
         },
