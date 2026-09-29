@@ -155,7 +155,8 @@ The POC2 Import acceptance target is deliberately two workers: one Mac CPU and
 one Ubuntu GPU worker; the scheduler is not a worker. This new target has not
 yet been accepted.
 
-See the [architecture](docs/architecture.md), [code standards](docs/code-standards.md),
+See the [research vision](docs/research-vision.md),
+[architecture](docs/architecture.md), [code standards](docs/code-standards.md),
 [experiment configuration reference](docs/experiment-configuration.md),
 [configuration inventory](docs/configuration-inventory.md), [data contract](docs/data-contract.md),
 and [local execution contract](docs/local-execution.md).

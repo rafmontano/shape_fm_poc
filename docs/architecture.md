@@ -1,5 +1,12 @@
 # ShapeFM architecture
 
+The governing long-term direction is documented in the
+[ShapeFM research vision](research-vision.md). Architecture and implementation
+decisions should preserve its nested-system boundaries, reproducible FFORMA
+baseline, expandable forecast and feature pools, alternative meta-learners,
+and explicit foundation-model roles in forecasting, features, meta-learning,
+combination and adjustment.
+
 ## Research architecture
 
 ![ShapeFM research architecture](images/shapefm_research_architecture.png)
