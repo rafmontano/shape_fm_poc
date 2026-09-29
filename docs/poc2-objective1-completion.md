@@ -35,3 +35,26 @@ library- or hardware-level nondeterminism despite the central seed.
 Objective 2 has not started. Its direction is only partially defined; its exact
 results, models, tolerances, import order, acceptance criteria, and definition
 of done remain unapproved.
+
+## Chief Developer QA closure — 29 September 2026
+
+The Chief Developer's human QA review approved the source documentation, human
+readability, process naming, and wrapper/substep convention. The final source
+structure uses `00_main.py` as the sole researcher entry point, numbered
+Process 01–06 Python wrappers, numbered specialised substeps, and unnumbered
+shared utilities.
+
+Final local Mac validation passed Python compilation, parsing of all three R
+sources, both relocated R worker contracts, all 88 fast tests, the isolated
+GIFT-Eval semantics test, all three remaining integration tests, every
+researcher-action help check, stale-reference checks, and `git diff --check`.
+Semantic-equivalence review and regression evidence confirm that scientific
+behaviour and persistent DuckDB contracts are unchanged. The earlier
+two-machine acceptance therefore remains valid evidence for the scientific
+architecture; the final structural candidate was validated locally on Mac.
+
+Ubuntu was offline and intentionally was not synchronized. Mac `main` and
+GitHub `origin/main` are authoritative until Ubuntu fetches and fast-forwards
+to that revision before any execution or development. POC2 Objective 1 is
+closed. POC2 Objective 2 has not started, and its detailed scope remains
+subject to researcher approval.
