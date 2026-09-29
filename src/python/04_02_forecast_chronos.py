@@ -1,10 +1,10 @@
 # ==============================================================================
-# 04_forecast_chronos.py
+# 04_02_forecast_chronos.py
 #
 # Purpose: Persistent Chronos-2 JSON-lines worker; this module never imports DuckDB.
 # Inputs: Internal hardware/serve arguments and, for serve, newline-delimited predict or shutdown JSON requests on stdin.
 # Outputs: Newline-delimited hardware, ready, forecast, shutdown, or error JSON responses on stdout.
-# Run from: Internal worker command: `.tools/uv/uv run --locked --no-sync python src/python/04_forecast_chronos.py <hardware|serve> [options]`.
+# Run from: Internal worker command: `.tools/uv/uv run --locked --no-sync python src/python/04_02_forecast_chronos.py <hardware|serve> [options]`.
 # ==============================================================================
 
 """Persistent Chronos-2 JSON-lines worker; this module never imports DuckDB."""

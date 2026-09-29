@@ -2,12 +2,12 @@
 # experiment_execution.py
 #
 # Purpose: Plan M4 Daily tasks, execute preprocessing through official evaluation, and export a candidate.
-# Inputs: Imported M4 series, experiment configuration, execution profile/settings, and stage selection.
+# Inputs: Imported M4 series, experiment configuration, execution profile/settings, and process selection.
 # Outputs: Restartable task/invocation rows, forecasts, official evaluations, status, and candidate exports.
 # Run from: Imported; not run directly.
 # ==============================================================================
 
-"""Plan and execute the restartable M4 Daily POC 1 pipeline in a single-writer DuckDB."""
+"""Plan and execute the restartable M4 Daily experiment in a single-writer DuckDB."""
 
 from __future__ import annotations
 
@@ -44,8 +44,9 @@ from .transformations import TransformationResult, inverse, transform
 from .provenance import utc_now
 
 
-# Code constant: persistent process-number to invocation-stage protocol mapping.
-STAGES = {2: "preprocess", 3: "transform", 4: "forecast", 5: "combine", 6: "evaluate"}
+# Code constant: process-number to legacy persistent invocation-stage protocol mapping;
+# existing ``stage`` fields remain unchanged for database and JSON compatibility.
+PROCESSES = {2: "preprocess", 3: "transform", 4: "forecast", 5: "combine", 6: "evaluate"}
 
 
 def expected_task_counts(
@@ -55,7 +56,7 @@ def expected_task_counts(
 
     Inputs: Selected forecast-instance count and the stored workflow mapping of
     cleaning methods, transformations, and models.
-    Outputs: Stage-number to task-count mapping; no database or process effects.
+    Outputs: Process-number to task-count mapping; no database or process effects.
     """
     if instance_count < 0:
         raise ValueError("instance count cannot be negative")
@@ -145,8 +146,8 @@ class ExperimentPlan:
     """Purpose: Describe a persisted, executable M4 Daily experiment plan.
 
     Inputs: Constructed from authoritative configuration and the official benchmark
-    selection by :meth:`POC1Coordinator.plan`.
-    Outputs: Immutable experiment ID, scope, instance and variant counts, per-stage
+    selection by :meth:`ExperimentCoordinator.plan`.
+    Outputs: Immutable experiment ID, scope, instance and variant counts, per-process
     task counts, and benchmark configuration name; owns no external resources.
     """
     experiment_id: str
@@ -244,12 +245,12 @@ def _combine_job(job: dict[str, Any]) -> dict[str, Any]:
     return combine_equal_weight(job["left"], job["right"], job["weights"])
 
 
-class POC1Coordinator:
-    """Purpose: Own planning and restartable M4 Daily stage coordination.
+class ExperimentCoordinator:
+    """Purpose: Own planning and restartable M4 Daily process coordination.
 
     Inputs: A DuckDB path whose stored configuration defines scientific workflow,
     execution controls, benchmark selection, model revisions, and quantile levels.
-    Outputs: Plans, gate summaries, forecasts, evaluations, status, and exports;
+    Outputs: Plans, process summaries, forecasts, evaluations, status, and exports;
     owns the sole writable connection and all task/invocation transaction effects,
     and launches isolated R, Chronos, GIFT-Eval, and optional Dask work.
     """
@@ -281,7 +282,7 @@ class POC1Coordinator:
         """Close the coordinator's writable DuckDB connection."""
         self.connection.close()
 
-    def __enter__(self) -> "POC1Coordinator":
+    def __enter__(self) -> "ExperimentCoordinator":
         """Return the open single-writer coordinator."""
         return self
 
@@ -300,7 +301,7 @@ class POC1Coordinator:
         environment = self.configuration.resolved["evaluation"]["gift_eval"]["environment"]
         command = [
             str(self.root / environment / "bin/python"),
-            str(self.root / "src/python/06_evaluate_gift_eval.py"),
+            str(self.root / "src/python/06_01_evaluate_gift_eval.py"),
             *arguments,
         ]
         completed = subprocess.run(
@@ -326,7 +327,7 @@ class POC1Coordinator:
             [self.configuration.resolved["data"]["dataset_name"]],
         ).fetchone()
         if row is None:
-            raise RuntimeError("Foundation Stage 1 M4 Daily import is required")
+            raise RuntimeError("Foundation Process 01 M4 Daily import is required")
         return row[0]
 
     def _validate_official_configuration(self, official: dict[str, Any]) -> None:
@@ -344,7 +345,7 @@ class POC1Coordinator:
             )
         if official["window_count"] != 1:
             raise RuntimeError(
-                "POC 1 supports exactly one official forecast window; "
+                "The experiment supports exactly one official forecast window; "
                 f"{official['configuration_name']} has {official['window_count']}"
             )
 
@@ -389,7 +390,7 @@ class POC1Coordinator:
         execution batch size from authoritative stored configuration.
         Outputs: Dry-run selection/count mapping or persisted :class:`ExperimentPlan`;
         calls GIFT-Eval and, unless dry-running, transactionally inserts benchmark,
-        experiment, variant, instance, and Stage 2–6 task rows and invalidates stale
+        experiment, variant, instance, and Process 02–06 task rows and invalidates stale
         evaluation/export state when scope expands.
         """
         source_root = self.root / self.configuration.source_directory
@@ -427,8 +428,8 @@ class POC1Coordinator:
             configuration_hash = self.configuration.scientific_hash
             experiment_id = f"experiment/{json_fingerprint({'benchmark': benchmark_id, 'dataset': dataset_id, 'configuration': configuration_hash})[:24]}"
             existing_counts = {
-                int(stage): int(count)
-                for stage, count in self.connection.execute(
+                int(process): int(count)
+                for process, count in self.connection.execute(
                     """SELECT stage, count(*) FROM experiment_tasks
                     WHERE experiment_id=? GROUP BY stage""",
                     [experiment_id],
@@ -495,8 +496,8 @@ class POC1Coordinator:
                 "official_evaluation_rows": expected_task_counts(len(instances), self.config)[6],
                 "benchmark_configuration": official["configuration_name"],
                 "task_counts": {
-                    str(stage): count
-                    for stage, count in expected_task_counts(len(instances), self.config).items()
+                    str(process): count
+                    for process, count in expected_task_counts(len(instances), self.config).items()
                 },
                 "resource_note": "planning only; no experiment rows were materialised",
             }
@@ -719,25 +720,25 @@ class POC1Coordinator:
             plan_scope,
             len(official["instances"]),
             len(variants),
-            {int(stage): int(count) for stage, count in counts.items()},
+            {int(process): int(count) for process, count in counts.items()},
             official["configuration_name"],
         )
 
     def _register_task(
         self,
         experiment_id: str,
-        stage: int,
+        process: int,
         instance_id: str | None,
         variant_id: str | None,
         candidate: str | None,
     ) -> str:
         """Purpose: Register one idempotent unit in the persisted task graph.
 
-        Inputs: Experiment/stage identity and optional instance, variant, and candidate.
+        Inputs: Experiment/process identity and optional instance, variant, and candidate.
         Outputs: Deterministic task ID; inserts a pending DuckDB row when absent.
         """
         row = self._task_row(
-            experiment_id, stage, instance_id, variant_id, candidate
+            experiment_id, process, instance_id, variant_id, candidate
         )
         self.connection.execute(
             """INSERT INTO experiment_tasks
@@ -750,15 +751,15 @@ class POC1Coordinator:
     def _task_row(
         self,
         experiment_id: str,
-        stage: int,
+        process: int,
         instance_id: str | None,
         variant_id: str | None,
         candidate: str | None,
     ) -> tuple[str, str, int, str | None, str | None, str | None]:
-        """Build the deterministic task ID and normalized database tuple for one stage unit."""
+        """Build the deterministic task ID and normalized database tuple for one process unit."""
         identity = {
             "experiment": experiment_id,
-            "stage": stage,
+            "stage": process,
             "instance": instance_id,
             "variant": variant_id,
             "candidate": candidate,
@@ -767,7 +768,7 @@ class POC1Coordinator:
         return (
             task_id,
             experiment_id,
-            stage,
+            process,
             instance_id,
             variant_id,
             candidate,
@@ -776,7 +777,7 @@ class POC1Coordinator:
     def _begin_invocation(
         self,
         experiment_id: str,
-        stage: int,
+        process: int,
         workers: int,
         device: str,
         batch_size: int,
@@ -784,9 +785,9 @@ class POC1Coordinator:
         overrides: dict[str, Any] | None = None,
         hardware: dict[str, Any] | None = None,
     ) -> str:
-        """Purpose: Start durable accounting for one restartable stage invocation.
+        """Purpose: Start durable accounting for one restartable process invocation.
 
-        Inputs: Experiment and stage IDs, resolved concurrency/device/batch controls,
+        Inputs: Experiment and process IDs, resolved concurrency/device/batch controls,
         execution profile and overrides, and measured hardware evidence.
         Outputs: New invocation ID; inserts a running invocation and marks orphaned
         running attempts failed while resetting their tasks to pending in DuckDB.
@@ -801,7 +802,7 @@ class POC1Coordinator:
             [
                 invocation_id,
                 experiment_id,
-                STAGES[stage],
+                PROCESSES[process],
                 workers,
                 device,
                 batch_size,
@@ -821,12 +822,12 @@ class POC1Coordinator:
                error='interrupted before completion'
                WHERE status='running' AND task_id IN
                (SELECT task_id FROM experiment_tasks WHERE experiment_id=? AND stage=?)""",
-            [experiment_id, stage],
+            [experiment_id, process],
         )
         self.connection.execute(
             """UPDATE experiment_tasks SET status='pending', last_error='interrupted before completion',
                updated_at=current_timestamp WHERE experiment_id=? AND stage=? AND status='running'""",
-            [experiment_id, stage],
+            [experiment_id, process],
         )
         return invocation_id
 
@@ -837,7 +838,7 @@ class POC1Coordinator:
         Outputs: Decoded hardware mapping; launches a checked subprocess and raises
         ``RuntimeError`` with bridge diagnostics when the device is unavailable.
         """
-        paths = self.configuration.resolved["execution"]["paths"]
+        paths = self.configuration.execution_paths
         try:
             completed = subprocess.run(
                 [
@@ -924,7 +925,7 @@ class POC1Coordinator:
         if row is None:
             raise RuntimeError("plan the smoke experiment before running Chronos validation")
         chronos = self.config["models"]["chronos_2"]
-        paths = self.configuration.resolved["execution"]["paths"]
+        paths = self.configuration.execution_paths
         command = [
             str(self.root / paths["chronos_environment"] / "bin/python"),
             str(self.root / paths["chronos_worker"]),
@@ -1018,7 +1019,7 @@ class POC1Coordinator:
     ) -> None:
         """Purpose: Commit one scientific result and its task completion atomically.
 
-        Inputs: Task/attempt identity, runtime, callback that writes the stage result,
+        Inputs: Task/attempt identity, runtime, callback that writes the process result,
         and optional worker resource provenance.
         Outputs: None; executes the callback and completes task and attempt rows in
         one DuckDB transaction, rolling all writes back on failure.
@@ -1071,7 +1072,7 @@ class POC1Coordinator:
         Outputs: Decoded result/provenance mapping; launches a checked R subprocess
         with bounded threads and does not permit the worker to access DuckDB.
         """
-        paths = self.configuration.resolved["execution"]["paths"]
+        paths = self.configuration.execution_paths
         execution = self.configuration.execution
         timeout = float(execution["worker_timeouts_seconds"]["r"])
         threads = str(execution["thread_limits"]["r"])
@@ -1097,10 +1098,10 @@ class POC1Coordinator:
         )
         return json.loads(completed.stdout)
 
-    def _pending(self, experiment_id: str, stage: int) -> list[tuple]:
-        """Purpose: Select restartable work for one stage invocation.
+    def _pending(self, experiment_id: str, process: int) -> list[tuple]:
+        """Purpose: Select restartable work for one process invocation.
 
-        Inputs: Persisted experiment ID and Process 02–06 stage number.
+        Inputs: Persisted experiment ID and Process 02–06 number.
         Outputs: Ordered incomplete task IDs and instance/variant/candidate dimensions
         read from DuckDB without changing task state.
         """
@@ -1108,51 +1109,51 @@ class POC1Coordinator:
             """SELECT task_id, forecast_instance_id, variant_id, candidate
             FROM experiment_tasks WHERE experiment_id=? AND stage=? AND status!='completed'
             ORDER BY task_id""",
-            [experiment_id, stage],
+            [experiment_id, process],
         ).fetchall()
 
-    def _check_gate(self, experiment_id: str, stage: int) -> None:
-        """Purpose: Enforce the persisted predecessor-stage completion gate.
+    def _check_process_prerequisite(self, experiment_id: str, process: int) -> None:
+        """Purpose: Enforce persisted predecessor-process completion.
 
-        Inputs: Persisted experiment ID and requested Process 02–06 stage number.
+        Inputs: Persisted experiment ID and requested Process 02–06 number.
         Outputs: None; performs a read-only task count and raises ``RuntimeError``
-        when the preceding stage still has incomplete tasks.
+        when the preceding process still has incomplete tasks.
         """
-        if stage == 2:
+        if process == 2:
             return
         incomplete = self.connection.execute(
             """SELECT count(*) FROM experiment_tasks
             WHERE experiment_id=? AND stage=? AND status!='completed'""",
-            [experiment_id, stage - 1],
+            [experiment_id, process - 1],
         ).fetchone()[0]
         if incomplete:
-            raise RuntimeError(f"Stage {stage - 1} gate has {incomplete} incomplete tasks")
+            raise RuntimeError(f"Process {process - 1} has {incomplete} incomplete tasks")
 
-    def run_gate(
+    def run_process(
         self,
         experiment_id: str,
-        stage: int,
+        process: int,
         workers: int | None = None,
         device: str = "auto",
         batch_size: int | None = None,
         execution: tuple[ExecutionProfile, dict[str, Any]] | None = None,
         execution_settings: ExecutionSettings | None = None,
     ) -> dict[str, Any]:
-        """Purpose: Execute one restartable Process 02–06 gate.
+        """Purpose: Execute one restartable process from Processes 02–06.
 
-        Inputs: Experiment/stage identity and optional worker, device, batch, profile,
-        override, and Dask settings; omitted controls come from stored configuration.
+        Inputs: Experiment/process identity and optional worker, device, batch,
+        profile, override, and Dask settings from stored configuration or caller.
         Outputs: Invocation ID and task/runtime summary; validates predecessor and
-        hardware gates, optionally opens Dask, records invocation/attempt state,
-        dispatches the stage, commits results through the single writer, finalizes
+        hardware requirements, optionally opens Dask, records invocation/attempt state,
+        dispatches the process, commits results through the single writer, finalizes
         failures for retry, and closes the Dask client.
         """
         if (
-            stage not in STAGES
+            process not in PROCESSES
             or (workers is not None and workers < 1)
             or (batch_size is not None and batch_size < 1)
         ):
-            raise ValueError("stage must be 2..6; workers and batch_size must be positive")
+            raise ValueError("process must be 2..6; workers and batch_size must be positive")
         configured_batches = self.configuration.execution["batch_sizes"]
         preprocess_batch_size = int(batch_size or configured_batches["preprocess"])
         if execution is None:
@@ -1177,7 +1178,7 @@ class POC1Coordinator:
         hardware: dict[str, Any] = coordinator_hardware
         resolved_device = profile.required_accelerator or device
         dask_client = None
-        if settings.mode == "dask" and stage != 6:
+        if settings.mode == "dask" and process != 6:
             from distributed import Client
 
             from .distributed_execution import validate_cluster
@@ -1216,9 +1217,9 @@ class POC1Coordinator:
                     expected_chronos_revision=self.config["models"]["chronos_2"]["revision"],
                     expected_chronos_version=self.config["models"]["chronos_2"]["chronos_forecasting"],
                     chronos_repository=self.config["models"]["chronos_2"]["repository"],
-                    chronos_environment=self.configuration.resolved["execution"]["paths"]["chronos_environment"],
+                    chronos_environment=self.configuration.execution_paths["chronos_environment"],
                     gift_eval_source_directory=self.configuration.resolved["evaluation"]["gift_eval"]["source_directory"],
-                    require_gpu=stage == 4,
+                    require_gpu=process == 4,
                     expected_gpu_name=expected_gpu_name,
                     expected_gpu_workers=settings.dask_expected_gpu_workers,
                 )
@@ -1226,14 +1227,14 @@ class POC1Coordinator:
                 dask_client.close()
                 raise
             hardware = {"coordinator": coordinator_hardware, "dask_workers": cluster}
-        stage_workers = {
+        process_workers = {
             2: profile.cleaning_workers,
             3: profile.transformation_workers,
             4: max(profile.autoarima_workers, profile.chronos_processes),
             5: profile.combination_workers,
             6: profile.evaluation_workers,
-        }[stage]
-        self._check_gate(experiment_id, stage)
+        }[process]
+        self._check_process_prerequisite(experiment_id, process)
         actual_series, actual_instances = self.connection.execute(
             """SELECT count(DISTINCT i.series_id), count(DISTINCT i.forecast_instance_id)
                FROM forecast_instances i
@@ -1251,8 +1252,8 @@ class POC1Coordinator:
         }
         invocation = self._begin_invocation(
             experiment_id,
-            stage,
-            stage_workers,
+            process,
+            process_workers,
             resolved_device,
             {
                 2: preprocess_batch_size,
@@ -1260,18 +1261,18 @@ class POC1Coordinator:
                 4: int(configured_batches["chronos"]),
                 5: int(configured_batches["combine"]),
                 6: int(configured_batches["gift_eval"]),
-            }[stage],
+            }[process],
             profile,
             invocation_overrides,
             {**hardware, "execution_settings": settings.to_dict()},
         )
-        rows = self._pending(experiment_id, stage)
+        rows = self._pending(experiment_id, process)
         attempts = self._start_tasks(rows, invocation)
         started = time.monotonic()
         failures = []
         try:
-            if stage == 2:
-                self._stage2(
+            if process == 2:
+                self._run_02_preprocess(
                     experiment_id,
                     rows,
                     attempts,
@@ -1280,8 +1281,8 @@ class POC1Coordinator:
                     dask_client,
                     settings,
                 )
-            elif stage == 3:
-                self._stage3(
+            elif process == 3:
+                self._run_03_transform(
                     experiment_id,
                     rows,
                     attempts,
@@ -1289,8 +1290,8 @@ class POC1Coordinator:
                     dask_client,
                     settings,
                 )
-            elif stage == 4:
-                self._stage4(
+            elif process == 4:
+                self._run_04_forecast(
                     experiment_id,
                     rows,
                     attempts,
@@ -1299,8 +1300,8 @@ class POC1Coordinator:
                     dask_client,
                     settings,
                 )
-            elif stage == 5:
-                self._stage5(
+            elif process == 5:
+                self._run_05_combine(
                     experiment_id,
                     rows,
                     attempts,
@@ -1309,7 +1310,12 @@ class POC1Coordinator:
                     settings,
                 )
             else:
-                self._stage6(experiment_id, rows, attempts, profile.evaluation_workers)
+                self._run_06_evaluate(
+                    experiment_id,
+                    rows,
+                    attempts,
+                    profile.evaluation_workers,
+                )
         except BaseException as exc:
             error = f"{type(exc).__name__}: {exc}"
             for row in rows:
@@ -1322,16 +1328,16 @@ class POC1Coordinator:
         counts = dict(
             self.connection.execute(
                 "SELECT status, count(*) FROM experiment_tasks WHERE experiment_id=? AND stage=? GROUP BY status",
-                [experiment_id, stage],
+                [experiment_id, process],
             ).fetchall()
         )
         status = "completed" if set(counts) <= {"completed"} else "failed"
         summary = {
-            "stage": stage,
+            "stage": process,
             "selected": len(rows),
             "skipped": self.connection.execute(
                 "SELECT count(*) FROM experiment_tasks WHERE experiment_id=? AND stage=? AND status='completed'",
-                [experiment_id, stage],
+                [experiment_id, process],
             ).fetchone()[0]
             - (len(rows) - len(failures)),
             "counts": counts,
@@ -1345,10 +1351,10 @@ class POC1Coordinator:
         if dask_client is not None:
             dask_client.close()
         if status == "failed":
-            raise RuntimeError(f"Stage {stage} failed; rerun retries failed tasks")
+            raise RuntimeError(f"Process {process} failed; rerun retries failed tasks")
         return {"invocation_id": invocation, **summary}
 
-    def _stage2(
+    def _run_02_preprocess(
         self,
         experiment_id: str,
         rows: list[tuple],
@@ -1358,7 +1364,7 @@ class POC1Coordinator:
         dask_client: Any = None,
         settings: ExecutionSettings | None = None,
     ) -> None:
-        """Purpose: Execute Stage 2 cleaning for selected training contexts.
+        """Purpose: Execute Process 02 cleaning for selected training contexts.
 
         Inputs: Experiment task rows/attempts, worker and batch controls, and optional
         Dask client/settings; contexts and official seasonality come from DuckDB.
@@ -1385,7 +1391,7 @@ class POC1Coordinator:
             )
 
         def invoke(batch: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any], float]:
-            """Purpose: Run one local Stage 2 R cleaning batch.
+            """Purpose: Run one local Process 02 R cleaning batch.
 
             Inputs: Job mappings containing task IDs, contexts, methods, and seasonality.
             Outputs: Original batch, decoded worker response, and elapsed seconds;
@@ -1408,7 +1414,7 @@ class POC1Coordinator:
                 max_in_flight=settings.dask_max_in_flight,
                 retries=settings.dask_retries,
                 extra_arguments=(
-                    self.configuration.resolved["execution"]["paths"]["r_preprocess_worker"],
+                    self.configuration.execution_paths["r_preprocess_worker"],
                     float(self.configuration.execution["worker_timeouts_seconds"]["r"]),
                     int(self.configuration.execution["thread_limits"]["r"]),
                 ),
@@ -1435,7 +1441,7 @@ class POC1Coordinator:
             if len(result_ids) != len(set(result_ids)) or set(by_id) != {
                 job["id"] for job in batch
             }:
-                raise RuntimeError("Stage 2 worker returned missing, duplicate, or unexpected task IDs")
+                raise RuntimeError("Process 02 worker returned missing, duplicate, or unexpected task IDs")
             for job in batch:
                 task_id, instance_id, method = job["id"], job["instance_id"], job["method"]
                 result = by_id[task_id]
@@ -1482,7 +1488,7 @@ class POC1Coordinator:
                     response.get("worker"),
                 )
 
-    def _stage3(
+    def _run_03_transform(
         self,
         experiment_id: str,
         rows: list[tuple],
@@ -1491,7 +1497,7 @@ class POC1Coordinator:
         dask_client: Any = None,
         settings: ExecutionSettings | None = None,
     ) -> None:
-        """Purpose: Execute Stage 3 transformations of cleaned training contexts.
+        """Purpose: Execute Process 03 transformations of cleaned training contexts.
 
         Inputs: Experiment task rows/attempts, worker count, and optional Dask controls;
         methods and input vectors are read from variant and preprocessing rows.
@@ -1519,7 +1525,7 @@ class POC1Coordinator:
             runtime: float,
             resources: dict[str, Any] | None = None,
         ) -> None:
-            """Purpose: Commit one Stage 3 transformation result.
+            """Purpose: Commit one Process 03 transformation result.
 
             Inputs: Task metadata, transformed vector/parameters, runtime, and worker evidence.
             Outputs: None; delegates result insertion and attempt completion to the
@@ -1583,7 +1589,7 @@ class POC1Coordinator:
             expected_ids = {job["id"] for job in batch}
             if len(result_ids) != len(set(result_ids)) or set(result_ids) != expected_ids:
                 raise RuntimeError(
-                    "Stage 3 worker returned missing, duplicate, or unexpected task IDs"
+                    "Process 03 worker returned missing, duplicate, or unexpected task IDs"
                 )
             runtime = response["runtime_seconds"] / len(batch)
             for result in response["results"]:
@@ -1596,7 +1602,7 @@ class POC1Coordinator:
                     response["worker"],
                 )
 
-    def _stage4(
+    def _run_04_forecast(
         self,
         experiment_id: str,
         rows: list[tuple],
@@ -1606,7 +1612,7 @@ class POC1Coordinator:
         dask_client: Any = None,
         settings: ExecutionSettings | None = None,
     ) -> None:
-        """Purpose: Execute Stage 4 base-model forecasting on transformed contexts.
+        """Purpose: Execute Process 04 base-model forecasting on transformed contexts.
 
         Inputs: Experiment task rows/attempts, execution profile/device, and optional
         Dask controls; horizons, seasonality, model revisions, and quantiles come
@@ -1678,7 +1684,7 @@ class POC1Coordinator:
             response: dict[str, Any],
             runtime: float,
         ) -> None:
-            """Purpose: Validate and commit one Stage 4 model response batch.
+            """Purpose: Validate and commit one Process 04 model response batch.
 
             Inputs: Submitted jobs, worker forecast arrays/provenance, and batch runtime.
             Outputs: None; verifies task identity, reads transformation parameters,
@@ -1689,7 +1695,7 @@ class POC1Coordinator:
             if len(result_ids) != len(set(result_ids)) or set(by_id) != {
                 job["id"] for job in batch
             }:
-                raise RuntimeError("Stage 4 worker returned missing, duplicate, or unexpected task IDs")
+                raise RuntimeError("Process 04 worker returned missing, duplicate, or unexpected task IDs")
             metadata = response["metadata"]
             for job in batch:
                 task_id = job["id"]
@@ -1786,7 +1792,7 @@ class POC1Coordinator:
                     {"CPU": 1},
                     (
                         self.configuration.auto_arima_settings,
-                        self.configuration.resolved["execution"]["paths"]["r_auto_arima_worker"],
+                        self.configuration.execution_paths["r_auto_arima_worker"],
                         float(self.configuration.execution["worker_timeouts_seconds"]["r"]),
                         int(self.configuration.execution["thread_limits"]["r"]),
                     ),
@@ -1807,8 +1813,8 @@ class POC1Coordinator:
                         chronos["cross_learning"],
                         chronos["predict_batches_jointly"],
                         self.configuration.execution["thread_limits"]["chronos"],
-                        self.configuration.resolved["execution"]["paths"]["chronos_environment"],
-                        self.configuration.resolved["execution"]["paths"]["chronos_worker"],
+                        self.configuration.execution_paths["chronos_environment"],
+                        self.configuration.execution_paths["chronos_worker"],
                         float(
                             self.configuration.execution["worker_timeouts_seconds"]["chronos_startup"]
                         ),
@@ -1856,7 +1862,7 @@ class POC1Coordinator:
             if not chronos_jobs:
                 return
             chronos = self.config["models"]["chronos_2"]
-            paths = self.configuration.resolved["execution"]["paths"]
+            paths = self.configuration.execution_paths
             command = [
                 str(self.root / paths["chronos_environment"] / "bin/python"),
                 str(self.root / paths["chronos_worker"]),
@@ -2011,7 +2017,7 @@ class POC1Coordinator:
                 commit_response(batch, response, runtime)
             run_chronos()
 
-    def _stage5(
+    def _run_05_combine(
         self,
         experiment_id: str,
         rows: list[tuple],
@@ -2020,7 +2026,7 @@ class POC1Coordinator:
         dask_client: Any = None,
         settings: ExecutionSettings | None = None,
     ) -> None:
-        """Purpose: Execute Stage 5 candidate pass-through and forecast combination.
+        """Purpose: Execute Process 05 candidate pass-through and forecast combination.
 
         Inputs: Experiment task rows/attempts, worker count, and optional Dask controls;
         base mean/median/quantile arrays and weights come from DuckDB/configuration.
@@ -2055,7 +2061,7 @@ class POC1Coordinator:
             runtime: float = 0.0,
             resources: dict[str, Any] | None = None,
         ) -> None:
-            """Purpose: Commit one equal-weight candidate and its Stage 5 attempt.
+            """Purpose: Commit one equal-weight candidate and its Process 05 attempt.
 
             Inputs: Task row, combined forecast arrays, component mappings, runtime,
             and optional worker provenance.
@@ -2127,7 +2133,7 @@ class POC1Coordinator:
                 [experiment_id, variant_id, instance_id, candidate],
             ).fetchone()
             if existing is None:
-                raise RuntimeError(f"missing Stage 4 forecast for {candidate}")
+                raise RuntimeError(f"missing Process 04 forecast for {candidate}")
             self._commit_task(
                 task_id,
                 attempts[task_id],
@@ -2164,7 +2170,7 @@ class POC1Coordinator:
             expected_ids = {job["id"] for job in batch}
             if len(result_ids) != len(set(result_ids)) or set(result_ids) != expected_ids:
                 raise RuntimeError(
-                    "Stage 5 worker returned missing, duplicate, or unexpected task IDs"
+                    "Process 05 worker returned missing, duplicate, or unexpected task IDs"
                 )
             runtime = response["runtime_seconds"] / len(batch)
             for result in response["results"]:
@@ -2177,14 +2183,14 @@ class POC1Coordinator:
                     response["worker"],
                 )
 
-    def _stage6(
+    def _run_06_evaluate(
         self,
         experiment_id: str,
         rows: list[tuple],
         attempts: dict[str, int],
         workers: int,
     ) -> None:
-        """Purpose: Execute Stage 6 official evaluation of complete forecast matrices.
+        """Purpose: Execute Process 06 official evaluation of complete forecast matrices.
 
         Inputs: Experiment evaluation task rows/attempts and worker count; ordered
         forecast arrays, benchmark identity, quantiles, and options come from DuckDB
@@ -2222,7 +2228,7 @@ class POC1Coordinator:
                 or positions != list(range(expected_count))
             ):
                 raise RuntimeError(
-                    f"Stage 6 requires exactly {expected_count} unique forecasts at "
+                    f"Process 06 requires exactly {expected_count} unique forecasts at "
                     f"official positions 0..{expected_count - 1} for "
                     f"variant={variant_id}, candidate={candidate}; found "
                     f"{len(records)} rows, {len(set(instance_ids))} unique instances, "
@@ -2350,19 +2356,19 @@ class POC1Coordinator:
         execution: tuple[ExecutionProfile, dict[str, Any]] | None = None,
         execution_settings: ExecutionSettings | None = None,
     ) -> list[dict[str, Any]]:
-        """Purpose: Execute the full Process 02–06 pipeline in gate order.
+        """Purpose: Execute the full Process 02–06 pipeline in process order.
 
         Inputs: Persisted experiment plan and optional execution controls forwarded
-        to each gate.
-        Outputs: Ordered gate-summary mappings; writes all stage/task/invocation and
+        to each process.
+        Outputs: Ordered process-summary mappings; writes all task/invocation and
         scientific result state, then marks the experiment completed in DuckDB.
         """
         results = []
-        for stage in STAGES:
+        for process in PROCESSES:
             results.append(
-                self.run_gate(
+                self.run_process(
                     plan.experiment_id,
-                    stage,
+                    process,
                     workers,
                     device,
                     batch_size,
@@ -2375,6 +2381,18 @@ class POC1Coordinator:
             [plan.experiment_id],
         )
         return results
+
+    def complete_experiment(self, experiment_id: str) -> None:
+        """Purpose: Mark a fully evaluated experiment completed.
+
+        Inputs: Persisted experiment ID after successful Process 06 execution.
+        Outputs: None; updates experiment status and timestamp through the owned
+        single-writer DuckDB connection.
+        """
+        self.connection.execute(
+            "UPDATE experiments SET status='completed', updated_at=current_timestamp WHERE experiment_id=?",
+            [experiment_id],
+        )
 
     def status(self, experiment_id: str) -> dict[str, Any]:
         """Purpose: Read coordinator task progress for one experiment.
@@ -2391,7 +2409,7 @@ class POC1Coordinator:
         return {
             "experiment_id": experiment_id,
             "tasks": [
-                {"stage": row[0], "stage_name": STAGES[row[0]], "status": row[1], "count": row[2]}
+                {"stage": row[0], "stage_name": PROCESSES[row[0]], "status": row[1], "count": row[2]}
                 for row in rows
             ],
         }
@@ -2572,7 +2590,7 @@ def latest_experiment_id(database_path: Path = DEFAULT_DATABASE) -> str:
             "SELECT experiment_id FROM experiments ORDER BY updated_at DESC LIMIT 1"
         ).fetchone()
         if row is None:
-            raise RuntimeError("no POC 1 experiment is planned")
+            raise RuntimeError("no experiment is planned")
         return row[0]
     finally:
         connection.close()
@@ -2648,7 +2666,7 @@ def experiment_status(
                 for row in processes
             ],
             "tasks": [
-                {"stage": row[0], "stage_name": STAGES[row[0]], "status": row[1], "count": row[2]}
+                {"stage": row[0], "stage_name": PROCESSES[row[0]], "status": row[1], "count": row[2]}
                 for row in tasks
             ],
             "invocations": [

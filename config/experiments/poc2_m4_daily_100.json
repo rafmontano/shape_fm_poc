@@ -151,9 +151,9 @@
     "paths": {
       "project_environment": ".venv",
       "chronos_environment": "environments/chronos-2/.venv",
-      "chronos_worker": "src/python/04_forecast_chronos.py",
-      "r_preprocess_worker": "src/r/02_preprocess_series.R",
-      "r_auto_arima_worker": "src/r/04_forecast_auto_arima.R"
+      "chronos_worker": "src/python/04_02_forecast_chronos.py",
+      "r_preprocess_worker": "src/r/02_01_preprocess_series.R",
+      "r_auto_arima_worker": "src/r/04_01_forecast_auto_arima.R"
     },
     "restart": {
       "completed_tasks": "skip",

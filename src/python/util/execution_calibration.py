@@ -275,7 +275,7 @@ def _r_forecast(
 ) -> dict[str, Any]:
     """Purpose: Execute one calibration AutoARIMA forecast. Inputs: ``root`` is the repository directory, ``job`` is a JSON-serializable context/horizon/seasonality mapping, and ``settings`` is resolved model configuration. Outputs: Decoded JSON response; launches one R subprocess with single-thread limits, repository cwd, and a 1,800-second timeout."""
     completed = subprocess.run(
-        ["Rscript", str(root / "src/r/04_forecast_auto_arima.R")],
+        ["Rscript", str(root / "src/r/04_01_forecast_auto_arima.R")],
         cwd=root,
         input=json.dumps({"action": "forecast", "settings": settings, "jobs": [job]}),
         check=True,
@@ -311,6 +311,7 @@ def calibrate(
     configuration = load_database_configuration(database_path)
     config = configuration.resolved
     execution = configuration.execution
+    paths = configuration.execution_paths
     benchmark = config["data"]["benchmark"]
     contexts = representative_contexts(database_path)
     candidates = CALIBRATION_CANDIDATES[profile.name]
@@ -417,7 +418,7 @@ def calibrate(
         chronos = config["models"]["chronos_2"]
         command = [
             str(root / "environments/chronos-2/.venv/bin/python"),
-            str(root / "src/python/04_forecast_chronos.py"),
+            str(root / "src/python/04_02_forecast_chronos.py"),
             "serve",
             "--model",
             chronos["repository"],
@@ -864,7 +865,7 @@ def calibrate_dask_profile(
                     max_in_flight=max_in_flight,
                     retries=2,
                     extra_arguments=(
-                        config["execution"]["paths"]["r_preprocess_worker"],
+                        paths["r_preprocess_worker"],
                         float(execution["worker_timeouts_seconds"]["r"]),
                         int(execution["thread_limits"]["r"]),
                     ),
@@ -949,7 +950,7 @@ def calibrate_dask_profile(
                         {"CPU": 1},
                         (
                             configuration.auto_arima_settings,
-                            config["execution"]["paths"]["r_auto_arima_worker"],
+                            paths["r_auto_arima_worker"],
                             float(execution["worker_timeouts_seconds"]["r"]),
                             int(execution["thread_limits"]["r"]),
                         ),
@@ -968,8 +969,8 @@ def calibrate_dask_profile(
                             chronos["cross_learning"],
                             chronos["predict_batches_jointly"],
                             execution["thread_limits"]["chronos"],
-                            config["execution"]["paths"]["chronos_environment"],
-                            config["execution"]["paths"]["chronos_worker"],
+                            paths["chronos_environment"],
+                            paths["chronos_worker"],
                             float(execution["worker_timeouts_seconds"]["chronos_startup"]),
                             float(execution["worker_timeouts_seconds"]["chronos_request"]),
                         ),

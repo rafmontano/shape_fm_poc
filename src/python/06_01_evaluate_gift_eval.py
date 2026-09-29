@@ -1,10 +1,10 @@
 # ==============================================================================
-# 06_evaluate_gift_eval.py
+# 06_01_evaluate_gift_eval.py
 #
 # Purpose: Bridge to the isolated, pinned official GIFT-Eval environment.
 # Inputs: An internal describe/evaluate/manifest command, pinned source paths, and a forecast-payload path for metric scoring.
 # Outputs: One compact JSON dataset description, official metric record, or validated manifest on stdout.
-# Run from: Internal bridge command: `.tools/uv/uv run --project environments/gift-eval --locked --no-sync python src/python/06_evaluate_gift_eval.py <describe|evaluate|manifest> [options]`.
+# Run from: Internal bridge command: `.tools/uv/uv run --project environments/gift-eval --locked --no-sync python src/python/06_01_evaluate_gift_eval.py <describe|evaluate|manifest> [options]`.
 # ==============================================================================
 
 """Bridge to the isolated, pinned official GIFT-Eval environment."""

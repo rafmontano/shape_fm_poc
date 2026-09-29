@@ -46,6 +46,25 @@ PROCESS_NAMES = {
     5: "combine",
     6: "evaluate",
 }
+# Code constant: runtime-only relocation of worker paths stored by earlier databases.
+# Integrity validation uses the original stored document; only subprocess resolution
+# applies this mapping, so scientific identity and historical provenance are unchanged.
+LEGACY_WORKER_PATHS = {
+    "src/python/04_forecast_chronos.py": "src/python/04_02_forecast_chronos.py",
+    "src/r/02_preprocess_series.R": "src/r/02_01_preprocess_series.R",
+    "src/r/04_forecast_auto_arima.R": "src/r/04_01_forecast_auto_arima.R",
+}
+
+
+def resolve_worker_path(path: str) -> str:
+    """Return the current repository path for a stored worker path.
+
+    Purpose: Preserve execution of authoritative databases containing pre-rename paths.
+    Inputs: Repository-relative path from validated configuration or current code.
+    Outputs: Renamed path for a known legacy worker, otherwise the input unchanged;
+    does not mutate or re-hash stored configuration.
+    """
+    return LEGACY_WORKER_PATHS.get(path, path)
 
 
 @dataclass(frozen=True)
@@ -125,6 +144,19 @@ class ExperimentConfiguration:
     def execution(self) -> dict[str, Any]:
         """Return the creation-time execution globals used by coordinators and workers."""
         return deepcopy(self.resolved["execution"]["default"])
+
+    @property
+    def execution_paths(self) -> dict[str, str]:
+        """Purpose: Resolve configured environments and worker scripts for execution.
+
+        Inputs: Integrity-validated ``execution.paths`` from JSON or DuckDB.
+        Outputs: Independent path mapping with legacy worker filenames translated
+        centrally to current substeps; stored configuration remains unchanged.
+        """
+        return {
+            name: resolve_worker_path(path)
+            for name, path in self.resolved["execution"]["paths"].items()
+        }
 
     @property
     def auto_arima_settings(self) -> dict[str, Any]:

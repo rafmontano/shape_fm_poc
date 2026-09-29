@@ -1,13 +1,13 @@
 # ==============================================================================
 # import_execution.py
 #
-# Purpose: Single-writer Stage 1 coordinator with sequential and local worker modes.
+# Purpose: Single-writer Process 01 coordinator with sequential and local worker modes.
 # Inputs: Pinned M4 Daily source files, import configuration, source revision, and worker count.
 # Outputs: Canonical series/windows plus restartable run, task, attempt, and invocation rows in DuckDB.
 # Run from: Imported; not run directly.
 # ==============================================================================
 
-"""Single-writer Stage 1 coordinator with sequential and local worker modes."""
+"""Single-writer Process 01 coordinator with sequential and local worker modes."""
 
 from __future__ import annotations
 
@@ -220,7 +220,7 @@ def execution_provenance() -> tuple[dict[str, Any], dict[str, Any]]:
 
 
 class ImportCoordinator:
-    """Purpose: Own Stage 1 orchestration and the sole DuckDB writer connection.
+    """Purpose: Own Process 01 orchestration and the sole DuckDB writer connection.
 
     Inputs: Initialized experiment database with authoritative configuration.
     Outputs: Restartable task/attempt state and atomically persisted series/windows.
@@ -713,7 +713,7 @@ class ImportCoordinator:
                 ],
             )
             if status == "failed":
-                raise RuntimeError("one or more Stage 1 tasks failed; rerun to retry")
+                raise RuntimeError("one or more Process 01 tasks failed; rerun to retry")
             return {
                 "run_id": run_id,
                 "invocation_id": invocation_id,

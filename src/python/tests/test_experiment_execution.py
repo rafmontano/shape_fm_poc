@@ -1,13 +1,13 @@
 # ==============================================================================
 # test_experiment_execution.py
 #
-# Purpose: Verify experiment planning, stage gates, restart semantics, task accounting, and forecast retrieval against temporary DuckDB state.
+# Purpose: Verify experiment planning, process prerequisites, restart semantics, task accounting, and forecast retrieval against temporary DuckDB state.
 # Inputs: unittest fixtures, temporary databases/files, deterministic synthetic records, and mocked process or cluster boundaries.
 # Outputs: unittest pass/fail assertions and captured diagnostics; no production artifacts or external services.
 # Run from: PYTHONPATH=src/python .tools/uv/uv run --locked --no-sync python -m unittest tests.test_experiment_execution
 # ==============================================================================
 
-"""Verify experiment planning, stage gates, restart semantics, task accounting, and forecast retrieval against temporary DuckDB state."""
+"""Verify experiment planning, process prerequisites, restart semantics, task accounting, and forecast retrieval against temporary DuckDB state."""
 
 import json
 import shutil
@@ -20,7 +20,7 @@ from util.configuration import json_fingerprint
 from util.database import initialize_experiment_database
 from util.execution_profiles import resolve_execution_profile
 from util.experiment_execution import (
-    POC1Coordinator,
+    ExperimentCoordinator,
     _batches,
     _combine_job,
     _run_external_batches,
@@ -191,7 +191,7 @@ class ContractValidationTests(unittest.TestCase):
     """
     def test_multi_window_configuration_is_rejected(self):
         """Official execution accepts exactly one evaluation window."""
-        coordinator = object.__new__(POC1Coordinator)
+        coordinator = object.__new__(ExperimentCoordinator)
         coordinator.config = {"benchmark": {"configuration": "m4_daily/D/short"}}
         with self.assertRaisesRegex(RuntimeError, "exactly one"):
             coordinator._validate_official_configuration(
@@ -251,7 +251,7 @@ class TransactionTests(unittest.TestCase):
         """
         self.directory = Path(tempfile.mkdtemp())
         initialize_test_database(self.directory / "poc1.duckdb")
-        self.coordinator = POC1Coordinator(self.directory / "poc1.duckdb")
+        self.coordinator = ExperimentCoordinator(self.directory / "poc1.duckdb")
 
     def tearDown(self):
         """Purpose: Release all state provisioned by ``setUp``.
@@ -263,7 +263,7 @@ class TransactionTests(unittest.TestCase):
         shutil.rmtree(self.directory)
 
     def _insert_benchmark_and_instances(self):
-        """Purpose: Seed the minimum benchmark state required by stage tests.
+        """Purpose: Seed the minimum benchmark state required by process tests.
 
         Inputs: The fixture coordinator's open DuckDB connection.
         Outputs: None; inserts one benchmark row and two forecast-instance rows.
@@ -339,8 +339,8 @@ class TransactionTests(unittest.TestCase):
             [("failed",), ("completed",)],
         )
 
-    def test_stage2_batched_failure_preserves_completed_batch_and_retries_rest(self):
-        """Stage 2 retains its first batch and retries only the failed preprocessing task."""
+    def test_process_02_batched_failure_preserves_completed_batch_and_retries_rest(self):
+        """Process 02 retains its first batch and retries only the failed preprocessing task."""
         self._insert_benchmark_and_instances()
         connection = self.coordinator.connection
         for index in range(2):
@@ -366,8 +366,8 @@ class TransactionTests(unittest.TestCase):
             return {"results": [{"id": job["id"], "values": job["context"]}], "packages": {}}
 
         self.coordinator._r_worker = failing_worker
-        with self.assertRaisesRegex(RuntimeError, "Stage 2 failed"):
-            self.coordinator.run_gate("experiment", 2, workers=1, batch_size=1)
+        with self.assertRaisesRegex(RuntimeError, "Process 2 failed"):
+            self.coordinator.run_process("experiment", 2, workers=1, batch_size=1)
         self.assertEqual(
             connection.execute(
                 "SELECT status FROM experiment_tasks ORDER BY task_id"
@@ -382,7 +382,7 @@ class TransactionTests(unittest.TestCase):
             ],
             "packages": {},
         }
-        result = self.coordinator.run_gate(
+        result = self.coordinator.run_process(
             "experiment",
             2,
             execution=resolve_execution_profile(
@@ -418,8 +418,8 @@ class TransactionTests(unittest.TestCase):
             [("task-0",), ("task-1",)],
         )
 
-    def test_stage4_batched_failure_preserves_forecast_and_retries_rest(self):
-        """Stage 4 retains its first forecast and retries only the failed forecast task."""
+    def test_process_04_batched_failure_preserves_forecast_and_retries_rest(self):
+        """Process 04 retains its first forecast and retries only the failed forecast task."""
         self._insert_benchmark_and_instances()
         connection = self.coordinator.connection
         connection.execute(
@@ -470,8 +470,8 @@ class TransactionTests(unittest.TestCase):
             }
 
         self.coordinator._r_worker = worker
-        with self.assertRaisesRegex(RuntimeError, "Stage 4 failed"):
-            self.coordinator.run_gate("experiment", 4, workers=1, batch_size=1)
+        with self.assertRaisesRegex(RuntimeError, "Process 4 failed"):
+            self.coordinator.run_process("experiment", 4, workers=1, batch_size=1)
         self.assertEqual(connection.execute("SELECT count(*) FROM forecasts").fetchone()[0], 1)
         self.assertTrue(received_settings)
         self.assertTrue(all(
@@ -490,7 +490,7 @@ class TransactionTests(unittest.TestCase):
             ],
             "packages": {"forecast": "test"},
         }
-        result = self.coordinator.run_gate("experiment", 4, workers=1, batch_size=1)
+        result = self.coordinator.run_process("experiment", 4, workers=1, batch_size=1)
         self.assertEqual(result["selected"], 1)
         self.assertEqual(connection.execute("SELECT count(*) FROM forecasts").fetchone()[0], 2)
         self.assertEqual(
@@ -614,7 +614,7 @@ class TransactionTests(unittest.TestCase):
         with patch(
             "util.experiment_execution.PersistentChronosWorker", OOMThenSuccessWorker
         ):
-            result = self.coordinator.run_gate("experiment", 4, execution=execution)
+            result = self.coordinator.run_process("experiment", 4, execution=execution)
         self.assertEqual(result["counts"], {"completed": 2})
         self.assertEqual(OOMThenSuccessWorker.starts, 2)
         chronos = self.coordinator.config["models"]["chronos_2"]
@@ -654,7 +654,7 @@ class ConfiguredPlanningTests(unittest.TestCase):
         """
         self.directory = Path(tempfile.mkdtemp())
         initialize_test_database(self.directory / "poc1.duckdb")
-        self.coordinator = POC1Coordinator(self.directory / "poc1.duckdb")
+        self.coordinator = ExperimentCoordinator(self.directory / "poc1.duckdb")
         self.coordinator.connection.execute(
             """INSERT INTO datasets
             (dataset_id, dataset_name, source_system, source_revision,

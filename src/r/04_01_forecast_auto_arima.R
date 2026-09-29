@@ -1,13 +1,13 @@
 #!/usr/bin/env Rscript
 # ==============================================================================
-# 04_forecast_auto_arima.R
+# 04_01_forecast_auto_arima.R
 #
 # Purpose: Serve the bounded R subprocess that produces AutoARIMA forecasts.
 # Inputs: JSON on stdin: action="forecast", authoritative AutoARIMA settings,
 #   and jobs with id, numeric context, seasonal frequency, and horizon.
 # Outputs: JSON on stdout with same-scale forecasts and package versions;
 #   invalid settings, actions, or series terminate the subprocess with an R error.
-# Run from: printf '%s' '{"action":"forecast","settings":{},"jobs":[]}' | Rscript src/r/04_forecast_auto_arima.R
+# Run from: printf '%s' '{"action":"forecast","settings":{},"jobs":[]}' | Rscript src/r/04_01_forecast_auto_arima.R
 # ==============================================================================
 
 suppressPackageStartupMessages({

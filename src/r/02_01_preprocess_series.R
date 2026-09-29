@@ -1,13 +1,13 @@
 #!/usr/bin/env Rscript
 # ==============================================================================
-# 02_preprocess_series.R
+# 02_01_preprocess_series.R
 #
 # Purpose: Serve the bounded R subprocess that cleans batches of time-series contexts.
 # Inputs: JSON on stdin: action="clean" and jobs with id, numeric context, method,
 #   and positive integer seasonal frequency; Python supplies it to the subprocess.
 # Outputs: JSON on stdout with same-scale cleaned vectors and package versions;
 #   invalid actions, methods, or series terminate the subprocess with an R error.
-# Run from: printf '%s' '{"action":"clean","jobs":[]}' | Rscript src/r/02_preprocess_series.R
+# Run from: printf '%s' '{"action":"clean","jobs":[]}' | Rscript src/r/02_01_preprocess_series.R
 # ==============================================================================
 
 suppressPackageStartupMessages({

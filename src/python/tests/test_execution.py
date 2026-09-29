@@ -37,7 +37,7 @@ from util.execution_profiles import (
 )
 from util.configuration import load_experiment_configuration
 from util.experiment_execution import (
-    POC1Coordinator,
+    ExperimentCoordinator,
     _length_aware_batches,
     expected_task_counts,
 )
@@ -130,9 +130,9 @@ class ExecutionProfileTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "GPU-worker"):
             ExecutionSettings(dask_expected_gpu_workers=0)
 
-    def test_run_gate_propagates_expected_gpu_worker_count_to_validation(self) -> None:
-        """The Dask run gate passes its expected GPU count to cluster validation."""
-        coordinator = object.__new__(POC1Coordinator)
+    def test_run_process_propagates_expected_gpu_worker_count_to_validation(self) -> None:
+        """Dask process execution passes its expected GPU count to cluster validation."""
+        coordinator = object.__new__(ExperimentCoordinator)
         coordinator.root = Path(__file__).resolve().parents[3]
         coordinator.configuration = load_experiment_configuration(
             coordinator.root / "config/experiments/poc2_m4_daily_100.json"
@@ -159,7 +159,7 @@ class ExecutionProfileTests(unittest.TestCase):
             ),
             self.assertRaisesRegex(RuntimeError, "validation sentinel"),
         ):
-            coordinator.run_gate(
+            coordinator.run_process(
                 "experiment",
                 4,
                 execution=profile,
@@ -169,7 +169,7 @@ class ExecutionProfileTests(unittest.TestCase):
         client.close.assert_called_once()
 
     def test_full_m4_daily_task_counts(self) -> None:
-        """A 4,227-series M4 Daily run expands to the expected tasks per stage."""
+        """A 4,227-series M4 Daily run expands to the expected tasks per process."""
         workflow = load_experiment_configuration(
             Path(__file__).resolve().parents[3]
             / "config/experiments/poc2_m4_daily_100.json"
@@ -257,8 +257,8 @@ class PersistentWorkerTests(unittest.TestCase):
 
         responses = []
         for script, payload in (
-            ("src/r/02_preprocess_series.R", clean_payload),
-            ("src/r/04_forecast_auto_arima.R", forecast_payload),
+            ("src/r/02_01_preprocess_series.R", clean_payload),
+            ("src/r/04_01_forecast_auto_arima.R", forecast_payload),
         ):
             completed = subprocess.run(
                 ["Rscript", script],
@@ -353,7 +353,7 @@ for line in sys.stdin:
 
     def test_worker_source_has_no_duckdb_access(self) -> None:
         """Chronos and distributed worker modules do not import DuckDB."""
-        source = (Path(__file__).parents[3] / "src/python/04_forecast_chronos.py").read_text(
+        source = (Path(__file__).parents[3] / "src/python/04_02_forecast_chronos.py").read_text(
             encoding="utf-8"
         )
         imports = [

@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import platform
 import subprocess
@@ -33,15 +34,26 @@ sys.path.insert(0, str(ROOT / "src/python"))
 from util.configuration import PROCESS_NAMES, canonical_json
 from util.database import initialize_experiment_database, load_database_configuration
 from util.experiment_execution import (
-    POC1Coordinator,
+    ExperimentCoordinator,
     configuration_status,
     experiment_status,
     get_forecast,
     latest_experiment_id,
     official_results,
 )
-from util.import_execution import ImportCoordinator
 from tests.acceptance import run_acceptance
+
+
+# Code constant: explicit repository-controlled Process 01–06 wrapper paths. These
+# modules are loaded in this Python process and are not alternative researcher CLIs.
+PROCESS_WRAPPER_PATHS = {
+    1: ROOT / "src/python/01_import.py",
+    2: ROOT / "src/python/02_preprocess.py",
+    3: ROOT / "src/python/03_transform.py",
+    4: ROOT / "src/python/04_forecast.py",
+    5: ROOT / "src/python/05_combine.py",
+    6: ROOT / "src/python/06_evaluate.py",
+}
 
 
 # Bootstrap/interface default: acceptance database used only while locating DuckDB;
@@ -87,6 +99,38 @@ def process_selection(value: str) -> tuple[int, ...]:
     if not selected or any(process_id not in PROCESS_NAMES for process_id in selected):
         raise argparse.ArgumentTypeError("process selection must be within 1-6")
     return selected
+
+
+def load_process_wrapper(process_id: int) -> Any:
+    """Purpose: Load and validate one numbered process wrapper from its explicit path.
+
+    Inputs: Process number 1–6 present in ``PROCESS_WRAPPER_PATHS``.
+    Outputs: An in-process module whose ``PROCESS_NUMBER`` matches and whose ``run``
+    attribute is callable; raises a clear error for missing or malformed wrappers.
+    Notes: Uses only repository-controlled paths and does not start a subprocess or
+    add aliases for numbered filenames.
+    """
+    try:
+        path = PROCESS_WRAPPER_PATHS[process_id]
+    except KeyError as exc:
+        raise ValueError(f"no wrapper is configured for Process {process_id:02d}") from exc
+    if not path.is_file():
+        raise FileNotFoundError(f"Process {process_id:02d} wrapper does not exist: {path}")
+    specification = importlib.util.spec_from_file_location(
+        f"_shapefm_process_{process_id:02d}", path
+    )
+    if specification is None or specification.loader is None:
+        raise RuntimeError(f"cannot load Process {process_id:02d} wrapper: {path}")
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    declared_process = getattr(module, "PROCESS_NUMBER", None)
+    if declared_process != process_id:
+        raise RuntimeError(
+            f"Process {process_id:02d} wrapper declares PROCESS_NUMBER={declared_process!r}: {path}"
+        )
+    if not callable(getattr(module, "run", None)):
+        raise RuntimeError(f"Process {process_id:02d} wrapper has no callable run: {path}")
+    return module
 
 
 def _git(*arguments: str) -> str:
@@ -212,7 +256,7 @@ def run_configured_processes(
 
     Inputs: A DuckDB path, an optional creation configuration path, and ordered process IDs.
     Outputs: Execution/configuration metadata and per-process completion or skip summaries.
-    Side effects: Initializes or mutates DuckDB, runs import/experiment coordinators, and records execution state.
+    Side effects: Initializes or mutates DuckDB, invokes numbered wrappers in-process, and records execution state.
     """
     if database.exists():
         if configuration_path is not None:
@@ -271,22 +315,8 @@ def run_configured_processes(
                 continue
             active_process = process_id
             _set_process_state(database, process_id, "running")
-            if process_id == 1:
-                with ImportCoordinator(database) as coordinator:
-                    result = coordinator.import_configured()
-            elif process_id == 2:
-                with POC1Coordinator(database) as coordinator:
-                    plan = coordinator.plan()
-                    result = coordinator.run_gate(plan.experiment_id, 2)
-            else:
-                experiment_id = latest_experiment_id(database)
-                with POC1Coordinator(database) as coordinator:
-                    result = coordinator.run_gate(experiment_id, process_id)
-                    if process_id == 6:
-                        coordinator.connection.execute(
-                            "UPDATE experiments SET status='completed', updated_at=current_timestamp WHERE experiment_id=?",
-                            [experiment_id],
-                        )
+            wrapper = load_process_wrapper(process_id)
+            result = wrapper.run(database)
             _set_process_state(database, process_id, "completed", result)
             summaries.append({"process_id": process_id, "status": "completed", "summary": result})
         connection = duckdb.connect(str(database))
@@ -382,7 +412,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             with tempfile.TemporaryDirectory() as directory:
                 temporary = Path(directory) / "plan.duckdb"
                 initialize_experiment_database(temporary, args.configuration)
-                with POC1Coordinator(temporary) as coordinator:
+                with ExperimentCoordinator(temporary) as coordinator:
                     result = coordinator.plan(dry_run=True)
             output = {"invocation": invocation, "plan": result}
         elif args.action == "run":

@@ -82,14 +82,20 @@ Generated databases and reports remain ignored; `test` refuses to overwrite
 ## Final source structure
 
 ```text
-src/python/00_main.py                 single researcher interface
-src/python/04_forecast_chronos.py     Chronos process worker
-src/python/06_evaluate_gift_eval.py   official evaluation bridge
-src/python/util/                       shared Python implementation
-src/python/tests/                      unit, integration, and acceptance tests
-src/r/02_preprocess_series.R           R preprocessing worker
-src/r/04_forecast_auto_arima.R         R AutoARIMA worker
-src/r/util/time_series_input.R         shared R time-series input contract
+src/python/00_main.py                    single researcher interface
+src/python/01_import.py                  Process 01 wrapper
+src/python/02_preprocess.py              Process 02 wrapper
+src/python/03_transform.py               Process 03 wrapper
+src/python/04_forecast.py                Process 04 wrapper
+src/python/04_02_forecast_chronos.py     Chronos forecasting substep
+src/python/05_combine.py                 Process 05 wrapper
+src/python/06_evaluate.py                Process 06 wrapper
+src/python/06_01_evaluate_gift_eval.py   official evaluation substep
+src/python/util/                         shared Python implementation
+src/python/tests/                        unit, integration, and acceptance tests
+src/r/02_01_preprocess_series.R          R preprocessing substep
+src/r/04_01_forecast_auto_arima.R        R AutoARIMA substep
+src/r/util/time_series_input.R           shared R time-series input contract
 ```
 
 ## POC2 phases and topology

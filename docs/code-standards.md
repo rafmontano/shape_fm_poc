@@ -128,20 +128,24 @@ and only database writer.
 ## Minimal target structure
 
 ```text
-shape_fm_poc/
-|-- README.md
-|-- config/
-|-- docs/
-|-- environments/
-|-- src/
-|   |-- python/
-|   |   |-- 00_main.py
-|   |   |-- util/
-|   |   `-- tests/
-|   `-- r/
-|       `-- util/
-|-- data/
-`-- results/
+src/python/
+├── 00_main.py
+├── 01_import.py
+├── 02_preprocess.py
+├── 03_transform.py
+├── 04_forecast.py
+├── 04_02_forecast_chronos.py
+├── 05_combine.py
+├── 06_evaluate.py
+├── 06_01_evaluate_gift_eval.py
+├── util/
+└── tests/
+
+src/r/
+├── 02_01_preprocess_series.R
+├── 04_01_forecast_auto_arima.R
+└── util/
+    └── time_series_input.R
 ```
 
 The structure starts flat. Do not create source folders for individual POCs,
@@ -157,43 +161,86 @@ Every source file has one necessary and explainable responsibility.
 
 ### Process-specific files
 
-If an executable script belongs to one process, its filename identifies that
-process:
+The ordered research flow must be visible from the source filenames. The
+coordinating language has exactly one wrapper for each scientific process:
 
 ```text
 NN_action_subject.ext
+```
+
+Additional scripts that implement a real substep, language boundary, model
+branch, or isolated environment within that process use:
+
+```text
 NN_MM_action_subject.ext
 ```
 
-- `NN` is the process number from `01` to `06`.
-- `MM` is a substep number used only when a separate substep is necessary.
+In short, process wrappers use `NN_name`; process substeps use `NN_MM_name`;
+shared utilities are unnumbered and live under `util`.
+
+- `NN` identifies the scientific process.
+- `MM` identifies a real, separately identifiable substep or parallel branch.
+  It does not imply sequential execution when branches may run concurrently.
 - Names use lowercase snake case.
 - Words such as `gate`, `phase`, `script`, and `shapefm` are not repeated when
   the number, action, subject, or repository already provides that context.
+- `00_main.py` is the only researcher-facing entry point. Numbered wrappers and
+  substeps are internal and are called through that entry point.
 
-Examples include:
+Python is the coordinating language, so ShapeFM has one wrapper for every
+scientific process:
 
 ```text
-src/python/04_forecast_chronos.py
-src/r/02_preprocess_series.R
-src/r/04_forecast_auto_arima.R
+src/python/01_import.py
+src/python/02_preprocess.py
+src/python/03_transform.py
+src/python/04_forecast.py
+src/python/05_combine.py
+src/python/06_evaluate.py
 ```
 
-Do not create six Python or six R files merely to display the pipeline. Create
-a process-specific file only when the implementation needs it.
+R or any later language has files only for processes or substeps implemented in
+that language. ShapeFM currently has these specialised substeps:
+
+```text
+src/r/02_01_preprocess_series.R
+src/r/04_01_forecast_auto_arima.R
+src/python/04_02_forecast_chronos.py
+src/python/06_01_evaluate_gift_eval.py
+```
+
+A process wrapper is concise but not cosmetic. It documents the process
+purpose, inputs, outputs, caller, specialised substeps, and shared utilities,
+and owns the high-level hand-off to the central coordinator. It does not
+duplicate scientific calculations, database transactions, distributed
+execution, retries, or provenance implemented by shared utilities.
+
+Numbered Python filenames are loaded internally from their explicit repository
+paths by one standard-library loader. Do not rename them to create ordinary
+Python identifiers, add a competing filename convention, or start a new
+subprocess merely to load a wrapper. Loading must preserve the in-process
+coordinator and single-writer DuckDB architecture.
+
+Do not create extra wrappers or substeps merely to make a directory appear
+complete. The six Python wrappers exist because they are the six defined
+scientific process boundaries. Further files require a real responsibility.
+
+This convention applies to every programming language and to future research
+projects unless a later approved architecture decision explicitly replaces it.
 
 ### Shared foundation code
 
-Code used by more than one process or by the overall experiment foundation
-belongs in the appropriate utility folder:
+Code used by more than one process, wrapper, or substep, or by the overall
+experiment foundation, belongs in the appropriate utility folder:
 
 ```text
 src/python/util/
 src/r/util/
 ```
 
-The current Python foundation is expected to place most orchestration code in
-`src/python/util/`, including responsibilities such as:
+Shared database, configuration, provenance, Dask, restart, task lifecycle, and
+cross-process functions remain under `src/python/util/`. Utility filenames are
+descriptive and never carry a process number. Shared responsibilities include:
 
 ```text
 configuration
@@ -214,6 +261,22 @@ Moving existing foundation code into `util/` does not require splitting it
 prematurely. A module is divided only when a current POC creates a clear
 responsibility boundary and tests can demonstrate unchanged behaviour.
 
+### Process-to-code map
+
+`src/python/00_main.py` is the single researcher-facing entry point. Shared
+coordinator functions remain unnumbered under `util`; each numbered Python
+wrapper exposes its process boundary, and numbered substeps expose specialised
+execution boundaries.
+
+| Process | Python wrapper | Specialised substep | Shared coordinator/utility | Principal DuckDB input → output |
+|---|---|---|---|---|
+| 01 import | `src/python/01_import.py` | — | `ImportCoordinator`, configuration, database, GIFT-Eval source, provenance | stored configuration → datasets, series, windows, import task state |
+| 02 preprocess | `src/python/02_preprocess.py` | `src/r/02_01_preprocess_series.R` | `ExperimentCoordinator`, distributed execution | forecast instances and benchmark metadata → preprocessed series and task state |
+| 03 transform | `src/python/03_transform.py` | — | `ExperimentCoordinator`, transformations, distributed execution | preprocessed series and variants → transformed series and task state |
+| 04 forecast | `src/python/04_forecast.py` | `src/r/04_01_forecast_auto_arima.R`; `src/python/04_02_forecast_chronos.py` | `ExperimentCoordinator`, execution profiles, transformations, distributed execution | transformed series and model settings → base forecasts and task state |
+| 05 combine | `src/python/05_combine.py` | — | `ExperimentCoordinator`, forecast combination, distributed execution | base forecasts and combination settings → candidate forecasts, components and task state |
+| 06 evaluate | `src/python/06_evaluate.py` | `src/python/06_01_evaluate_gift_eval.py` | `ExperimentCoordinator`, GIFT-Eval bridge | complete candidate forecasts → official evaluations and task state |
+
 ## R boundary
 
 R is a specialised computation worker, not the pipeline coordinator.
@@ -226,8 +289,8 @@ R is retained where its implementation is scientifically required, for
 example:
 
 ```text
-src/r/02_preprocess_series.R
-src/r/04_forecast_auto_arima.R
+src/r/02_01_preprocess_series.R
+src/r/04_01_forecast_auto_arima.R
 ```
 
 If more than one R process needs identical time-series construction, frequency

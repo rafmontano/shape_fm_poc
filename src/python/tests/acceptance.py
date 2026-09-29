@@ -34,7 +34,7 @@ from util.distributed_execution import (
     worker_resource_snapshot,
 )
 from util.execution_profiles import ExecutionProfile, ExecutionSettings
-from util.experiment_execution import POC1Coordinator
+from util.experiment_execution import ExperimentCoordinator
 from util.import_execution import ImportCoordinator
 
 
@@ -294,7 +294,7 @@ def _local_environment_identity(
     Inputs: Repository root and authoritative configuration paths.
     Outputs: Returns version identities; runs Python/R subprocesses and raises on mismatch.
     """
-    paths = configuration.resolved["execution"]["paths"]
+    paths = configuration.execution_paths
     gift_environment = configuration.resolved["evaluation"]["gift_eval"]["environment"]
     r = _run(
         [
@@ -359,7 +359,7 @@ def _require_existing_environment(
     Inputs: Repository root and authoritative configuration.
     Outputs: Returns resolved prerequisite paths; reads filesystem state only.
     """
-    paths_config = configuration.resolved["execution"]["paths"]
+    paths_config = configuration.execution_paths
     evaluation = configuration.resolved["evaluation"]["gift_eval"]
     data = configuration.resolved["data"]
     paths = {
@@ -766,7 +766,7 @@ class _TwoMachineCluster:
             )
         resolved = self.configuration.resolved
         acceptance = resolved["execution"]["final_acceptance"]
-        paths = resolved["execution"]["paths"]
+        paths = self.configuration.execution_paths
         evaluation = resolved["evaluation"]["gift_eval"]
         data = resolved["data"]
         local_revision = _run(
@@ -977,7 +977,7 @@ class _TwoMachineCluster:
                 expected_chronos_revision=_ACTIVE_CONFIGURATION.resolved["models"]["chronos_2"]["revision"],
                 expected_chronos_version=_ACTIVE_CONFIGURATION.resolved["models"]["chronos_2"]["chronos_forecasting"],
                 chronos_repository=_ACTIVE_CONFIGURATION.resolved["models"]["chronos_2"]["repository"],
-                chronos_environment=_ACTIVE_CONFIGURATION.resolved["execution"]["paths"]["chronos_environment"],
+                chronos_environment=_ACTIVE_CONFIGURATION.execution_paths["chronos_environment"],
                 gift_eval_source_directory=_ACTIVE_CONFIGURATION.resolved["evaluation"]["gift_eval"]["source_directory"],
                 require_gpu=True,
                 expected_gpu_name=_ACTIVE_CONFIGURATION.resolved["execution"]["final_acceptance"]["gpu_name"],
@@ -1577,7 +1577,7 @@ def run_acceptance(
             raise RuntimeError(f"import selected inconsistent series counts: {imported}")
 
         phase = "plan"
-        with POC1Coordinator(database) as coordinator:
+        with ExperimentCoordinator(database) as coordinator:
             plan = coordinator.plan()
             if (
                 plan.instance_count != SERIES_LIMIT
@@ -1620,12 +1620,12 @@ def run_acceptance(
         sampler = _ResourceSampler(cluster.scheduler_address, topology, cluster.stop)
         try:
             with sampler:
-                with POC1Coordinator(database) as coordinator:
+                with ExperimentCoordinator(database) as coordinator:
                     execution = []
                     for process_id in range(2, 7):
                         _mark_process(coordinator.connection, process_id, "running")
                         try:
-                            result = coordinator.run_gate(
+                            result = coordinator.run_process(
                                 plan.experiment_id,
                                 process_id,
                                 execution=(profile, profile_overrides),
@@ -1719,7 +1719,7 @@ def run_acceptance(
             "no_retries": evidence["worker_retry_count"] == 0,
         }
         if not scientific_run_complete:
-            raise RuntimeError("one or more scientific acceptance gates failed")
+            raise RuntimeError("one or more scientific acceptance checks failed")
         run_record = {
             "status": "completed",
             "started_at": started_at,

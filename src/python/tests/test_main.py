@@ -17,6 +17,7 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import duckdb
@@ -102,7 +103,7 @@ class MainResultsTests(unittest.TestCase):
                 patch.object(MAIN, "latest_experiment_id", return_value="experiment/latest") as latest,
                 patch.object(MAIN, "official_results", return_value=evaluations) as official,
                 patch.object(MAIN, "get_forecast") as forecast,
-                patch.object(MAIN, "POC1Coordinator") as coordinator,
+                patch.object(MAIN, "ExperimentCoordinator") as coordinator,
             ):
                 status, stdout, stderr = self.run_main(
                     ["results", "--database", str(database)]
@@ -158,7 +159,7 @@ class MainResultsTests(unittest.TestCase):
                 patch.object(MAIN, "latest_experiment_id", return_value="experiment/1"),
                 patch.object(MAIN, "official_results") as official,
                 patch.object(MAIN, "get_forecast", return_value=stored) as forecast,
-                patch.object(MAIN, "POC1Coordinator") as coordinator,
+                patch.object(MAIN, "ExperimentCoordinator") as coordinator,
             ):
                 status, stdout, stderr = self.run_main(
                     [
@@ -214,7 +215,7 @@ class MainResultsTests(unittest.TestCase):
                     patch.object(MAIN, "latest_experiment_id") as latest,
                     patch.object(MAIN, "official_results") as official,
                     patch.object(MAIN, "get_forecast") as forecast,
-                    patch.object(MAIN, "POC1Coordinator") as coordinator,
+                    patch.object(MAIN, "ExperimentCoordinator") as coordinator,
                 ):
                     status, _, stderr = self.run_main(arguments)
                     self.assertEqual(status, 1)
@@ -232,7 +233,7 @@ class MainResultsTests(unittest.TestCase):
             with (
                 patch.object(MAIN, "latest_experiment_id") as latest,
                 patch.object(MAIN, "official_results") as official,
-                patch.object(MAIN, "POC1Coordinator") as coordinator,
+                patch.object(MAIN, "ExperimentCoordinator") as coordinator,
             ):
                 status, _, stderr = self.run_main(
                     ["results", "--database", str(database)]
@@ -305,6 +306,63 @@ class MainResultsTests(unittest.TestCase):
             self.assertIn("forecast not found", stderr)
 
 
+class ProcessWrapperTests(unittest.TestCase):
+    """Verify explicit numbered-wrapper discovery and validation.
+
+    Purpose: Ensure Processes 01–06 map to complete repository-controlled modules.
+    Inputs: The committed wrapper files and temporary malformed wrapper fixtures.
+    Outputs: Loader contract assertions; production files and databases are unchanged.
+    """
+
+    def test_all_process_wrappers_exist_and_load_with_the_required_contract(self):
+        """Each process maps to its numbered file with a matching callable contract."""
+        expected = {
+            1: "01_import.py",
+            2: "02_preprocess.py",
+            3: "03_transform.py",
+            4: "04_forecast.py",
+            5: "05_combine.py",
+            6: "06_evaluate.py",
+        }
+        self.assertEqual(
+            {key: value.name for key, value in MAIN.PROCESS_WRAPPER_PATHS.items()},
+            expected,
+        )
+        for process_id, path in MAIN.PROCESS_WRAPPER_PATHS.items():
+            with self.subTest(process_id=process_id):
+                self.assertTrue(path.is_file())
+                wrapper = MAIN.load_process_wrapper(process_id)
+                self.assertEqual(wrapper.PROCESS_NUMBER, process_id)
+                self.assertTrue(callable(wrapper.run))
+
+    def test_missing_and_mismatched_wrappers_fail_clearly(self):
+        """Missing files and wrong process declarations are rejected before dispatch."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            missing = root / "missing.py"
+            with (
+                patch.dict(MAIN.PROCESS_WRAPPER_PATHS, {1: missing}),
+                self.assertRaisesRegex(FileNotFoundError, "Process 01 wrapper does not exist"),
+            ):
+                MAIN.load_process_wrapper(1)
+
+            mismatched = root / "mismatched.py"
+            mismatched.write_text("PROCESS_NUMBER = 2\ndef run(database):\n    return {}\n")
+            with (
+                patch.dict(MAIN.PROCESS_WRAPPER_PATHS, {1: mismatched}),
+                self.assertRaisesRegex(RuntimeError, "declares PROCESS_NUMBER=2"),
+            ):
+                MAIN.load_process_wrapper(1)
+
+            incomplete = root / "incomplete.py"
+            incomplete.write_text("PROCESS_NUMBER = 1\nrun = None\n")
+            with (
+                patch.dict(MAIN.PROCESS_WRAPPER_PATHS, {1: incomplete}),
+                self.assertRaisesRegex(RuntimeError, "has no callable run"),
+            ):
+                MAIN.load_process_wrapper(1)
+
+
 class MainRunTests(unittest.TestCase):
     """Exercise configured run creation, resume, prerequisites, and event state.
 
@@ -350,15 +408,17 @@ class MainRunTests(unittest.TestCase):
     def test_process_one_initializes_database_and_records_execution_event(self):
         """A configured Process 01 run persists completion and execution evidence."""
         database = self.root / "experiment.duckdb"
-        coordinator = MagicMock()
-        coordinator.__enter__.return_value.import_configured.return_value = {
+        process_run = MagicMock(return_value={
             "selected_series": 100,
             "series_count": 100,
-        }
-        with patch.object(MAIN, "ImportCoordinator", return_value=coordinator):
+        })
+        wrapper = SimpleNamespace(run=process_run)
+        with patch.object(MAIN, "load_process_wrapper", return_value=wrapper) as loader:
             result = MAIN.run_configured_processes(
                 database, self.configuration, (1,)
             )
+        loader.assert_called_once_with(1)
+        process_run.assert_called_once_with(database)
         self.assertEqual(result["configuration"]["source"], "DuckDB")
         self.assertEqual(result["processes"][0]["status"], "completed")
         connection = duckdb.connect(str(database), read_only=True)
@@ -392,10 +452,7 @@ class MainRunTests(unittest.TestCase):
         finally:
             connection.close()
         configuration.unlink()
-        with (
-            patch.object(MAIN, "ImportCoordinator") as import_coordinator,
-            patch.object(MAIN, "POC1Coordinator") as experiment_coordinator,
-        ):
+        with patch.object(MAIN, "load_process_wrapper") as loader:
             result = MAIN.run_configured_processes(
                 database, None, tuple(range(1, 7))
             )
@@ -403,8 +460,29 @@ class MainRunTests(unittest.TestCase):
             [item["status"] for item in result["processes"]],
             ["skipped_completed"] * 6,
         )
-        import_coordinator.assert_not_called()
-        experiment_coordinator.assert_not_called()
+        loader.assert_not_called()
+
+    def test_selected_wrappers_run_in_process_order(self):
+        """Selected wrappers execute once each in ascending requested order."""
+        database = self.root / "ordered.duckdb"
+        calls: list[tuple[int, Path]] = []
+
+        def load_wrapper(process_id):
+            """Return a test wrapper that records its process and database."""
+            return SimpleNamespace(
+                run=lambda path, selected=process_id: (
+                    calls.append((selected, path)) or {"process": selected}
+                )
+            )
+
+        with patch.object(MAIN, "load_process_wrapper", side_effect=load_wrapper):
+            result = MAIN.run_configured_processes(
+                database, self.configuration, (1, 2, 3)
+            )
+        self.assertEqual(calls, [(1, database), (2, database), (3, database)])
+        self.assertEqual(
+            [item["process_id"] for item in result["processes"]], [1, 2, 3]
+        )
 
     def test_incomplete_process_prerequisite_is_rejected(self):
         """Process 04 cannot execute while stored Processes 01–03 remain incomplete."""
@@ -416,12 +494,11 @@ class MainRunTests(unittest.TestCase):
     def test_failed_process_and_execution_event_remain_retryable(self):
         """A worker failure records failed process/event state and preserves a future retry path."""
         database = self.root / "failed.duckdb"
-        coordinator = MagicMock()
-        coordinator.__enter__.return_value.import_configured.side_effect = RuntimeError(
-            "synthetic import failure"
+        wrapper = SimpleNamespace(
+            run=MagicMock(side_effect=RuntimeError("synthetic import failure"))
         )
         with (
-            patch.object(MAIN, "ImportCoordinator", return_value=coordinator),
+            patch.object(MAIN, "load_process_wrapper", return_value=wrapper),
             self.assertRaisesRegex(RuntimeError, "synthetic import failure"),
         ):
             MAIN.run_configured_processes(database, self.configuration, (1,))

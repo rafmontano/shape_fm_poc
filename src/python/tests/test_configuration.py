@@ -177,6 +177,36 @@ class ExperimentConfigurationTests(unittest.TestCase):
         changed["models"]["chronos_2"]["revision"] = "0" * 40
         self.assertNotEqual(resolve_experiment_configuration(changed).scientific_hash, baseline)
 
+    def test_legacy_worker_paths_resolve_without_rewriting_identity_documents(self) -> None:
+        """Stored pre-rename paths execute current substeps without changing history."""
+        current_document = json.loads(
+            REFERENCE_CONFIGURATION.read_text(encoding="utf-8")
+        )
+        legacy_document = deepcopy(current_document)
+        legacy_paths = legacy_document["execution"]["paths"]
+        legacy_paths.update(
+            {
+                "chronos_worker": "src/python/04_forecast_chronos.py",
+                "r_preprocess_worker": "src/r/02_preprocess_series.R",
+                "r_auto_arima_worker": "src/r/04_forecast_auto_arima.R",
+            }
+        )
+        current = resolve_experiment_configuration(current_document)
+        legacy = resolve_experiment_configuration(legacy_document)
+        self.assertEqual(legacy.scientific_hash, current.scientific_hash)
+        self.assertNotEqual(
+            legacy.configuration_integrity_hash,
+            current.configuration_integrity_hash,
+        )
+        self.assertEqual(
+            legacy.resolved["execution"]["paths"]["chronos_worker"],
+            "src/python/04_forecast_chronos.py",
+        )
+        self.assertEqual(
+            legacy.execution_paths,
+            current.resolved["execution"]["paths"],
+        )
+
     def test_configuration_integrity_detects_resolved_document_tampering(self) -> None:
         """Even valid non-scientific stored edits fail complete-document integrity checks."""
         with tempfile.TemporaryDirectory() as directory:

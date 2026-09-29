@@ -1,13 +1,13 @@
 # ==============================================================================
 # test_import_pipeline.py
 #
-# Purpose: Verify Stage 1 imports the pinned local M4 Daily sample into the expected schema, identities, windows, and counts.
+# Purpose: Verify Process 01 imports the pinned local M4 Daily sample into the expected schema, identities, windows, and counts.
 # Inputs: unittest fixtures, temporary databases/files, deterministic synthetic records, and mocked process or cluster boundaries.
 # Outputs: unittest pass/fail assertions and captured diagnostics; no production artifacts or external services.
 # Run from: PYTHONPATH=src/python .tools/uv/uv run --locked --no-sync python -m unittest tests.integration.test_import_pipeline
 # ==============================================================================
 
-"""Verify Stage 1 imports the pinned local M4 Daily sample into the expected schema, identities, windows, and counts."""
+"""Verify Process 01 imports the pinned local M4 Daily sample into the expected schema, identities, windows, and counts."""
 
 import tempfile
 import unittest
@@ -21,8 +21,8 @@ from util.gift_eval_source import iter_source_series
 from util.import_execution import ImportCoordinator
 
 
-class Stage1ImportTests(unittest.TestCase):
-    """Purpose: Verify deterministic Stage 1 import, restart, parallelism, and source fidelity.
+class Process01ImportTests(unittest.TestCase):
+    """Purpose: Verify deterministic Process 01 import, restart, parallelism, and source fidelity.
 
     Inputs: Pinned M4 Daily source files and the committed import configuration.
     Outputs: Import/schema assertions; tests create temporary DuckDB files and worker processes.

@@ -34,7 +34,7 @@ class OfficialAdapterTests(unittest.TestCase):
         """
         cls.root = Path(__file__).resolve().parents[4]
         cls.python = cls.root / "environments/gift-eval/.venv/bin/python"
-        cls.bridge = cls.root / "src/python/06_evaluate_gift_eval.py"
+        cls.bridge = cls.root / "src/python/06_01_evaluate_gift_eval.py"
         cls.source = cls.root / "data/source/gift_eval"
         cls.experiment_configuration = load_experiment_configuration(
             cls.root / "config/experiments/poc2_m4_daily_100.json"

@@ -693,7 +693,7 @@ class _GpuCluster:
                 expected_chronos_revision=CALIBRATION_CONFIGURATION.resolved["models"]["chronos_2"]["revision"],
                 expected_chronos_version=CALIBRATION_CONFIGURATION.resolved["models"]["chronos_2"]["chronos_forecasting"],
                 chronos_repository=CALIBRATION_CONFIGURATION.resolved["models"]["chronos_2"]["repository"],
-                chronos_environment=CALIBRATION_CONFIGURATION.resolved["execution"]["paths"]["chronos_environment"],
+                chronos_environment=CALIBRATION_CONFIGURATION.execution_paths["chronos_environment"],
                 gift_eval_source_directory=CALIBRATION_CONFIGURATION.resolved["evaluation"]["gift_eval"]["source_directory"],
                 require_gpu=True,
                 expected_gpu_name=CALIBRATION_CONFIGURATION.resolved["execution"]["final_acceptance"]["gpu_name"],
@@ -932,8 +932,8 @@ def _run_repetition(
             CALIBRATION_CONFIGURATION.resolved["models"]["chronos_2"]["cross_learning"],
             CALIBRATION_CONFIGURATION.resolved["models"]["chronos_2"]["predict_batches_jointly"],
             CALIBRATION_CONFIGURATION.execution["thread_limits"]["chronos"],
-            CALIBRATION_CONFIGURATION.resolved["execution"]["paths"]["chronos_environment"],
-            CALIBRATION_CONFIGURATION.resolved["execution"]["paths"]["chronos_worker"],
+            CALIBRATION_CONFIGURATION.execution_paths["chronos_environment"],
+            CALIBRATION_CONFIGURATION.execution_paths["chronos_worker"],
             float(
                 CALIBRATION_CONFIGURATION.execution["worker_timeouts_seconds"]["chronos_startup"]
             ),
