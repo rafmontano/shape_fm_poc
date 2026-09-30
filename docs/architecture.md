@@ -7,6 +7,11 @@ baseline, expandable forecast and feature pools, alternative meta-learners,
 and explicit foundation-model roles in forecasting, features, meta-learning,
 combination and adjustment.
 
+The approved minimal POC2 approach is described in
+[object adaptation and seasonal period](poc2-object-adaptation.md). It reuses
+existing adapters and stored configuration; implementation is tracked separately
+from the long-term research vision.
+
 ## Research architecture
 
 ![ShapeFM research architecture](images/shapefm_research_architecture.png)
@@ -55,6 +60,18 @@ are documented in [`forecast-methods.md`](forecast-methods.md).
 Gate 1 missingness preservation, Gate 2 modes, and evaluation masking are
 documented in [`preprocessing.md`](preprocessing.md).
 
+### Current forecast-pool integration boundary
+
+The approved R library registers the nine original FFORMA-derived forecast
+methods in `src/r/util/forecast_methods.R`, with common validation and visible
+seasonal-naive fallback. The current production experiment does not yet plan
+all nine methods: configuration and Process 04 orchestration select only
+AutoARIMA and Chronos-2, and `src/r/04_01_forecast_auto_arima.R` invokes the R
+pool for AutoARIMA. Connecting the other eight registered R methods to model
+selection, task planning, execution, persistence and retrieval remains
+outstanding approved forecast-pool integration work. It is documented rather
+than implemented in this closure task.
+
 ## Identity, transactions, and restart
 
 Dataset identity is derived from pinned source revisions and material import
@@ -92,12 +109,14 @@ For example:
 
 ```json
 {
+  "configuration_version": 2,
   "experiment": {
-    "name": "poc2_m4_daily_100",
-    "date": "2026-09-28",
-    "description": "Validate the central ShapeFM workflow on 100 M4 Daily series using AutoARIMA and Chronos-2."
+    "name": "poc2_m4_daily_100_resolved_period",
+    "date": "2026-09-30",
+    "description": "Validate the central ShapeFM workflow using the pinned GluonTS period convention."
   },
-  "reproducibility": {"seed": 1234}
+  "reproducibility": {"seed": 1234},
+  "pipeline": {"r_period_override": null}
 }
 ```
 
@@ -146,12 +165,30 @@ existing experiment.
 
 ### POC2 implementation
 
-Configuration version 1 is implemented by the typed
-`ExperimentConfiguration` interface. New-database creation validates the whole
-document before opening the target path, builds a temporary sibling database,
-stores the original and resolved JSON plus required metadata/hash, creates the
-six process rows transactionally, and atomically renames the file. Invalid
-documents cannot leave a partial target database.
+Configuration versions 1 and 2 are implemented by the typed
+`ExperimentConfiguration` interface. Version 2 is the default for new
+experiments. Its R preprocessing and R forecasting period is resolved once in
+the pinned GIFT-Eval environment: an explicit positive
+`pipeline.r_period_override` takes precedence; otherwise the resolver calls
+GluonTS `get_seasonality()` with the stored dataset frequency. Benchmark
+evaluation seasonality is resolved independently, so an R-period override does
+not silently change scoring.
+
+The resolver supports multiple valid GluonTS frequencies and is tested with
+Daily, hourly, weekly, monthly, quarterly, yearly and 15-minute frequencies.
+That generic resolution does not mean the full production pipeline supports all
+GIFT-Eval datasets: the current production configuration, importer validation,
+selection and experiment dimensions remain intentionally restricted to M4
+Daily. Other datasets require separate compatibility review.
+
+Version 1 remains a supported compatibility contract. Its stored M4 Daily
+period-7 setting retains the historical coupled preprocessing, R-model and
+evaluation interpretation; existing databases and results are not rewritten.
+New-database creation validates the whole document before opening the target
+path, builds a temporary sibling database, stores the original and resolved JSON
+plus required metadata/hash, creates the six process rows transactionally, and
+atomically renames the file. Invalid documents cannot leave a partial target
+database.
 
 `experiment_configuration` is the immutable authority record.
 `experiment_processes` records the current ordered Process 01–06 state.
@@ -164,3 +201,5 @@ The complete field contract and evolution procedure are documented in
 [`experiment-configuration.md`](experiment-configuration.md). The exhaustive
 disposition of former globals, machine settings, protocol constants, and test
 expectations is in [`configuration-inventory.md`](configuration-inventory.md).
+The scoped follow-up findings and removal candidates are recorded in
+[`vision-alignment-review.md`](vision-alignment-review.md).
