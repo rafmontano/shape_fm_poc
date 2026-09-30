@@ -11,11 +11,11 @@ calculated rather than configured.
 
 | JSON area | Current scope | Consumers |
 |---|---|---|
-| `configuration_version`, `experiment` | version 2 by default; name, date, objective | validator, DuckDB metadata, status |
+| `configuration_version`, `experiment` | version 2 by default; opt-in v3 tuning; name, date, objective | validator, DuckDB metadata, status |
 | `reproducibility.seed` | `1234` | scientific identity and future stochastic workers |
 | `data` | pinned GIFT-Eval M4 Daily source; first 100 official series; 14-step, one-window benchmark | import, planning, evaluation |
-| `pipeline` | Processes 01–06; optional R-period override; standard/robust preprocessing (robust default); identity/min-max-standardize; identity adjustment; equal-weight combination | task planning and Processes 02–05 |
-| `models` | AutoARIMA settings; pinned Chronos-2 identity, dtype, quantiles, and prediction policies | Process 04 workers and provenance |
+| `pipeline` | Processes 01–06; optional R-period override; standard/robust preprocessing; transformations; combination; opt-in v3 period tuning | task planning and Processes 02–05 |
+| `models` | v1/v2 AutoARIMA + Chronos-2; v3 tuning AutoARIMA + ETS | Process 04 workers and provenance |
 | scientific `evaluation` fields | GIFT-Eval revision, method, options, provisional candidate and submission metadata | Process 06 and export validation |
 
 The scientific fingerprint covers the data, scientific pipeline, models,
@@ -24,12 +24,18 @@ excluded.
 
 ## Execution globals
 
+The [execution policy](execution-policy.md) is the approved operational decision.
+The [safeguard follow-up](amp-poc2-execution-safeguards-instructions.md) makes
+profile use mandatory for heavy work, centralises routing and memory controls,
+and implements eight Mac CPU workers. The rows below describe ownership, not
+permission to reuse a smaller profile implicitly.
+
 | JSON area | Current scope | Consumers |
 |---|---|---|
-| `execution.default.mode`, workers and batch sizes | sequential default and per-process queue controls | coordinator and execution events |
+| `execution.default.mode`, workers and batch sizes | creation snapshot; approved resume override is resolved centrally and recorded | coordinator and execution events |
 | in-flight, retries, worker timeouts and thread limits | shared local/distributed execution behaviour | coordinator, Dask, R and Chronos worker payloads |
 | memory floors and one-writer rule | resource safety and database ownership | run gate and acceptance telemetry |
-| `execution.final_acceptance` | one Mac CPU worker plus one Ubuntu GPU worker | two-machine gate only |
+| `execution.final_acceptance` | explicitly scoped acceptance profile; historical small cases are not heavy-test defaults | acceptance harness and preflight |
 | `execution.paths` | prepared environments and worker entry points | subprocess launch and preflight |
 | `execution.restart` | skip completed; retry failed/interrupted | process and task selection |
 
@@ -58,7 +64,14 @@ identity. Effective host, dependency, resource, and code state is recorded.
 | pinned package defaults not intentionally exposed by ShapeFM | controlled by code and lockfile versions |
 
 Developer calibration grids, repetitions, tolerances, and historical evidence
-remain calibration/test constants. `config/execution_profiles.json` and
-`config/dependencies/gift_eval.json` are setup/calibration inputs and are not
-production experiment authorities. The removed `config/imports/m4_daily.json`
-must not be reintroduced as a competing source.
+remain calibration/test constants. The existing entries in
+`config/execution_profiles.json` include historical setup/calibration settings;
+they are not evidence that the old 2+4 profile is the approved heavy-test profile.
+That file also owns the implemented `poc2_seasonal_recovery` profile. Its current
+version 2 identity records 8 Mac CPU workers, 15 Ubuntu CPU workers and 15
+logical Ubuntu GPU slots. For R-only tuning, all 23 CPU workers are eligible;
+AutoARIMA uses the Ubuntu-only capability, while ETS uses the shared capability
+subject to profile-owned memory admission. Runtime configuration does not
+introduce a competing scientific experiment authority.
+`config/dependencies/gift_eval.json` remains a setup dependency input.
+The removed `config/imports/m4_daily.json` must not be reintroduced.

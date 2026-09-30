@@ -9,6 +9,7 @@
 # ==============================================================================
 
 source("src/r/util/forecast_methods.R")
+source("src/r/util/seasonal_period.R")
 
 # Test constant: exact approved identifiers and FFORMA order.
 APPROVED_METHODS <- c(
@@ -421,6 +422,19 @@ check("existing AutoARIMA linear-series output remains compatible", function() {
   assert_true(isTRUE(all.equal(result$mean, expected)), "AutoARIMA means changed")
   assert_true(isTRUE(all.equal(result$median, expected)), "AutoARIMA medians changed")
   assert_true(all(result$quantiles == rep(expected, each = 9L)), "AutoARIMA quantiles changed")
+})
+
+check("period diagnostics enforce cycles and model support without a strength cutoff", function() {
+  periodic <- rep(c(1, 3, 2, 4), 20L)
+  diagnostic <- diagnose_seasonal_period(periodic, 1L, "ets", 3L)
+  assert_true(diagnostic$estimated_period >= 1L, "findfrequency returned no period")
+  if (diagnostic$estimated_period == 1L) {
+    assert_identical(diagnostic$seasonal_strength, NULL, "period one fabricated strength")
+  }
+  assert_identical(model_supports_period("ets", 24L), TRUE, "ETS rejected period 24")
+  assert_identical(model_supports_period("ets", 25L), FALSE, "ETS accepted period 25")
+  assert_identical(model_supports_period("auto_arima", 350L), TRUE, "ARIMA rejected 350")
+  assert_identical(model_supports_period("auto_arima", 351L), FALSE, "ARIMA accepted 351")
 })
 
 cat(sprintf("All forecast-method tests passed for %d registered methods.\n", length(APPROVED_METHODS)))

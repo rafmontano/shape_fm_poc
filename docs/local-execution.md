@@ -1,5 +1,17 @@
 # Local and two-machine execution
 
+The [approved execution policy](execution-policy.md) governs heavy testing.
+The seasonal recovery and focused
+[eight-worker safeguard follow-up](amp-poc2-execution-safeguards-instructions.md)
+are complete. Smaller historical profiles below are not permission for a reduced
+heavy run. If Ubuntu is unavailable, report that and request direction before
+heavy local testing.
+
+Heavy v3 Gate 4 tuning must select the `poc2_seasonal_recovery` execution
+profile. The CLI and coordinator both reject an omitted or drifted profile. A
+local run requires the separate `--local-heavy-exception` approval reference;
+the option records approval but does not create it.
+
 All commands below use existing environments without synchronization:
 
 ```sh
@@ -30,7 +42,12 @@ creates its database atomically. Later runs reject JSON and reconstruct the
 validated configuration from DuckDB. Process prerequisites are ordered,
 completed tasks are skipped, and each request appends an execution event.
 
-## Two-machine acceptance
+## Historical Objective 1 acceptance
+
+This section preserves the specific two-worker Objective 1 test. It is not the
+current heavy-test configuration or a requirement to rerun all gates for each
+change. Seasonal recovery is complete. Its safeguard follow-up uses a small
+isolated check after synchronisation, not a rerun of the completed experiment.
 
 From the clean Mac checkout at the exact revision already present on Ubuntu:
 
@@ -44,7 +61,7 @@ Run the identical command a second time against the same database and report.
 The first call executes import through official evaluation; the second proves
 that committed scientific work is skipped and fingerprints are preserved.
 
-The POC2 Import target contains exactly two Dask workers:
+The historical POC2 Import test target contains exactly two Dask workers:
 
 - Mac: coordinator, scheduler, sole DuckDB writer, and one CPU worker;
 - Ubuntu: one Chronos worker advertising `CHRONOS_GPU_SLOT=1` on one physical

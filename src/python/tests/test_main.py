@@ -86,6 +86,33 @@ class MainResultsTests(unittest.TestCase):
         self.assertEqual(plan.configuration, MAIN.DEFAULT_CONFIGURATION)
         run = parser.parse_args(["run", "--database", "experiment.duckdb"])
         self.assertEqual(run.processes, tuple(range(1, 7)))
+        self.assertIsNone(run.execution_profile)
+        self.assertIsNone(run.local_heavy_exception)
+        recovery = parser.parse_args(
+            [
+                "run",
+                "--database",
+                "experiment.duckdb",
+                "--processes",
+                "4",
+                "--execution-profile",
+                "poc2_seasonal_recovery",
+            ]
+        )
+        self.assertEqual(recovery.processes, (4,))
+        self.assertEqual(recovery.execution_profile, "poc2_seasonal_recovery")
+        exception = parser.parse_args(
+            [
+                "run",
+                "--database",
+                "experiment.duckdb",
+                "--processes",
+                "4",
+                "--local-heavy-exception",
+                "researcher-approval/example",
+            ]
+        )
+        self.assertEqual(exception.local_heavy_exception, "researcher-approval/example")
         status = parser.parse_args(["status"])
         self.assertEqual(status.database, MAIN.DEFAULT_DATABASE)
         self.assertIsNone(status.experiment_id)
@@ -398,6 +425,50 @@ class MainRunTests(unittest.TestCase):
             MAIN.run_configured_processes(database, None, (1,))
         self.assertFalse(database.exists())
 
+    def test_tuning_run_without_profile_is_rejected_before_wrapper_dispatch(self):
+        """The ordinary CLI cannot silently run the 100-series tuning case locally."""
+        database = self.root / "tuning.duckdb"
+        tuning = ROOT / "config/experiments/poc2_m4_daily_100_period_tuning.json"
+        MAIN.initialize_experiment_database(database, tuning)
+        with (
+            patch.object(MAIN, "load_process_wrapper") as loader,
+            self.assertRaisesRegex(RuntimeError, "requires --execution-profile"),
+        ):
+            MAIN.run_configured_processes(database, None, (4,))
+        loader.assert_not_called()
+
+    def test_local_heavy_exception_is_explicit_and_recorded(self):
+        """A bounded exception records its approval reference in execution provenance."""
+        database = self.root / "exception.duckdb"
+        tuning = ROOT / "config/experiments/poc2_m4_daily_100_period_tuning.json"
+        MAIN.initialize_experiment_database(database, tuning)
+        connection = duckdb.connect(str(database))
+        try:
+            connection.execute(
+                "UPDATE experiment_processes SET status='completed', completed_at=current_timestamp"
+            )
+        finally:
+            connection.close()
+        result = MAIN.run_configured_processes(
+            database,
+            None,
+            (4,),
+            local_heavy_exception="researcher-approval/test-only",
+        )
+        self.assertEqual(result["processes"][0]["status"], "skipped_completed")
+        connection = duckdb.connect(str(database), read_only=True)
+        try:
+            operational = json.loads(
+                connection.execute(
+                    "SELECT operational_configuration FROM execution_events"
+                ).fetchone()[0]
+            )
+        finally:
+            connection.close()
+        self.assertEqual(
+            operational["execution"]["profile_version"], 1
+        )
+
     def test_existing_database_rejects_a_competing_configuration(self):
         """Resume rejects JSON so stored configuration remains the sole authority."""
         database = self.root / "existing.duckdb"
@@ -461,6 +532,57 @@ class MainRunTests(unittest.TestCase):
             ["skipped_completed"] * 6,
         )
         loader.assert_not_called()
+
+    def test_resume_closes_interrupted_parent_records_before_zero_work_skip(self):
+        """A later sole-coordinator run records stale execution/invocation interruption."""
+        database = self.root / "interrupted.duckdb"
+        MAIN.initialize_experiment_database(database, self.configuration)
+        connection = duckdb.connect(str(database))
+        try:
+            connection.execute(
+                "UPDATE experiment_processes SET status='completed', completed_at=current_timestamp"
+            )
+            connection.execute(
+                """INSERT INTO execution_events
+                (execution_id, requested_processes, operational_configuration,
+                 machine, status) VALUES ('old-execution', '[4]', '{}', '{}', 'running')"""
+            )
+            connection.execute(
+                """INSERT INTO experiment_invocations
+                (invocation_id, experiment_id, requested_gate, worker_count,
+                 device, batch_size, environment, machine, started_at, status)
+                VALUES ('old-invocation', 'experiment', 'forecast', 1, 'cpu', 1,
+                        '{}', '{}', current_timestamp, 'running')"""
+            )
+        finally:
+            connection.close()
+
+        result = MAIN.run_configured_processes(database, None, (4,))
+        self.assertEqual(result["processes"], [{"process_id": 4, "status": "skipped_completed"}])
+        connection = duckdb.connect(str(database), read_only=True)
+        try:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT status, completed_at IS NOT NULL, error FROM execution_events WHERE execution_id='old-execution'"
+                ).fetchone(),
+                (
+                    "failed",
+                    True,
+                    "interrupted before completion; recovered by a later run",
+                ),
+            )
+            self.assertEqual(
+                connection.execute(
+                    "SELECT status, ended_at IS NOT NULL, error FROM experiment_invocations WHERE invocation_id='old-invocation'"
+                ).fetchone(),
+                (
+                    "failed",
+                    True,
+                    "interrupted before completion; recovered by a later run",
+                ),
+            )
+        finally:
+            connection.close()
 
     def test_selected_wrappers_run_in_process_order(self):
         """Selected wrappers execute once each in ascending requested order."""

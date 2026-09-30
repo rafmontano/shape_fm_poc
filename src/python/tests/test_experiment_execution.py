@@ -323,6 +323,18 @@ class TransactionTests(unittest.TestCase):
         second_invocation = self.coordinator._begin_invocation(
             "experiment", 2, 1, "cpu", 1
         )
+        self.assertEqual(
+            connection.execute(
+                """SELECT status, ended_at IS NOT NULL, error
+                   FROM experiment_invocations WHERE invocation_id=?""",
+                [invocation],
+            ).fetchone(),
+            (
+                "failed",
+                True,
+                "interrupted before completion; recovered by a later invocation",
+            ),
+        )
         second_attempt = self.coordinator._start_tasks(
             [("task", None, None, None)], second_invocation
         )["task"]

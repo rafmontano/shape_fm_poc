@@ -7,6 +7,8 @@ version-1, period-7 experiment. New default runs use
 `config/experiments/poc2_m4_daily_100_resolved_period.json`, the version-2
 contract whose R period is resolved in the pinned GIFT-Eval environment. A new
 database requires one complete configuration file.
+The optional 100-series AutoARIMA/ETS tuning experiment is
+`config/experiments/poc2_m4_daily_100_period_tuning.json` and uses version 3.
 ShapeFM validates the entire document before writing, creates a temporary
 DuckDB, stores the original and resolved documents, creates six process-state
 rows, commits, and atomically renames the file. Invalid input leaves no database.
@@ -19,7 +21,16 @@ scientific fingerprint, and configuration-integrity fingerprint.
 `execution_events` appends each request and its effective operational settings,
 host/code provenance, result, or failure.
 
-## Version 1 compatibility and version 2 period policy
+The [execution policy](execution-policy.md) now governs heavy-run profile
+selection and host availability. Recovery implemented an explicit operational
+profile override without changing stored experiment identity. The
+[safeguard follow-up](amp-poc2-execution-safeguards-instructions.md) now rejects
+ordinary heavy tuning when the profile is omitted, removes hidden routing/limit
+constants, monitors active owned R processes and implements eight Mac CPU
+workers. Preserve stored creation documents and integrity hashes; do not reload
+or rewrite scientific configuration.
+
+## Versions 1–3
 
 Version 1 coupled `data.benchmark.seasonality = 7` to R preprocessing, R
 forecasting, and scoring. Stored v1 documents remain valid and keep that
@@ -36,11 +47,21 @@ benchmark metadata JSON; no schema column was added. The historical
 `official_seasonality` metadata/column names remain compatibility aliases for
 the R period.
 
+Version 3 preserves the version-2 resolver and adds opt-in Gate 4 period-policy
+tuning. It compares baseline against `forecast::findfrequency()` over three
+historical folds and records `tsfeatures` seasonal strength as diagnostics. The
+fixed Gate 2 period and independent Gate 6 seasonality do not change. The v3
+acceptance models are AutoARIMA and ETS. Approved heavy execution now uses both
+CPU hosts under the execution policy. The original one-Mac v3 snapshot remains
+readable; an explicit operational profile enabled recovery. It cannot silently
+authorise a new heavy local run; only an explicit recorded researcher-approved
+exception can do so. Chronos is intentionally outside this R-only acceptance.
+
 ## Configuration fields
 
 | Field | Meaning and current value | Consumer |
 |---|---|---|
-| `configuration_version` | `1` for historical semantics; `2` for independently resolved R period | validator and DuckDB loader |
+| `configuration_version` | `1` historical; `2` independently resolved R period; `3` opt-in period tuning | validator and DuckDB loader |
 | `experiment.name` | v2 default `poc2_m4_daily_100_resolved_period`; v1 name retained | experiment metadata and status |
 | `experiment.date` | required ISO date; v2 default `2026-09-30` | DuckDB experiment metadata |
 | `experiment.description` | required research objective | DuckDB experiment metadata |
@@ -53,18 +74,20 @@ the R period.
 | `pipeline.preprocessing` | modes `standard`, `robust`; default `robust` | Process 02 task creation and R payload |
 | `pipeline.transformations.methods` | `identity`, `minmax_then_standardize` | Process 03 task creation and worker payload |
 | `pipeline.adjustment` | `identity` | variant identity |
-| `pipeline.combination` | equal weight; AutoARIMA `0.5`, Chronos-2 `0.5` | Process 05 payload and provenance |
+| `pipeline.combination` | equal weight; v1/v2 AutoARIMA + Chronos-2, v3 AutoARIMA + ETS | Process 05 payload and provenance |
 | `models.auto_arima` | R `forecast` package and all `auto.arima`/interval settings | Process 04 R payload |
 | `models.chronos_2` | repository, revision, package version, float32, nine quantiles, and batch/cross-learning policy | Process 04 Python/Dask payload and preflight |
+| `models.ets` | v3 R `forecast` ETS with registered `opt.crit = "mae"` settings | Process 04 R payload |
 | `evaluation.method` | `gift_eval` | Process 06 selection |
 | `evaluation.gift_eval` | code revision, locked environment, submodule directory | bridge launch and distributed preflight |
 | `data.benchmark.frequency` | official GIFT-Eval frequency (`D`); v1 also retains historical `seasonality = 7` | import and period resolver |
-| `pipeline.r_period_override` | v2-only `null` or positive R preprocessing/forecast period override | planning, Processes 02 and 04 |
+| `pipeline.r_period_override` | v2/v3 `null` or positive baseline R preprocessing/forecast period override | planning, Processes 02 and 04 |
+| `pipeline.seasonal_period_tuning` | v3-only approved three-fold MAE policy; baseline retained for ties/inconclusive results | Process 04 tuning |
 | `evaluation.options` | axis, invalid-label, NaN, and versioned scoring-seasonality policy | Process 06 payload |
 | `evaluation.provisional_candidate` | development candidate selector | result export logic |
 | `evaluation.submission_metadata` | explicit draft/non-submittable fields | export validation only |
 | `execution.default` | mode, process/import workers, batch/in-flight/retry/timeout/thread controls, memory floors, one writer | ordinary `run` and execution provenance |
-| `execution.final_acceptance` | one Mac CPU + one Ubuntu GPU worker, one physical RTX 5090, memory ceilings and safety thresholds | `00_main.py test` |
+| `execution.final_acceptance` | scoped acceptance snapshot; legacy small profiles remain readable, current heavy runs follow the execution policy | acceptance execution and preflight |
 | `execution.paths` | project, Chronos and R worker paths | coordinator, Dask workers, acceptance preflight |
 | `execution.restart` | skip completed; retry failed/interrupted | coordinator selection policy |
 

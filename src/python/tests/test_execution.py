@@ -34,6 +34,7 @@ from util.execution_profiles import (
     PersistentChronosWorker,
     resolve_execution_profile,
     system_hardware,
+    validate_heavy_tuning_execution,
 )
 from util.configuration import load_experiment_configuration
 from util.experiment_execution import (
@@ -105,6 +106,23 @@ class ExecutionProfileTests(unittest.TestCase):
             ),
             (2, 4, 16, 12),
         )
+        recovery, _ = resolve_execution_profile("poc2_seasonal_recovery")
+        self.assertEqual(
+            (
+                recovery.profile_version,
+                recovery.dask_mac_cpu_workers,
+                recovery.dask_ubuntu_cpu_workers,
+                recovery.dask_ubuntu_gpu_workers,
+                recovery.dask_mac_tuning_workers,
+                recovery.dask_ubuntu_tuning_workers,
+                recovery.dask_max_in_flight,
+                recovery.dask_autoarima_max_in_flight,
+                recovery.dask_ets_max_in_flight,
+                recovery.dask_autoarima_fit_budget_gib,
+            ),
+            (2, 8, 15, 15, 8, 15, 23, 8, 15, 12),
+        )
+        self.assertEqual(len(recovery.fingerprint), 64)
 
     def test_hardware_provenance_records_cpu_model(self) -> None:
         """Hardware provenance includes the CPU model reported by the platform helper."""
@@ -167,6 +185,225 @@ class ExecutionProfileTests(unittest.TestCase):
             )
         self.assertEqual(validate.call_args.kwargs["expected_gpu_workers"], 15)
         client.close.assert_called_once()
+
+    def test_tuning_preflight_rejects_wrong_topology_and_stale_source(self) -> None:
+        """CPU-only tuning checks exact host pools and synchronized dirty-tree content."""
+        from util.distributed_execution import (
+            EXPECTED_DASK_VERSION,
+            source_manifest_fingerprint,
+            validate_tuning_cluster,
+        )
+
+        manifest = {"src/example.py": "digest"}
+        base = {
+            "source_manifest": source_manifest_fingerprint(manifest),
+            "source_mismatches": [],
+            "python_version": "3.12.14",
+            "dask_version": EXPECTED_DASK_VERSION,
+            "distributed_version": EXPECTED_DASK_VERSION,
+            "r_packages": {
+                "R": "4.6.1",
+                "forecast": "8.24.0",
+                "jsonlite": "2.0.0",
+                "tsfeatures": "1.1.1",
+            },
+            "resources": {"CPU": 1, "TUNING_R_SLOT": 1},
+        }
+        client = MagicMock()
+        client.run.return_value = {
+            "worker/mac": {**base, "hostname": "MacHost"},
+            "worker/ubuntu": {
+                **base,
+                "hostname": "WSUbuntu1",
+                "resources": {
+                    **base["resources"],
+                    "AUTOARIMA_R_SLOT": 1,
+                },
+            },
+        }
+        with patch("util.distributed_execution.socket.gethostname", return_value="MacHost"):
+            reports = validate_tuning_cluster(
+                client,
+                expected_workers=2,
+                expected_mac_workers=1,
+                expected_ubuntu_workers=1,
+                expected_tuning_workers=2,
+                timeout=5,
+                expected_manifest=manifest,
+            )
+        self.assertEqual(len(reports), 2)
+        client.run.return_value["worker/ubuntu"] = {
+            **client.run.return_value["worker/ubuntu"],
+            "source_mismatches": ["src/example.py"],
+        }
+        with patch("util.distributed_execution.socket.gethostname", return_value="MacHost"):
+            with self.assertRaisesRegex(RuntimeError, "stale source"):
+                validate_tuning_cluster(
+                    client,
+                    expected_workers=2,
+                    expected_mac_workers=1,
+                    expected_ubuntu_workers=1,
+                    expected_tuning_workers=2,
+                    timeout=5,
+                    expected_manifest=manifest,
+                )
+            with self.assertRaisesRegex(RuntimeError, "worker topology"):
+                validate_tuning_cluster(
+                    client,
+                    expected_workers=3,
+                    expected_mac_workers=1,
+                    expected_ubuntu_workers=2,
+                    expected_tuning_workers=3,
+                    timeout=5,
+                    expected_manifest=manifest,
+                )
+
+    def test_heavy_tuning_requires_exact_profile_or_recorded_local_exception(self) -> None:
+        """Heavy execution rejects stored/local defaults and profile drift."""
+        approved, _ = resolve_execution_profile("poc2_seasonal_recovery")
+        distributed = ExecutionSettings(
+            mode="dask", dask_scheduler_address="tcp://scheduler:8786"
+        )
+        validate_heavy_tuning_execution(approved, distributed, {})
+        local, _ = resolve_execution_profile("sequential_safe")
+        with self.assertRaisesRegex(RuntimeError, "approved distributed"):
+            validate_heavy_tuning_execution(local, ExecutionSettings(), {})
+        validate_heavy_tuning_execution(
+            local,
+            ExecutionSettings(mode="sequential"),
+            {"local_heavy_exception": {"approval_reference": "researcher-approval/test"}},
+        )
+        with self.assertRaisesRegex(RuntimeError, "approval reference"):
+            validate_heavy_tuning_execution(
+                local,
+                ExecutionSettings(mode="sequential"),
+                {"local_heavy_exception": {"approval_reference": ""}},
+            )
+
+    def test_tuning_queues_use_all_eligible_ets_work_without_sampling_quota(self) -> None:
+        """ETS queue retains every payload and consumes profile-owned limits."""
+        from util.seasonal_period_tuning import distributed_tuning_queue_groups
+
+        profile, _ = resolve_execution_profile("poc2_seasonal_recovery")
+        payloads = [
+            {"id": f"ets-{index}", "tasks": [{"model": "ets"}]}
+            for index in range(41)
+        ] + [
+            {"id": f"auto-{index}", "tasks": [{"model": "auto_arima"}]}
+            for index in range(3)
+        ]
+        groups = distributed_tuning_queue_groups(payloads, profile, ("arguments",))
+        self.assertEqual(len(groups["ets"][1]), 41)
+        self.assertEqual(len(groups["auto_arima"][1]), 3)
+        self.assertEqual(groups["ets"][2], {"TUNING_R_SLOT": 1})
+        self.assertEqual(groups["auto_arima"][2], {"AUTOARIMA_R_SLOT": 1})
+        self.assertEqual(groups["ets"][4], profile.dask_ets_max_in_flight)
+        self.assertEqual(
+            groups["auto_arima"][4], profile.dask_autoarima_max_in_flight
+        )
+
+    def test_memory_monitor_handles_transient_and_sustained_pressure(self) -> None:
+        """Only sustained floor pressure terminates the registered owned process."""
+        from util.distributed_execution import (
+            ResourceSafetyInterruption,
+            TuningMemoryMonitor,
+        )
+
+        snapshots = iter(
+            [
+                {"available_gib": 8.0, "swap_used_gib": 1.0},
+                {"available_gib": 2.0, "swap_used_gib": 1.0},
+                {"available_gib": 8.0, "swap_used_gib": 1.0},
+                {"available_gib": 2.0, "swap_used_gib": 1.0},
+                {"available_gib": 2.0, "swap_used_gib": 1.0},
+            ]
+        )
+        times = iter([0.0, 1.0, 2.0, 10.0])
+        process = MagicMock(pid=321)
+        process.poll.return_value = None
+        monitor = TuningMemoryMonitor(
+            minimum_available_gib=3,
+            poll_interval_seconds=1,
+            breach_grace_seconds=5,
+            swap_growth_limit_gib=0.25,
+            probe=lambda: next(snapshots),
+            clock=lambda: next(times),
+        )
+        monitor.register_process(process)
+        with patch("util.distributed_execution.os.killpg") as terminate:
+            monitor.sample_once()
+            monitor.sample_once()
+            monitor.sample_once()
+            monitor.sample_once()
+        terminate.assert_called_once_with(321, 15)
+        process.wait.assert_called_once_with(timeout=2)
+        with self.assertRaisesRegex(ResourceSafetyInterruption, "resource safety"):
+            monitor.raise_if_unsafe()
+        self.assertEqual(monitor.evidence()["safety_responses"], 1)
+
+    def test_memory_monitor_detects_swap_growth_without_unrelated_kill(self) -> None:
+        """Sustained swap growth records pressure without killing unowned work."""
+        from util.distributed_execution import (
+            ResourceSafetyInterruption,
+            TuningMemoryMonitor,
+        )
+
+        snapshots = iter(
+            [
+                {"available_gib": 8.0, "swap_used_gib": 1.0},
+                {"available_gib": 8.0, "swap_used_gib": 1.5},
+                {"available_gib": 8.0, "swap_used_gib": 1.5},
+            ]
+        )
+        times = iter([0.0, 6.0])
+        monitor = TuningMemoryMonitor(
+            minimum_available_gib=3,
+            poll_interval_seconds=1,
+            breach_grace_seconds=5,
+            swap_growth_limit_gib=0.25,
+            probe=lambda: next(snapshots),
+            clock=lambda: next(times),
+        )
+        with patch("util.distributed_execution.os.killpg") as terminate:
+            monitor.sample_once()
+            monitor.sample_once()
+        terminate.assert_not_called()
+        with self.assertRaisesRegex(ResourceSafetyInterruption, "swap grew"):
+            monitor.raise_if_unsafe()
+
+    def test_memory_admission_waits_for_headroom_and_records_throttling(self) -> None:
+        """Admission pauses on pressure and proceeds only after budget plus floor fits."""
+        from util import distributed_execution
+
+        memory = [
+            MagicMock(available=5 * 1024**3),
+            MagicMock(available=9 * 1024**3),
+            MagicMock(available=9 * 1024**3),
+            MagicMock(available=9 * 1024**3),
+        ]
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(
+                distributed_execution,
+                "TUNING_RESERVATION_DIRECTORY",
+                Path(directory),
+            ),
+            patch("psutil.virtual_memory", side_effect=memory),
+            patch("psutil.swap_memory", return_value=MagicMock(used=0)),
+            patch("util.distributed_execution.time.sleep") as sleep,
+        ):
+            with distributed_execution.tuning_memory_reservation(
+                3,
+                3,
+                timeout_seconds=10,
+                poll_interval_seconds=0.25,
+                breach_grace_seconds=5,
+                swap_growth_limit_gib=0.25,
+            ) as monitor:
+                evidence = monitor.evidence()
+        sleep.assert_called_once_with(0.25)
+        self.assertEqual(evidence["throttled_seconds"], 0.25)
+        self.assertEqual(evidence["available_gib_at_admission"], 9)
 
     def test_full_m4_daily_task_counts(self) -> None:
         """A 4,227-series M4 Daily run expands to the expected tasks per process."""
@@ -469,6 +706,50 @@ for line in sys.stdin:
                         retries=2,
                     )
                 )
+            self.assertEqual(result[0][1]["retry_count"], 1)
+        finally:
+            cluster.close()
+
+    def test_simulated_worker_loss_remains_retryable(self) -> None:
+        """A scheduler worker-loss error retries without losing completed input identity."""
+        from types import SimpleNamespace
+
+        from distributed import Client, LocalCluster
+        from distributed.scheduler import KilledWorker
+
+        from util.distributed_execution import run_batches
+
+        def survive_worker_loss(batch, retry_count=0):
+            """Model one lost worker followed by a successful replacement attempt."""
+            if retry_count == 0:
+                raise KilledWorker(
+                    "task/worker-loss",
+                    SimpleNamespace(address="tcp://lost-worker:1"),
+                    1,
+                )
+            return {"ids": [job["id"] for job in batch], "retry_count": retry_count}
+
+        cluster = LocalCluster(
+            n_workers=1,
+            threads_per_worker=1,
+            processes=False,
+            dashboard_address=None,
+            resources={"CPU": 1},
+        )
+        try:
+            with Client(cluster) as client:
+                result = list(
+                    run_batches(
+                        client,
+                        survive_worker_loss,
+                        [[{"id": "task/worker-loss"}]],
+                        resources={"CPU": 1},
+                        max_in_flight=1,
+                        retries=1,
+                    )
+                )
+            self.assertEqual(result[0][0][0]["id"], "task/worker-loss")
+            self.assertEqual(result[0][1]["ids"], ["task/worker-loss"])
             self.assertEqual(result[0][1]["retry_count"], 1)
         finally:
             cluster.close()

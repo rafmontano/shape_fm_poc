@@ -36,6 +36,7 @@ from .execution_profiles import (
     ExecutionSettings,
     PersistentChronosWorker,
     system_hardware,
+    validate_heavy_tuning_execution,
     validate_system_memory,
 )
 from .forecast_combination import combine_equal_weight
@@ -275,7 +276,9 @@ class ExperimentCoordinator:
         )
         self.config = self.configuration.workflow
         self.quantiles = tuple(
-            self.configuration.resolved["models"]["chronos_2"]["quantile_levels"]
+            self.configuration.resolved["models"].get("chronos_2", {}).get(
+                "quantile_levels", [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+            )
         )
         self._hardware_cache: dict[str, dict[str, Any]] = {}
 
@@ -824,6 +827,12 @@ class ExperimentCoordinator:
         """
         invocation_id = f"poc1-invocation/{uuid.uuid4().hex}"
         self.connection.execute(
+            """UPDATE experiment_invocations SET status='failed', ended_at=current_timestamp,
+               error='interrupted before completion; recovered by a later invocation'
+               WHERE experiment_id=? AND requested_gate=? AND status='running'""",
+            [experiment_id, PROCESSES[process]],
+        )
+        self.connection.execute(
             """INSERT INTO experiment_invocations
             (invocation_id, experiment_id, requested_gate, worker_count, device,
              batch_size, environment, machine, started_at, status,
@@ -900,13 +909,15 @@ class ExperimentCoordinator:
         """
         requested = profile.required_accelerator or "auto"
         if requested not in self._hardware_cache:
-            accelerator = self._chronos_hardware(requested)
-            expected = profile.expected_accelerator_name
-            if expected and expected.lower() not in accelerator["accelerator_device_name"].lower():
-                raise RuntimeError(
-                    f"profile {profile.name} requires {expected}, detected "
-                    f"{accelerator['accelerator_device_name']}"
-                )
+            accelerator: dict[str, Any] = {}
+            if "chronos_2" in self.config["models"]:
+                accelerator = self._chronos_hardware(requested)
+                expected = profile.expected_accelerator_name
+                if expected and expected.lower() not in accelerator["accelerator_device_name"].lower():
+                    raise RuntimeError(
+                        f"profile {profile.name} requires {expected}, detected "
+                        f"{accelerator['accelerator_device_name']}"
+                    )
             system = system_hardware()
             validate_system_memory(profile, system)
             r_output = subprocess.run(
@@ -921,13 +932,18 @@ class ExperimentCoordinator:
                 text=True,
                 timeout=30,
             ).stdout.split("|")
+            model_metadata = {}
+            if "chronos_2" in self.config["models"]:
+                model_metadata = {
+                    "model_revision": self.config["models"]["chronos_2"]["revision"],
+                    "model_dtype": self.config["models"]["chronos_2"]["dtype"],
+                }
             self._hardware_cache[requested] = {
                 **system,
                 **accelerator,
                 "R_version": r_output[0].strip(),
                 "forecast_package_version": r_output[1].strip(),
-                "model_revision": self.config["models"]["chronos_2"]["revision"],
-                "model_dtype": self.config["models"]["chronos_2"]["dtype"],
+                **model_metadata,
             }
         return self._hardware_cache[requested]
 
@@ -1106,11 +1122,13 @@ class ExperimentCoordinator:
         execution = self.configuration.execution
         timeout = float(execution["worker_timeouts_seconds"]["r"])
         threads = str(execution["thread_limits"]["r"])
-        script = (
-            paths["r_auto_arima_worker"]
-            if payload.get("action") == "forecast"
-            else paths["r_preprocess_worker"]
-        )
+        action = payload.get("action")
+        if action in {"forecast", "diagnose_period"} and "r_forecast_worker" in paths:
+            script = paths["r_forecast_worker"]
+        elif action == "forecast":
+            script = paths["r_auto_arima_worker"]
+        else:
+            script = paths["r_preprocess_worker"]
         completed = subprocess.run(
             ["Rscript", str(self.root / script)],
             cwd=self.root,
@@ -1193,6 +1211,12 @@ class ExperimentCoordinator:
             profile, overrides = execution
             configured_settings = ExecutionSettings()
         settings = execution_settings or configured_settings
+        if (
+            process == 4
+            and self.configuration.seasonal_period_tuning is not None
+            and self.configuration.seasonal_period_tuning["enabled"]
+        ):
+            validate_heavy_tuning_execution(profile, settings, overrides)
         if settings.mode == "sequential":
             profile = replace(
                 profile,
@@ -1211,15 +1235,18 @@ class ExperimentCoordinator:
         if settings.mode == "dask" and process != 6:
             from distributed import Client
 
-            from .distributed_execution import validate_cluster
+            from .distributed_execution import (
+                repository_source_manifest,
+                validate_cluster,
+                validate_tuning_cluster,
+            )
 
             if settings.dask_scheduler_address:
                 dask_client = Client(
                     settings.dask_scheduler_address,
                     timeout=f"{settings.dask_timeout_seconds}s",
                 )
-                expected_gpu_name = self.configuration.resolved["execution"]["final_acceptance"]["gpu_name"]
-                resolved_device = "cuda"
+                expected_gpu_name = None
             else:
                 dask_client = Client(
                     n_workers=1,
@@ -1229,30 +1256,49 @@ class ExperimentCoordinator:
                     timeout=f"{settings.dask_timeout_seconds}s",
                 )
                 expected_gpu_name = None
-            expected_commit = subprocess.run(
-                ["git", "rev-parse", "HEAD"],
-                cwd=self.root,
-                check=True,
-                capture_output=True,
-                text=True,
-            ).stdout.strip()
             try:
-                cluster = validate_cluster(
-                    dask_client,
-                    expected_workers=settings.dask_expected_workers,
-                    timeout=settings.dask_timeout_seconds,
-                    expected_commit=expected_commit,
-                    expected_configuration_hash=self.configuration.scientific_hash,
-                    expected_gift_eval_revision=self.configuration.resolved["evaluation"]["gift_eval"]["code_revision"],
-                    expected_chronos_revision=self.config["models"]["chronos_2"]["revision"],
-                    expected_chronos_version=self.config["models"]["chronos_2"]["chronos_forecasting"],
-                    chronos_repository=self.config["models"]["chronos_2"]["repository"],
-                    chronos_environment=self.configuration.execution_paths["chronos_environment"],
-                    gift_eval_source_directory=self.configuration.resolved["evaluation"]["gift_eval"]["source_directory"],
-                    require_gpu=process == 4,
-                    expected_gpu_name=expected_gpu_name,
-                    expected_gpu_workers=settings.dask_expected_gpu_workers,
-                )
+                if process == 4 and self.configuration.seasonal_period_tuning is not None:
+                    mac_workers = int(profile.dask_mac_cpu_workers or 0)
+                    ubuntu_workers = int(profile.dask_ubuntu_cpu_workers or 0)
+                    cluster = validate_tuning_cluster(
+                        dask_client,
+                        expected_workers=mac_workers + ubuntu_workers,
+                        expected_mac_workers=mac_workers,
+                        expected_ubuntu_workers=ubuntu_workers,
+                        expected_tuning_workers=int(profile.dask_mac_tuning_workers or 0)
+                        + int(profile.dask_ubuntu_tuning_workers or 0),
+                        timeout=settings.dask_timeout_seconds,
+                        expected_manifest=repository_source_manifest(),
+                    )
+                    resolved_device = "cpu"
+                else:
+                    expected_gpu_name = self.configuration.resolved["execution"][
+                        "final_acceptance"
+                    ]["gpu_name"]
+                    resolved_device = "cuda"
+                    expected_commit = subprocess.run(
+                        ["git", "rev-parse", "HEAD"],
+                        cwd=self.root,
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                    ).stdout.strip()
+                    cluster = validate_cluster(
+                        dask_client,
+                        expected_workers=settings.dask_expected_workers,
+                        timeout=settings.dask_timeout_seconds,
+                        expected_commit=expected_commit,
+                        expected_configuration_hash=self.configuration.scientific_hash,
+                        expected_gift_eval_revision=self.configuration.resolved["evaluation"]["gift_eval"]["code_revision"],
+                        expected_chronos_revision=self.config["models"]["chronos_2"]["revision"],
+                        expected_chronos_version=self.config["models"]["chronos_2"]["chronos_forecasting"],
+                        chronos_repository=self.config["models"]["chronos_2"]["repository"],
+                        chronos_environment=self.configuration.execution_paths["chronos_environment"],
+                        gift_eval_source_directory=self.configuration.resolved["evaluation"]["gift_eval"]["source_directory"],
+                        require_gpu=process == 4,
+                        expected_gpu_name=expected_gpu_name,
+                        expected_gpu_workers=settings.dask_expected_gpu_workers,
+                    )
             except BaseException:
                 dask_client.close()
                 raise
@@ -1715,6 +1761,25 @@ class ExperimentCoordinator:
         Chronos OOM batches, inverse-transforms outputs, and transactionally persists
         original-scale forecast arrays, provenance, hashes, and task state.
         """
+        if self.configuration.seasonal_period_tuning is not None:
+            from .seasonal_period_tuning import (
+                run_distributed_tuned_forecasts,
+                run_tuned_forecasts,
+            )
+
+            if dask_client is None:
+                run_tuned_forecasts(self, experiment_id, rows, attempts)
+            else:
+                run_distributed_tuned_forecasts(
+                    self,
+                    experiment_id,
+                    rows,
+                    attempts,
+                    dask_client,
+                    settings,
+                    profile,
+                )
+            return
         prepared = []
         for task_id, instance_id, variant_id, model in rows:
             values, horizon, benchmark_metadata = self.connection.execute(
@@ -2165,11 +2230,15 @@ class ExperimentCoordinator:
         combination_rows = [row for row in rows if row[3] == "equal_weight"]
         jobs = []
         for task_id, instance_id, variant_id, _ in combination_rows:
+            model_names = tuple(self.config["models"])
+            placeholders = ", ".join("?" for _ in model_names)
             components = self.connection.execute(
                 """SELECT candidate, mean, median, quantiles, forecast_id FROM forecasts
                 WHERE experiment_id=? AND variant_id=? AND forecast_instance_id=?
-                AND candidate IN ('auto_arima', 'chronos_2') ORDER BY candidate""",
-                [experiment_id, variant_id, instance_id],
+                AND candidate IN ("""
+                + placeholders
+                + ") ORDER BY candidate",
+                [experiment_id, variant_id, instance_id, *model_names],
             ).fetchall()
             if len(components) != 2:
                 raise RuntimeError("equal-weight combination requires both model forecasts")
@@ -2177,8 +2246,9 @@ class ExperimentCoordinator:
             jobs.append(
                 {
                     "id": task_id,
-                    "left": mapped["auto_arima"],
-                    "right": mapped["chronos_2"],
+                    "left": mapped[model_names[0]],
+                    "right": mapped[model_names[1]],
+                    "model_names": model_names,
                     "weights": self.config["combination"]["weights"],
                 }
             )
@@ -2244,7 +2314,11 @@ class ExperimentCoordinator:
                         ),
                     ],
                 )
-                for name, component in (("auto_arima", components["left"]), ("chronos_2", components["right"])):
+                for name, component in zip(
+                    components["model_names"],
+                    (components["left"], components["right"]),
+                    strict=True,
+                ):
                     self.connection.execute(
                         "INSERT INTO forecast_components VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING",
                         [
@@ -2798,7 +2872,11 @@ def get_forecast_mean(
                 [dataset_id, str(series_id), forecast_id],
             ).fetchone()
         else:
-            candidates = {"auto_arima_forec": "auto_arima", "chronos_2": "chronos_2"}
+            candidates = {
+                "auto_arima_forec": "auto_arima",
+                "ets_forec": "ets",
+                "chronos_2": "chronos_2",
+            }
             candidate = candidates.get(forecast_id, forecast_id)
             if preprocessing_mode is None:
                 configuration_row = connection.execute(

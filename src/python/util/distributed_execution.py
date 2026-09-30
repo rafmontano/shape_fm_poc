@@ -12,15 +12,19 @@
 from __future__ import annotations
 
 import atexit
+import fcntl
+import hashlib
 import json
 import os
 import platform
+import signal
 import socket
 import subprocess
 import threading
 import time
 import uuid
 from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +43,15 @@ EXPECTED_DASK_VERSION = "2026.8.0"
 ROOT = Path(__file__).resolve().parents[3]
 # Code constant: Dask protocol label for one logical Chronos GPU slot.
 CHRONOS_GPU_RESOURCE = "CHRONOS_GPU_SLOT"
+# Code constant: one resource token admits a memory-intensive seasonal R task.
+TUNING_R_RESOURCE = "TUNING_R_SLOT"
+# Code constant: large AutoARIMA work is admitted only on Ubuntu workers.
+AUTOARIMA_R_RESOURCE = "AUTOARIMA_R_SLOT"
+# Code constants: deterministic host-placement resources for recovery evidence.
+MAC_TUNING_R_RESOURCE = "MAC_TUNING_R_SLOT"
+UBUNTU_TUNING_R_RESOURCE = "UBUNTU_TUNING_R_SLOT"
+# Machine-local coordination directory for cross-worker R-memory reservations.
+TUNING_RESERVATION_DIRECTORY = Path("/tmp/shapefm-r-tuning-reservations")
 
 
 def _worker_provenance(
@@ -100,25 +113,475 @@ def worker_resource_snapshot(dask_worker: Any = None) -> dict[str, Any]:
 
 
 def _run_r(
-    payload: dict[str, Any], script: str, timeout: float, threads: int
+    payload: dict[str, Any],
+    script: str,
+    timeout: float,
+    threads: int,
+    memory_monitor: "TuningMemoryMonitor | None" = None,
 ) -> dict[str, Any]:
-    """Purpose: Execute a repository R JSON bridge. Inputs: ``payload`` is JSON-serializable request data, ``script`` is a repository-relative R script path, ``timeout`` is seconds, and ``threads`` is the positive BLAS/OpenMP thread limit. Outputs: The decoded JSON object from stdout; starts and waits for an ``Rscript`` subprocess with repository cwd and thread-limit environment variables."""
-    completed = subprocess.run(
-        ["Rscript", str(ROOT / script)],
+    """Execute a bounded R bridge, optionally under continuous memory safety.
+
+    The monitor owns only this process group. A sustained host-floor or swap
+    breach terminates that group and raises a retryable infrastructure error;
+    it is never converted into a scientific model fallback.
+    """
+    command = ["Rscript", str(ROOT / script)]
+    environment = {
+        **os.environ,
+        "OMP_NUM_THREADS": str(threads),
+        "OPENBLAS_NUM_THREADS": str(threads),
+        "RENV_CONFIG_SYNCHRONIZED_CHECK": "false",
+    }
+    if memory_monitor is None:
+        completed = subprocess.run(
+            command,
+            cwd=ROOT,
+            input=json.dumps(payload),
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=environment,
+        )
+        return json.loads(completed.stdout)
+    memory_monitor.raise_if_unsafe()
+    process = subprocess.Popen(
+        command,
         cwd=ROOT,
-        input=json.dumps(payload),
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=environment,
+        start_new_session=True,
+    )
+    memory_monitor.register_process(process)
+    try:
+        stdout, stderr = process.communicate(input=json.dumps(payload), timeout=timeout)
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGTERM)
+        try:
+            process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait(timeout=2)
+        raise
+    finally:
+        memory_monitor.clear_process(process)
+    memory_monitor.raise_if_unsafe()
+    if process.returncode:
+        raise subprocess.CalledProcessError(
+            process.returncode, command, output=stdout, stderr=stderr
+        )
+    return json.loads(stdout)
+
+
+def repository_source_manifest() -> dict[str, str]:
+    """Return SHA-256 identities for every nonignored repository source file.
+
+    The manifest deliberately includes tracked and relevant untracked files so a
+    reviewed dirty Mac tree can be synchronized and verified without a temporary
+    commit. Git-ignored environments, databases, results, caches, and secrets are
+    excluded by ``git ls-files --exclude-standard``.
+    """
+    listed = subprocess.run(
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+        cwd=ROOT,
         check=True,
         capture_output=True,
-        text=True,
-        timeout=timeout,
-        env={
-            **os.environ,
-            "OMP_NUM_THREADS": str(threads),
-            "OPENBLAS_NUM_THREADS": str(threads),
-            "RENV_CONFIG_SYNCHRONIZED_CHECK": "false",
+    ).stdout.split(b"\0")
+    runtime_prefixes = ("src/python/", "src/r/")
+    runtime_files = {
+        "config/execution_profiles.json",
+        "config/experiments/poc2_m4_daily_100_period_tuning.json",
+        "pyproject.toml",
+        "uv.lock",
+        "renv.lock",
+    }
+    manifest: dict[str, str] = {}
+    for raw_path in listed:
+        if not raw_path:
+            continue
+        relative = raw_path.decode("utf-8")
+        if relative not in runtime_files and not relative.startswith(runtime_prefixes):
+            continue
+        path = ROOT / relative
+        if path.is_file():
+            manifest[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return manifest
+
+
+def source_manifest_fingerprint(manifest: dict[str, str]) -> str:
+    """Return one deterministic digest for a path-to-content-digest manifest."""
+    return hashlib.sha256(
+        json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def tuning_worker_preflight(
+    expected_manifest: dict[str, str], dask_worker: Any = None
+) -> dict[str, Any]:
+    """Probe only dependencies used by AutoARIMA/ETS seasonal tuning.
+
+    Unlike the general Gate 4 preflight, this check does not inspect Chronos,
+    model caches, CUDA, GIFT-Eval, or DuckDB. It validates the exact synchronized
+    source files plus pinned Python/Dask and R packages loaded by CPU workers.
+    """
+    local_manifest = {
+        relative: hashlib.sha256((ROOT / relative).read_bytes()).hexdigest()
+        if (ROOT / relative).is_file()
+        else "missing"
+        for relative in expected_manifest
+    }
+    r_packages = json.loads(
+        _command(
+            "Rscript",
+            "-e",
+            'cat(jsonlite::toJSON(list(R=as.character(getRversion()), '
+            'forecast=as.character(packageVersion("forecast")), '
+            'jsonlite=as.character(packageVersion("jsonlite")), '
+            'tsfeatures=as.character(packageVersion("tsfeatures"))), auto_unbox=TRUE))',
+        ).splitlines()[-1]
+    )
+    return {
+        **_worker_provenance(worker=dask_worker),
+        "source_manifest": source_manifest_fingerprint(local_manifest),
+        "source_mismatches": sorted(
+            relative
+            for relative, digest in expected_manifest.items()
+            if local_manifest.get(relative) != digest
+        ),
+        "python_version": platform.python_version(),
+        "dask_version": dask.__version__,
+        "distributed_version": distributed.__version__,
+        "r_packages": r_packages,
+        "memory": worker_resource_snapshot(dask_worker),
+    }
+
+
+def validate_tuning_cluster(
+    client: Client,
+    *,
+    expected_workers: int,
+    expected_mac_workers: int,
+    expected_ubuntu_workers: int,
+    expected_tuning_workers: int,
+    timeout: float,
+    expected_manifest: dict[str, str],
+) -> dict[str, dict[str, Any]]:
+    """Require the approved CPU topology, exact source, and tuning dependencies."""
+    client.wait_for_workers(expected_workers, timeout=timeout)
+    reports = client.run(tuning_worker_preflight, expected_manifest)
+    failures: list[str] = []
+    local_hostname = socket.gethostname()
+    mac_workers = sum(report["hostname"] == local_hostname for report in reports.values())
+    ubuntu_workers = len(reports) - mac_workers
+    tuning_workers = sum(
+        report["resources"].get(TUNING_R_RESOURCE, 0) == 1
+        for report in reports.values()
+    )
+    expected_topology = (
+        expected_workers,
+        expected_mac_workers,
+        expected_ubuntu_workers,
+        expected_tuning_workers,
+    )
+    actual_topology = (len(reports), mac_workers, ubuntu_workers, tuning_workers)
+    if actual_topology != expected_topology:
+        failures.append(
+            "worker topology "
+            f"total/mac/ubuntu/tuning={actual_topology}, expected {expected_topology}"
+        )
+    expected_source = source_manifest_fingerprint(expected_manifest)
+    expected_r = {
+        "R": "4.6.1",
+        "forecast": "8.24.0",
+        "jsonlite": "2.0.0",
+        "tsfeatures": "1.1.1",
+    }
+    for address, report in reports.items():
+        if report["source_manifest"] != expected_source or report["source_mismatches"]:
+            failures.append(
+                f"{address}: stale source files {report['source_mismatches'][:10]}"
+            )
+        for field, value in {
+            "python_version": "3.12.14",
+            "dask_version": EXPECTED_DASK_VERSION,
+            "distributed_version": EXPECTED_DASK_VERSION,
+        }.items():
+            if report.get(field) != value:
+                failures.append(
+                    f"{address}: {field}={report.get(field)!r}, expected {value!r}"
+                )
+        for package, version in expected_r.items():
+            if report["r_packages"].get(package) != version:
+                failures.append(
+                    f"{address}: R {package}={report['r_packages'].get(package)!r}, expected {version!r}"
+                )
+        if report["resources"].get("CPU", 0) != 1:
+            failures.append(f"{address}: worker does not advertise exactly one CPU")
+        is_mac = report["hostname"] == local_hostname
+        if report["resources"].get(TUNING_R_RESOURCE, 0) != 1:
+            failures.append(f"{address}: worker is not eligible for tuning work")
+        autoarima_slots = report["resources"].get(AUTOARIMA_R_RESOURCE, 0)
+        if is_mac and autoarima_slots:
+            failures.append(f"{address}: Mac worker incorrectly advertises AutoARIMA capacity")
+        if not is_mac and autoarima_slots != 1:
+            failures.append(f"{address}: Ubuntu worker lacks AutoARIMA capacity")
+    if failures:
+        raise RuntimeError("seasonal tuning Dask preflight failed:\n" + "\n".join(failures))
+    return reports
+
+
+@contextmanager
+def tuning_memory_reservation(
+    minimum_available_gib: float,
+    fit_budget_gib: float,
+    timeout_seconds: float = 600.0,
+    poll_interval_seconds: float = 0.5,
+    breach_grace_seconds: float = 5.0,
+    swap_growth_limit_gib: float = 0.25,
+) -> Iterator["TuningMemoryMonitor"]:
+    """Reserve host capacity before launching an R child process.
+
+    A filesystem lock serializes admission across separate Dask worker processes.
+    Live reservations are charged against currently available memory, preventing
+    simultaneous workers from all admitting against the same pre-launch sample.
+    """
+    import psutil
+
+    TUNING_RESERVATION_DIRECTORY.mkdir(mode=0o700, parents=True, exist_ok=True)
+    lock_path = TUNING_RESERVATION_DIRECTORY / "admission.lock"
+    reservation_path = TUNING_RESERVATION_DIRECTORY / f"{os.getpid()}-{uuid.uuid4().hex}.json"
+    deadline = time.monotonic() + timeout_seconds
+    waited = 0.0
+    while True:
+        with lock_path.open("a+", encoding="utf-8") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            reserved = 0.0
+            for path in TUNING_RESERVATION_DIRECTORY.glob("*.json"):
+                try:
+                    record = json.loads(path.read_text(encoding="utf-8"))
+                    os.kill(int(record["pid"]), 0)
+                    reserved += float(record["fit_budget_gib"])
+                except (OSError, ValueError, KeyError, json.JSONDecodeError):
+                    path.unlink(missing_ok=True)
+            available = psutil.virtual_memory().available / 1024**3
+            if available - reserved >= minimum_available_gib + fit_budget_gib:
+                reservation_path.write_text(
+                    json.dumps(
+                        {
+                            "pid": os.getpid(),
+                            "fit_budget_gib": fit_budget_gib,
+                            "hostname": socket.gethostname(),
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+                break
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+        if time.monotonic() >= deadline:
+            raise ResourceSafetyInterruption(
+                "R tuning memory admission timed out: "
+                f"{available:.2f} GiB available, {reserved:.2f} GiB reserved, "
+                f"{minimum_available_gib:.2f} GiB floor and {fit_budget_gib:.2f} GiB fit budget"
+            )
+        time.sleep(poll_interval_seconds)
+        waited += poll_interval_seconds
+    monitor = TuningMemoryMonitor(
+        minimum_available_gib=minimum_available_gib,
+        poll_interval_seconds=poll_interval_seconds,
+        breach_grace_seconds=breach_grace_seconds,
+        swap_growth_limit_gib=swap_growth_limit_gib,
+        admission={
+            "hostname": socket.gethostname(),
+            "available_gib_at_admission": available,
+            "reserved_gib_before_admission": reserved,
+            "fit_budget_gib": fit_budget_gib,
+            "minimum_available_gib": minimum_available_gib,
+            "throttled_seconds": waited,
         },
     )
-    return json.loads(completed.stdout)
+    monitor.start()
+    try:
+        yield monitor
+    except BaseException:
+        raise
+    else:
+        # Close the sampling race at context exit. A final host sample records
+        # pressure that began after the last child response; only an already
+        # sustained breach raises here, preserving the configured grace period.
+        monitor.sample_once()
+        monitor.raise_if_unsafe()
+    finally:
+        monitor.stop()
+        reservation_path.unlink(missing_ok=True)
+
+
+class ResourceSafetyInterruption(RuntimeError):
+    """Identify a retryable infrastructure interruption caused by host pressure."""
+
+
+class TuningMemoryMonitor:
+    """Continuously protect a host floor and only terminate its owned R process.
+
+    Inputs are profile-owned GiB thresholds and timing controls. The monitor
+    records host/child extrema for provenance and never inspects or kills an
+    unrelated process.
+    """
+
+    def __init__(
+        self,
+        *,
+        minimum_available_gib: float,
+        poll_interval_seconds: float,
+        breach_grace_seconds: float,
+        swap_growth_limit_gib: float,
+        admission: dict[str, Any] | None = None,
+        probe: Callable[[], dict[str, float]] | None = None,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        """Store thresholds and injectable probes without starting monitoring."""
+        self.minimum_available_gib = minimum_available_gib
+        self.poll_interval_seconds = poll_interval_seconds
+        self.breach_grace_seconds = breach_grace_seconds
+        self.swap_growth_limit_gib = swap_growth_limit_gib
+        self.admission = dict(admission or {})
+        self._probe = probe or self._host_probe
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._process: subprocess.Popen[str] | None = None
+        initial = self._probe()
+        self.initial_swap_used_gib = initial["swap_used_gib"]
+        self.min_available_gib = initial["available_gib"]
+        self.max_swap_used_gib = initial["swap_used_gib"]
+        self.peak_owned_process_tree_rss_gib = 0.0
+        self._breach_started: float | None = None
+        self._unsafe_reason: str | None = None
+        self.safety_responses = 0
+
+    @staticmethod
+    def _host_probe() -> dict[str, float]:
+        """Sample current host available RAM and used swap in GiB."""
+        import psutil
+
+        return {
+            "available_gib": psutil.virtual_memory().available / 1024**3,
+            "swap_used_gib": psutil.swap_memory().used / 1024**3,
+        }
+
+    def register_process(self, process: subprocess.Popen[str]) -> None:
+        """Register the one R process group this monitor may terminate."""
+        with self._lock:
+            if self._process is not None:
+                raise RuntimeError("memory monitor already owns an R process")
+            self._process = process
+
+    def clear_process(self, process: subprocess.Popen[str]) -> None:
+        """Forget a completed R process without affecting another process."""
+        with self._lock:
+            if self._process is process:
+                self._process = None
+
+    def _owned_rss_gib(self, process: subprocess.Popen[str] | None) -> float:
+        """Return RSS for the registered R process tree, tolerating process exit."""
+        if process is None:
+            return 0.0
+        import psutil
+
+        try:
+            root = psutil.Process(process.pid)
+            return sum(
+                item.memory_info().rss for item in [root, *root.children(recursive=True)]
+            ) / 1024**3
+        except (psutil.Error, OSError):
+            return 0.0
+
+    def sample_once(self) -> None:
+        """Sample safety state and trigger bounded owned-process cancellation."""
+        now = self._clock()
+        snapshot = self._probe()
+        with self._lock:
+            process = self._process
+        available = snapshot["available_gib"]
+        swap_used = snapshot["swap_used_gib"]
+        self.min_available_gib = min(self.min_available_gib, available)
+        self.max_swap_used_gib = max(self.max_swap_used_gib, swap_used)
+        self.peak_owned_process_tree_rss_gib = max(
+            self.peak_owned_process_tree_rss_gib, self._owned_rss_gib(process)
+        )
+        reasons = []
+        if available < self.minimum_available_gib:
+            reasons.append(
+                f"available memory {available:.2f} GiB below {self.minimum_available_gib:.2f} GiB floor"
+            )
+        if swap_used - self.initial_swap_used_gib > self.swap_growth_limit_gib:
+            reasons.append(
+                f"swap grew {swap_used - self.initial_swap_used_gib:.2f} GiB"
+            )
+        if not reasons:
+            self._breach_started = None
+            return
+        if self._breach_started is None:
+            self._breach_started = now
+            return
+        if now - self._breach_started < self.breach_grace_seconds or self._unsafe_reason:
+            return
+        self._unsafe_reason = "; ".join(reasons)
+        self.safety_responses += 1
+        if process is not None and process.poll() is None:
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+                process.wait(timeout=2)
+            except (ProcessLookupError, subprocess.TimeoutExpired):
+                if process.poll() is None:
+                    os.killpg(process.pid, signal.SIGKILL)
+
+    def _run(self) -> None:
+        """Poll until stopped, retaining the first sustained unsafe condition."""
+        while not self._stop.wait(self.poll_interval_seconds):
+            self.sample_once()
+
+    def start(self) -> None:
+        """Start one daemon monitor thread; repeated starts are rejected."""
+        if self._thread is not None:
+            raise RuntimeError("memory monitor is already started")
+        self._thread = threading.Thread(
+            target=self._run, name="shapefm-r-memory-monitor", daemon=True
+        )
+        self._thread.start()
+
+    def stop(self) -> None:
+        """Stop and join the monitor without raising over an active exception."""
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=max(2.0, self.poll_interval_seconds * 2))
+            self._thread = None
+
+    def raise_if_unsafe(self) -> None:
+        """Raise a retryable resource interruption after a sustained breach."""
+        if self._unsafe_reason:
+            raise ResourceSafetyInterruption(
+                "R tuning resource safety interruption: " + self._unsafe_reason
+            )
+
+    def evidence(self) -> dict[str, Any]:
+        """Return admission, ongoing telemetry extrema, and safety-response count."""
+        return {
+            **self.admission,
+            "memory_poll_interval_seconds": self.poll_interval_seconds,
+            "memory_breach_grace_seconds": self.breach_grace_seconds,
+            "swap_growth_limit_gib": self.swap_growth_limit_gib,
+            "minimum_available_gib_during_fit": self.min_available_gib,
+            "initial_swap_used_gib": self.initial_swap_used_gib,
+            "maximum_swap_used_gib": self.max_swap_used_gib,
+            "peak_owned_process_tree_rss_gib": self.peak_owned_process_tree_rss_gib,
+            "safety_responses": self.safety_responses,
+            "unsafe_reason": self._unsafe_reason,
+        }
 
 
 def clean_batch(

@@ -30,7 +30,7 @@ from .configuration import (
 
 
 # Code constant: latest DuckDB migration version implemented by this source revision.
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 # Bootstrap/interface default: legacy library database path; an explicit path from the
 # coordinator overrides it, and the path does not define scientific identity.
 DEFAULT_DATABASE = Path("data/shapefm.duckdb")
@@ -388,6 +388,83 @@ CREATE TABLE IF NOT EXISTS reference_forecasts (
     UNIQUE (dataset_id, series_id, forecast_id)
 );
 
+CREATE TABLE IF NOT EXISTS seasonal_tuning_folds (
+    fold_id VARCHAR PRIMARY KEY,
+    experiment_id VARCHAR NOT NULL,
+    variant_id VARCHAR NOT NULL,
+    forecast_instance_id VARCHAR NOT NULL,
+    fold_number INTEGER NOT NULL CHECK (fold_number BETWEEN 1 AND 3),
+    train_start INTEGER NOT NULL,
+    train_end INTEGER NOT NULL,
+    validation_start INTEGER NOT NULL,
+    validation_end INTEGER NOT NULL,
+    horizon INTEGER NOT NULL,
+    raw_training_hash VARCHAR NOT NULL,
+    prepared_training_hash VARCHAR NOT NULL,
+    prepared_training DOUBLE[] NOT NULL,
+    preprocessing_id VARCHAR NOT NULL,
+    transformation_method VARCHAR NOT NULL,
+    preparation_metadata JSON NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
+    UNIQUE (experiment_id, variant_id, forecast_instance_id, fold_number)
+);
+
+CREATE TABLE IF NOT EXISTS seasonal_period_candidates (
+    candidate_id VARCHAR PRIMARY KEY,
+    fold_id VARCHAR NOT NULL,
+    model VARCHAR NOT NULL CHECK (model IN ('auto_arima', 'ets')),
+    baseline_period INTEGER NOT NULL CHECK (baseline_period > 0),
+    estimated_period INTEGER,
+    seasonal_strength DOUBLE,
+    eligible BOOLEAN NOT NULL,
+    reason VARCHAR,
+    package_versions JSON NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
+    UNIQUE (fold_id, model)
+);
+
+CREATE TABLE IF NOT EXISTS seasonal_tuning_validations (
+    validation_id VARCHAR PRIMARY KEY,
+    candidate_id VARCHAR NOT NULL,
+    model VARCHAR NOT NULL CHECK (model IN ('auto_arima', 'ets')),
+    policy VARCHAR NOT NULL CHECK (policy IN ('baseline', 'estimated')),
+    requested_period INTEGER,
+    executed_period INTEGER NOT NULL CHECK (executed_period > 0),
+    prediction DOUBLE[] NOT NULL,
+    validation_actual DOUBLE[] NOT NULL,
+    mae DOUBLE,
+    valid_label_count INTEGER NOT NULL CHECK (valid_label_count >= 0),
+    requested_method_id VARCHAR NOT NULL,
+    executed_method_id VARCHAR NOT NULL,
+    fallback_used BOOLEAN NOT NULL,
+    status VARCHAR NOT NULL CHECK (status IN ('success', 'substituted', 'fallback', 'all_missing', 'failed')),
+    reason VARCHAR,
+    execution_metadata JSON NOT NULL,
+    content_hash VARCHAR NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
+    UNIQUE (candidate_id, policy)
+);
+
+CREATE TABLE IF NOT EXISTS seasonal_period_selections (
+    selection_id VARCHAR PRIMARY KEY,
+    experiment_id VARCHAR NOT NULL,
+    variant_id VARCHAR NOT NULL,
+    forecast_instance_id VARCHAR NOT NULL,
+    model VARCHAR NOT NULL CHECK (model IN ('auto_arima', 'ets')),
+    selected_policy VARCHAR NOT NULL CHECK (selected_policy IN ('baseline', 'estimated')),
+    baseline_mean_mae DOUBLE,
+    estimated_mean_mae DOUBLE,
+    status VARCHAR NOT NULL CHECK (status IN ('selected', 'skipped', 'inconclusive')),
+    reason VARCHAR NOT NULL,
+    baseline_period INTEGER NOT NULL CHECK (baseline_period > 0),
+    final_estimated_period INTEGER,
+    final_period INTEGER NOT NULL CHECK (final_period > 0),
+    final_substitution_reason VARCHAR,
+    tuning_configuration JSON NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
+    UNIQUE (experiment_id, variant_id, forecast_instance_id, model)
+);
+
 CREATE TABLE IF NOT EXISTS forecast_components (
     forecast_id VARCHAR NOT NULL,
     component_forecast_id VARCHAR NOT NULL,
@@ -587,7 +664,12 @@ def migrate_database(path: Path = DEFAULT_DATABASE) -> Path:
         connection.execute(
             "INSERT INTO schema_versions (version, description) VALUES (?, ?) "
             "ON CONFLICT (version) DO NOTHING",
-            [SCHEMA_VERSION, "Gate 1 missingness and Gate 2 preprocessing provenance"],
+            [7, "Gate 1 missingness and Gate 2 preprocessing provenance"],
+        )
+        connection.execute(
+            "INSERT INTO schema_versions (version, description) VALUES (?, ?) "
+            "ON CONFLICT (version) DO NOTHING",
+            [SCHEMA_VERSION, "Gate 4 seasonal-period tuning evidence"],
         )
         connection.execute("COMMIT")
     except BaseException:

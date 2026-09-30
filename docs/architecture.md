@@ -12,6 +12,12 @@ The approved minimal POC2 approach is described in
 existing adapters and stored configuration; implementation is tracked separately
 from the long-term research vision.
 
+[Gate 4 seasonal period tuning](poc2-seasonal-period-tuning.md) is an approved,
+opt-in configuration-v3 extension. It compares baseline and estimated-period
+policies per series/model using historical validation, while keeping
+preprocessing and benchmark evaluation periods independent. Its initial
+acceptance is deliberately restricted to 100 M4 Daily series, AutoARIMA and ETS.
+
 ## Research architecture
 
 ![ShapeFM research architecture](images/shapefm_research_architecture.png)
@@ -81,9 +87,22 @@ and task completion is committed atomically by the coordinator. Failed or
 interrupted work remains retryable; completed work is skipped on restart.
 
 The Dask scheduler is transient and non-authoritative. The Mac hosts the
-coordinator and scheduler. The approved Objective 1 acceptance topology has one
-Mac CPU worker and one Ubuntu GPU worker; the scheduler is not a worker.
-Chronos work requires `CHRONOS_GPU_SLOT=1` on the one physical Ubuntu GPU.
+coordinator and scheduler. The [approved execution policy](execution-policy.md)
+governs worker capacity, memory-safe admission and availability exceptions.
+Objective 1's one-CPU/one-GPU topology is a historical limited acceptance case,
+not the heavy-test default. Chronos work uses `CHRONOS_GPU_SLOT` on the physical
+Ubuntu GPU; an R-only Gate 4 workload must not require that capability.
+
+All heavy paths, including tuning, must consume the same resolved execution
+profile and verify code, dependencies and actual workers before dispatch.
+No model-specific serial loop may silently bypass the scheduler. The
+[approved safeguard follow-up](amp-poc2-execution-safeguards-instructions.md)
+closes the reviewed optional-profile bypass, hardcoded Mac allocation/concurrency
+and admission-only memory checks. The versioned profile now owns 8 Mac CPU,
+15 Ubuntu CPU and 15 logical Ubuntu GPU slots; R-only tuning launches 23 CPU
+workers and no GPU workers. Memory-aware admission and continuous owned-process
+monitoring preserve the 3 GiB Mac and 16 GiB Ubuntu floors. The historical
+800-forecast recovery remains separate evidence and was not repeated.
 
 ## Schema evolution
 
@@ -196,6 +215,40 @@ database.
 processes, effective operational configuration, code/host identity, status,
 summary, and failure. Scientific task/result tables retain their existing
 stable identities and transaction boundaries.
+
+### Optional Gate 4 period tuning
+
+Configuration version 3 adds the approved `seasonal_period_tuning` policy and
+selects AutoARIMA plus ETS for a bounded R-only experiment. Versions 1 and 2
+remain untuned and preserve their existing task and result interpretation.
+
+For each series, preparation variant and model, Gate 4 creates three expanding
+historical folds of horizon `h`, with origins spaced by `h`. Every fold starts
+from raw history strictly before the official test. Existing Gate 2 cleaning
+and Gate 3 transformation are refitted on that fold's training slice;
+validation observations never enter preparation, period estimation or fitting.
+Forecasts are inverse-transformed and scored against unmodified finite
+validation labels using MAE. Missing labels are excluded rather than imputed.
+
+The baseline is the experiment's resolved R period. The alternative policy
+calls `forecast::findfrequency()` on the prepared fold input. `tsfeatures`
+seasonal strength is stored as diagnostic evidence, not used as a selection
+cutoff. A candidate requires three complete cycles and model support. Ties,
+incomplete comparisons, all-missing windows, requested-model fallbacks and
+failures retain baseline. If estimated wins, it is resolved and checked again
+on the complete prepared history before the normal final forecast adapter runs.
+
+`seasonal_tuning_folds`, `seasonal_period_candidates`,
+`seasonal_tuning_validations`, and `seasonal_period_selections` keep the
+research trail inspectable. Validation predictions never enter the normal
+`forecasts` table, official forecast queries, or Gate 6. The selected final
+AutoARIMA/ETS result uses the existing probabilistic forecast contract and
+links to its selection through execution metadata.
+
+This procedure searches forecasting policies for a series and model. It does
+not claim to discover an immutable true seasonal period. The fixed
+preprocessing period and independent official evaluation seasonality are not
+tuned.
 
 The complete field contract and evolution procedure are documented in
 [`experiment-configuration.md`](experiment-configuration.md). The exhaustive

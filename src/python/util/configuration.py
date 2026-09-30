@@ -35,9 +35,9 @@ class ExperimentConfigurationError(ValueError):
     """
 
 
-# Code constant: version 1 preserves the historical coupled period-7 policy;
-# version 2 resolves the R period independently from the pinned benchmark runtime.
-SUPPORTED_CONFIGURATION_VERSIONS = {1, 2}
+# Code constant: v1 preserves coupled period-7, v2 resolves the R period
+# independently, and v3 opts into bounded AutoARIMA/ETS period-policy tuning.
+SUPPORTED_CONFIGURATION_VERSIONS = {1, 2, 3}
 # Code constant: repository protocol mapping shared by JSON, DuckDB, CLI, and status output.
 PROCESS_NAMES = {
     1: "import",
@@ -173,6 +173,25 @@ class ExperimentConfiguration:
             "num_cores": int(self.execution["thread_limits"]["r"]),
         })
         return settings
+
+    def r_model_settings(self, model: str) -> dict[str, Any]:
+        """Return the registered R method settings for one configured model.
+
+        Version 3 uses this common boundary for AutoARIMA and ETS. Earlier
+        contracts retain the exact AutoARIMA settings assembled above.
+        """
+        if model == "auto_arima":
+            return self.auto_arima_settings
+        if self.version >= 3 and model == "ets":
+            return deepcopy(self.resolved["models"]["ets"]["settings"])
+        raise ExperimentConfigurationError(f"unsupported R forecast model: {model}")
+
+    @property
+    def seasonal_period_tuning(self) -> dict[str, Any] | None:
+        """Return the opt-in Gate 4 tuning policy, absent for v1/v2 experiments."""
+        if self.version < 3:
+            return None
+        return deepcopy(self.resolved["pipeline"]["seasonal_period_tuning"])
 
     @property
     def evaluation_options(self) -> dict[str, Any]:
@@ -391,7 +410,7 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
         raise ExperimentConfigurationError(
             "pipeline.r_period_override belongs to configuration version 2"
         )
-    if version == 2:
+    if version >= 2:
         _require_keys(pipeline, {"r_period_override"}, "pipeline")
         override = pipeline["r_period_override"]
         if override is not None and (
@@ -418,15 +437,56 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
         raise ExperimentConfigurationError("unsupported transformation configuration")
     if pipeline["adjustment"] != "identity":
         raise ExperimentConfigurationError("unsupported adjustment method")
-    if pipeline["combination"] != {
+    expected_combination = {
         "method": "equal_weight",
-        "weights": {"auto_arima": 0.5, "chronos_2": 0.5},
-    }:
+        "weights": (
+            {"auto_arima": 0.5, "ets": 0.5}
+            if version >= 3
+            else {"auto_arima": 0.5, "chronos_2": 0.5}
+        ),
+    }
+    if pipeline["combination"] != expected_combination:
         raise ExperimentConfigurationError("unsupported forecast combination")
 
+    if version >= 3:
+        _require_keys(pipeline, {"seasonal_period_tuning"}, "pipeline")
+        tuning = _require_mapping(
+            pipeline["seasonal_period_tuning"], "pipeline.seasonal_period_tuning"
+        )
+        expected_tuning = {
+            "enabled": True,
+            "validation_windows": 3,
+            "horizon": "dataset_horizon",
+            "origin_spacing": "dataset_horizon",
+            "training": "expanding",
+            "minimum_cycles": 3,
+            "selection_metric": "mae",
+            "tie_policy": "retain_baseline",
+            "inconclusive_policy": "retain_baseline",
+            "candidate_estimator": "forecast::findfrequency",
+            "diagnostic": "tsfeatures::seasonal_strength",
+        }
+        if tuning != expected_tuning:
+            raise ExperimentConfigurationError(
+                "seasonal_period_tuning must equal the approved three-window MAE policy"
+            )
+    elif "seasonal_period_tuning" in pipeline:
+        raise ExperimentConfigurationError(
+            "pipeline.seasonal_period_tuning belongs to configuration version 3"
+        )
+
     models = _require_mapping(value["models"], "models")
-    if set(models) != {"auto_arima", "chronos_2"}:
-        raise ExperimentConfigurationError("models must contain AutoARIMA and Chronos-2")
+    expected_models = (
+        {"auto_arima", "ets"}
+        if version >= 3
+        else {"auto_arima", "chronos_2"}
+    )
+    if set(models) != expected_models:
+        raise ExperimentConfigurationError(
+            "models must contain AutoARIMA and ETS for v3 tuning"
+            if version >= 3
+            else "models must contain AutoARIMA and Chronos-2"
+        )
     auto = _require_mapping(models["auto_arima"], "models.auto_arima")
     _require_keys(auto, {"package", "settings"}, "models.auto_arima")
     required_auto = {
@@ -438,25 +498,30 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
     }
     if auto["package"] != "forecast" or auto["settings"] != required_auto:
         raise ExperimentConfigurationError("unsupported AutoARIMA settings")
-    chronos = _require_mapping(models["chronos_2"], "models.chronos_2")
-    _require_keys(
-        chronos,
-        {"repository", "revision", "chronos_forecasting", "dtype", "quantile_levels", "predict_batches_jointly", "cross_learning"},
-        "models.chronos_2",
-    )
-    quantiles = chronos["quantile_levels"]
-    if quantiles != [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]:
-        raise ExperimentConfigurationError("Chronos quantile levels must equal 0.1 through 0.9")
-    if (
-        chronos["repository"] != "amazon/chronos-2"
-        or not isinstance(chronos["revision"], str)
-        or len(chronos["revision"]) != 40
-        or chronos["chronos_forecasting"] != "2.2.2"
-        or chronos["dtype"] != "float32"
-        or chronos["predict_batches_jointly"] is not False
-        or chronos["cross_learning"] is not False
-    ):
-        raise ExperimentConfigurationError("unsupported Chronos-2 settings")
+    if version >= 3:
+        ets = _require_mapping(models["ets"], "models.ets")
+        if ets != {"package": "forecast", "settings": {"opt_crit": "mae"}}:
+            raise ExperimentConfigurationError("unsupported ETS settings")
+    else:
+        chronos = _require_mapping(models["chronos_2"], "models.chronos_2")
+        _require_keys(
+            chronos,
+            {"repository", "revision", "chronos_forecasting", "dtype", "quantile_levels", "predict_batches_jointly", "cross_learning"},
+            "models.chronos_2",
+        )
+        quantiles = chronos["quantile_levels"]
+        if quantiles != [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]:
+            raise ExperimentConfigurationError("Chronos quantile levels must equal 0.1 through 0.9")
+        if (
+            chronos["repository"] != "amazon/chronos-2"
+            or not isinstance(chronos["revision"], str)
+            or len(chronos["revision"]) != 40
+            or chronos["chronos_forecasting"] != "2.2.2"
+            or chronos["dtype"] != "float32"
+            or chronos["predict_batches_jointly"] is not False
+            or chronos["cross_learning"] is not False
+        ):
+            raise ExperimentConfigurationError("unsupported Chronos-2 settings")
 
     archived = _require_mapping(value["archived_forecasts"], "archived_forecasts")
     approved_archived = {
@@ -570,6 +635,8 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
         "import", "plan", "preprocess", "transform", "auto_arima", "chronos",
         "combine", "gift_eval",
     }
+    if version >= 3:
+        expected_batch_sizes.add("r_forecast")
     batch_sizes = _require_mapping(default["batch_sizes"], "execution.default.batch_sizes")
     if set(batch_sizes) != expected_batch_sizes or any(
         isinstance(item, bool) or not isinstance(item, int) or item < 1
@@ -600,23 +667,32 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
         )
     acceptance = _require_mapping(execution["final_acceptance"], "execution.final_acceptance")
     topology = _require_mapping(acceptance.get("workers"), "execution.final_acceptance.workers")
-    if topology != {"mac_cpu": 1, "ubuntu_cpu": 0, "ubuntu_gpu": 1, "total": 2}:
-        raise ExperimentConfigurationError("final acceptance must define exactly two Dask workers")
-    if (
-        acceptance.get("mode") != "dask"
-        or acceptance.get("physical_gpu_count") != 1
-        or acceptance.get("worker_memory_gib") != {"mac_cpu": 2, "ubuntu_gpu": 4}
-        or acceptance.get("resource_safety")
-        != {
-            "mac_system_memory_bytes": 17179869184,
-            "ubuntu_system_memory_bytes": 128000000000,
-            "mac_min_available_gib": 3,
-            "ubuntu_min_available_gib": 16,
-            "gpu_min_available_gib": 4,
-            "persistent_unsafe_samples": 3,
-        }
-    ):
-        raise ExperimentConfigurationError("invalid final-acceptance resource settings")
+    if version >= 3:
+        if (
+            topology != {"mac_cpu": 1, "total": 1}
+            or acceptance.get("mode") != "sequential"
+            or acceptance.get("worker_memory_gib") != {"mac_cpu": 2}
+            or set(acceptance) != {"mode", "workers", "worker_memory_gib"}
+        ):
+            raise ExperimentConfigurationError("v3 acceptance must use one bounded Mac CPU worker")
+    else:
+        if topology != {"mac_cpu": 1, "ubuntu_cpu": 0, "ubuntu_gpu": 1, "total": 2}:
+            raise ExperimentConfigurationError("final acceptance must define exactly two Dask workers")
+        if (
+            acceptance.get("mode") != "dask"
+            or acceptance.get("physical_gpu_count") != 1
+            or acceptance.get("worker_memory_gib") != {"mac_cpu": 2, "ubuntu_gpu": 4}
+            or acceptance.get("resource_safety")
+            != {
+                "mac_system_memory_bytes": 17179869184,
+                "ubuntu_system_memory_bytes": 128000000000,
+                "mac_min_available_gib": 3,
+                "ubuntu_min_available_gib": 16,
+                "gpu_min_available_gib": 4,
+                "persistent_unsafe_samples": 3,
+            }
+        ):
+            raise ExperimentConfigurationError("invalid final-acceptance resource settings")
     paths = _require_mapping(execution["paths"], "execution.paths")
     required_paths = {
         "project_environment",
@@ -626,6 +702,8 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
         "r_auto_arima_worker",
         "r_m4comp2018_worker",
     }
+    if version >= 3:
+        required_paths.add("r_forecast_worker")
     if set(paths) != required_paths or any(
         not isinstance(path, str) or not path for path in paths.values()
     ):

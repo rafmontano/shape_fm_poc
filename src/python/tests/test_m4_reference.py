@@ -165,7 +165,8 @@ class M4ReferenceTests(unittest.TestCase):
         self.assertIn("forecast_capability", columns)
         self.assertFalse(columns["median"][3])
         self.assertEqual(
-            connection.execute("SELECT max(version) FROM schema_versions").fetchone()[0], 7
+            connection.execute("SELECT max(version) FROM schema_versions").fetchone()[0],
+            SCHEMA_VERSION,
         )
         self.assertEqual(
             connection.execute(

@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import platform
@@ -27,6 +28,10 @@ from .import_execution import repository_root
 
 # Code constant: IEC bytes per gibibyte used by memory-limit calculations.
 GIB = 1024**3
+# Execution-global policy identity: the sole approved distributed profile for
+# ordinary heavy seasonal tuning. Historical snapshots remain stored in DuckDB.
+APPROVED_HEAVY_TUNING_PROFILE = "poc2_seasonal_recovery"
+APPROVED_HEAVY_TUNING_PROFILE_VERSION = 2
 # Code constant: profile fields admitted by the execution-override interface.
 WORKER_FIELDS = (
     "cleaning_workers",
@@ -56,13 +61,37 @@ class ExecutionProfile:
     system_memory_min_available_gib: float
     accelerator_memory_min_available_gib: float
     database_writers: int
+    profile_version: int = 1
     dask_mac_cpu_workers: int | None = None
     dask_ubuntu_cpu_workers: int | None = None
+    dask_ubuntu_gpu_workers: int | None = None
     dask_max_in_flight: int | None = None
+    dask_mac_tuning_workers: int | None = None
+    dask_ubuntu_tuning_workers: int | None = None
+    dask_mac_worker_memory_gib: int | None = None
+    dask_ubuntu_worker_memory_gib: int | None = None
+    dask_mac_memory_min_available_gib: float | None = None
+    dask_ubuntu_memory_min_available_gib: float | None = None
+    dask_autoarima_max_in_flight: int | None = None
+    dask_ets_max_in_flight: int | None = None
+    dask_autoarima_fit_budget_gib: float | None = None
+    dask_ets_fit_budget_gib: float | None = None
+    dask_memory_admission_timeout_seconds: float | None = None
+    dask_memory_poll_interval_seconds: float | None = None
+    dask_memory_breach_grace_seconds: float | None = None
+    dask_swap_growth_limit_gib: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Return this object's dict representation for serialization and provenance comparison."""
         return asdict(self)
+
+    @property
+    def fingerprint(self) -> str:
+        """Return a deterministic SHA-256 identity for the effective profile."""
+        encoded = json.dumps(
+            self.to_dict(), sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -137,6 +166,8 @@ def resolve_execution_profile(
             raise ValueError(f"{field} must be positive")
     if profile.database_writers != 1:
         raise ValueError("ShapeFM requires exactly one database writer")
+    if profile.profile_version < 1:
+        raise ValueError("profile_version must be positive")
     if profile.required_accelerator in {"mps", "cuda"} and profile.chronos_processes != 1:
         raise ValueError("MPS and CUDA profiles permit exactly one Chronos process")
     if profile.system_memory_min_available_gib < 0 or profile.accelerator_memory_min_available_gib < 0:
@@ -144,13 +175,81 @@ def resolve_execution_profile(
     for field in (
         "dask_mac_cpu_workers",
         "dask_ubuntu_cpu_workers",
+        "dask_ubuntu_gpu_workers",
         "dask_max_in_flight",
+        "dask_mac_tuning_workers",
+        "dask_ubuntu_tuning_workers",
+        "dask_mac_worker_memory_gib",
+        "dask_ubuntu_worker_memory_gib",
+        "dask_autoarima_max_in_flight",
+        "dask_ets_max_in_flight",
     ):
         value = getattr(profile, field)
         minimum = 1 if field == "dask_max_in_flight" else 0
         if value is not None and value < minimum:
             raise ValueError(f"{field} must be at least {minimum} when configured")
+    if (
+        profile.dask_mac_tuning_workers is not None
+        and profile.dask_mac_cpu_workers is not None
+        and profile.dask_mac_tuning_workers > profile.dask_mac_cpu_workers
+    ):
+        raise ValueError("Mac tuning workers cannot exceed the Mac CPU pool")
+    if (
+        profile.dask_ubuntu_tuning_workers is not None
+        and profile.dask_ubuntu_cpu_workers is not None
+        and profile.dask_ubuntu_tuning_workers > profile.dask_ubuntu_cpu_workers
+    ):
+        raise ValueError("Ubuntu tuning workers cannot exceed the Ubuntu CPU pool")
+    for field in (
+        "dask_mac_memory_min_available_gib",
+        "dask_ubuntu_memory_min_available_gib",
+        "dask_autoarima_fit_budget_gib",
+        "dask_ets_fit_budget_gib",
+        "dask_memory_admission_timeout_seconds",
+        "dask_memory_poll_interval_seconds",
+        "dask_memory_breach_grace_seconds",
+        "dask_swap_growth_limit_gib",
+    ):
+        value = getattr(profile, field)
+        if value is not None and value <= 0:
+            raise ValueError(f"{field} must be positive when configured")
     return profile, clean_overrides
+
+
+def validate_heavy_tuning_execution(
+    profile: ExecutionProfile,
+    settings: ExecutionSettings,
+    overrides: dict[str, Any],
+) -> None:
+    """Require the approved distributed profile or a recorded local exception.
+
+    Inputs: Effective profile/settings and invocation overrides. A local
+    exception must contain a nonempty researcher approval reference.
+    Outputs: None; raises before hardware startup or scientific work when the
+    heavy execution route is unapproved or differs from central configuration.
+    """
+    exception = overrides.get("local_heavy_exception")
+    if exception is not None:
+        reference = exception.get("approval_reference") if isinstance(exception, dict) else None
+        if not isinstance(reference, str) or not reference.strip():
+            raise RuntimeError("local heavy execution requires a recorded approval reference")
+        if settings.mode not in {"local", "sequential"}:
+            raise RuntimeError("a local heavy exception cannot be combined with Dask execution")
+        return
+    approved, _ = resolve_execution_profile(APPROVED_HEAVY_TUNING_PROFILE)
+    if (
+        profile.name != APPROVED_HEAVY_TUNING_PROFILE
+        or profile.profile_version != APPROVED_HEAVY_TUNING_PROFILE_VERSION
+        or profile.fingerprint != approved.fingerprint
+        or settings.mode != "dask"
+        or not settings.dask_scheduler_address
+    ):
+        raise RuntimeError(
+            "heavy seasonal tuning requires the approved distributed execution "
+            f"profile {APPROVED_HEAVY_TUNING_PROFILE} v"
+            f"{APPROVED_HEAVY_TUNING_PROFILE_VERSION}; an unavailable Ubuntu host "
+            "does not authorize local execution"
+        )
 
 
 def _sysctl_int(name: str) -> int | None:

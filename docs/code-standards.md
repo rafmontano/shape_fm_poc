@@ -304,6 +304,13 @@ frequency, start/end indices, horizon, identifiers, and error information.
 
 Python controls Dask and the experiment lifecycle.
 
+The [execution policy](execution-policy.md), approved on 30 September 2026,
+governs current heavy testing and supersedes smaller historical profiles below.
+All heavy paths must share the resolved execution configuration and preflight.
+Do not silently switch to local heavy execution if Ubuntu is unavailable.
+Implementation must test mismatch rejection and real cross-host computation;
+documentation or connected-worker counts alone do not establish compliance.
+
 - The Mac runs the coordinator and Dask scheduler.
 - Only the coordinator writes to DuckDB.
 - Workers receive ordinary tasks and return ordinary results.
@@ -313,15 +320,16 @@ Python controls Dask and the experiment lifecycle.
 - Foundation-model GPU tasks use `CHRONOS_GPU_SLOT`, an explicitly declared
   logical execution resource that is distinct from physical GPU count.
 
-## One acceptance case
+## Historical Objective 1 acceptance case
 
-POC2 uses one authoritative end-to-end acceptance case controlled by:
+The Objective 1 end-to-end acceptance case is retained for its specific scope
+and compatibility. It is controlled by:
 
 ```text
 python src/python/00_main.py test
 ```
 
-The acceptance case uses:
+That historical test configuration uses:
 
 - pinned GIFT-Eval M4 Daily data;
 - the first 100 official time series in deterministic GIFT-Eval order;
@@ -336,6 +344,10 @@ The acceptance case uses:
   contribution, resource use, failures, and retries.
 
 The test must not overwrite `data/shapefm.duckdb` or accepted results.
+
+Its two-worker counts are not the current heavy-test default. Follow the
+execution policy for new heavy work; gate-local changes need only their scoped
+acceptance, not an automatic full import-to-evaluation rerun.
 
 The acceptance logic lives under:
 
@@ -441,6 +453,9 @@ rules, and completion criteria require later Chief Developer approval.
 Preparation changes structure and interfaces, not scientific mathematics.
 
 ### Objective 1: centralised research workflow
+
+The following are the historical Objective 1 completion criteria. Its limited
+worker topology does not override the current execution policy.
 
 Objective 1 is complete when:
 

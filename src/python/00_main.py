@@ -41,6 +41,11 @@ from util.experiment_execution import (
     latest_experiment_id,
     official_results,
 )
+from util.execution_profiles import (
+    APPROVED_HEAVY_TUNING_PROFILE,
+    ExecutionSettings,
+    resolve_execution_profile,
+)
 from tests.acceptance import run_acceptance
 
 
@@ -192,6 +197,15 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--database", type=Path, required=True)
     run.add_argument("--configuration", type=Path)
     run.add_argument("--processes", type=process_selection, default=tuple(PROCESS_NAMES))
+    run.add_argument(
+        "--execution-profile",
+        help="audited operational profile override for an existing experiment",
+    )
+    run.add_argument(
+        "--local-heavy-exception",
+        metavar="APPROVAL_REFERENCE",
+        help="recorded researcher approval for a bounded local heavy run",
+    )
 
     status = subparsers.add_parser("status", help="read acceptance experiment status")
     status.add_argument("--database", type=Path, default=DEFAULT_DATABASE)
@@ -251,8 +265,36 @@ def _set_process_state(
         connection.close()
 
 
+def _recover_interrupted_run_records(
+    connection: duckdb.DuckDBPyConnection, processes: tuple[int, ...]
+) -> None:
+    """Close stale parent records before recording a later sole-coordinator run.
+
+    Task recovery is owned by ``ExperimentCoordinator._begin_invocation``. These
+    parent rows cannot remain genuinely active because ShapeFM permits one Mac
+    coordinator and callers check that no coordinator is alive before recovery.
+    """
+    interruption = "interrupted before completion; recovered by a later run"
+    connection.execute(
+        """UPDATE execution_events SET status='failed', completed_at=current_timestamp,
+           error=? WHERE status='running'""",
+        [interruption],
+    )
+    requested_gates = [PROCESS_NAMES[process_id] for process_id in processes]
+    placeholders = ", ".join("?" for _ in requested_gates)
+    connection.execute(
+        f"""UPDATE experiment_invocations SET status='failed', ended_at=current_timestamp,
+            error=? WHERE status='running' AND requested_gate IN ({placeholders})""",
+        [interruption, *requested_gates],
+    )
+
+
 def run_configured_processes(
-    database: Path, configuration_path: Path | None, processes: tuple[int, ...]
+    database: Path,
+    configuration_path: Path | None,
+    processes: tuple[int, ...],
+    execution_profile: str | None = None,
+    local_heavy_exception: str | None = None,
 ) -> dict[str, Any]:
     """Purpose: Create or resume an experiment and dispatch selected Processes 01–06 in order.
 
@@ -268,6 +310,75 @@ def run_configured_processes(
             raise ValueError("--configuration is required when creating a new database")
         initialize_experiment_database(database, configuration_path)
     configuration = load_database_configuration(database)
+    heavy_tuning = (
+        4 in processes
+        and configuration.seasonal_period_tuning is not None
+        and configuration.seasonal_period_tuning["enabled"]
+    )
+    if execution_profile is not None and local_heavy_exception is not None:
+        raise ValueError("choose an execution profile or a local-heavy exception, not both")
+    if heavy_tuning and execution_profile is None and local_heavy_exception is None:
+        raise RuntimeError(
+            "heavy seasonal tuning requires --execution-profile "
+            f"{APPROVED_HEAVY_TUNING_PROFILE}; local execution requires a recorded approval"
+        )
+    execution = None
+    execution_settings = None
+    managed_cluster = None
+    cluster_evidence = None
+    if execution_profile is not None:
+        if processes != (4,):
+            raise ValueError(
+                "an operational execution-profile override currently requires --processes 4"
+            )
+        profile, overrides = resolve_execution_profile(execution_profile)
+        from util.distributed_cluster import ManagedTuningCluster
+
+        managed_cluster = ManagedTuningCluster(profile)
+        try:
+            cluster_evidence = managed_cluster.start()
+        except BaseException:
+            managed_cluster.stop()
+            raise
+        execution = (
+            profile,
+            {
+                **overrides,
+                "operational_profile_override": execution_profile,
+                "execution_profile_fingerprint": profile.fingerprint,
+                "managed_cluster": cluster_evidence,
+            },
+        )
+        execution_settings = ExecutionSettings(
+            mode="dask",
+            dask_scheduler_address=managed_cluster.scheduler_address,
+            dask_timeout_seconds=float(configuration.execution["dask_timeout_seconds"]),
+            dask_expected_workers=int(profile.dask_mac_cpu_workers or 0)
+            + int(profile.dask_ubuntu_cpu_workers or 0),
+            dask_expected_gpu_workers=1,
+            dask_max_in_flight=int(profile.dask_max_in_flight or 1),
+            dask_retries=int(configuration.execution["dask_retries"]),
+        )
+    elif local_heavy_exception is not None:
+        if processes != (4,):
+            raise ValueError("a local-heavy exception currently requires --processes 4")
+        profile, _ = resolve_execution_profile("sequential_safe")
+        execution = (
+            profile,
+            {
+                "local_heavy_exception": {
+                    "approval_reference": local_heavy_exception,
+                    "scope": "Gate 4 seasonal-period tuning",
+                },
+                "execution_profile_fingerprint": profile.fingerprint,
+            },
+        )
+        execution_settings = ExecutionSettings(
+            mode="sequential",
+            dask_timeout_seconds=float(configuration.execution["dask_timeout_seconds"]),
+            dask_max_in_flight=1,
+            dask_retries=int(configuration.execution["dask_retries"]),
+        )
     connection = duckdb.connect(str(database))
     execution_id = f"execution/{uuid.uuid4().hex}"
     try:
@@ -287,9 +398,16 @@ def run_configured_processes(
                     f"Process {process_id:02d} requires completed Processes "
                     + ", ".join(f"{value:02d}" for value in incomplete_prerequisites)
                 )
+        _recover_interrupted_run_records(connection, processes)
         operational = {
             "requested_processes": list(processes),
-            "execution": configuration.resolved["execution"]["default"],
+            "execution": (
+                execution[0].to_dict()
+                if execution is not None
+                else configuration.resolved["execution"]["default"]
+            ),
+            "execution_profile_override": execution_profile,
+            "managed_cluster": cluster_evidence,
         }
         connection.execute(
             """INSERT INTO execution_events
@@ -318,7 +436,15 @@ def run_configured_processes(
             active_process = process_id
             _set_process_state(database, process_id, "running")
             wrapper = load_process_wrapper(process_id)
-            result = wrapper.run(database)
+            result = (
+                wrapper.run(
+                    database,
+                    execution=execution,
+                    execution_settings=execution_settings,
+                )
+                if execution is not None
+                else wrapper.run(database)
+            )
             _set_process_state(database, process_id, "completed", result)
             summaries.append({"process_id": process_id, "status": "completed", "summary": result})
         connection = duckdb.connect(str(database))
@@ -358,6 +484,9 @@ def run_configured_processes(
         finally:
             connection.close()
         raise
+    finally:
+        if managed_cluster is not None:
+            managed_cluster.stop()
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -424,6 +553,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     database,
                     args.configuration.resolve() if args.configuration else None,
                     args.processes,
+                    args.execution_profile,
+                    args.local_heavy_exception,
                 ),
             }
         elif args.action == "status":

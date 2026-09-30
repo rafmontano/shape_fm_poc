@@ -11,6 +11,12 @@ researcher-facing experiment entry point is:
 the command does not install or update dependencies. The public actions are
 `plan`, `run`, `status`, `results`, and `test`.
 
+Heavy testing must follow the [approved execution policy](docs/execution-policy.md).
+The [execution safeguard instructions](docs/amp-poc2-execution-safeguards-instructions.md)
+record the implemented eight Mac CPU workers and enforcement fixes. The focused
+8+15 CPU validation passed without repeating the completed seasonal test. ID 010
+remains queued until the researcher explicitly instructs its resumption.
+
 ## Installation
 
 From the repository root, install the complete R and Python dependency superset,
@@ -86,7 +92,9 @@ Resume Processes 04–06 from DuckDB alone. Do not pass the original JSON again:
 An existing database rejects `--configuration`. Repeating the second command
 records another execution event but skips completed scientific work.
 
-Run or restart the isolated two-machine acceptance case:
+The historical Objective 1 two-worker acceptance command is shown below for
+its specific scope; it is not the current heavy-test profile or the command to
+recover the interrupted Gate 4 tuning run:
 
 ```sh
 .tools/uv/uv run --locked --no-sync python src/python/00_main.py test \
@@ -111,6 +119,18 @@ Read one stored forecast by supplying all three selectors:
   --variant-id VARIANT_ID --series-id SERIES_ID --candidate CANDIDATE
 ```
 
+The optional 100-series AutoARIMA/ETS period-tuning test completed all 800
+forecasts; see the [acceptance record](docs/poc2-seasonal-period-tuning-results.md).
+Preserve that completed database. The
+[safeguard follow-up](docs/amp-poc2-execution-safeguards-instructions.md) was
+validated with focused tests and a small isolated distributed check, not another
+full acceptance run. Chronos and GPU computation were not used for the R-only check.
+
+Source `src/r/qa/inspect_seasonal_period_tuning.R` to leave one series' folds,
+candidates, diagnostics, validation scores, selection, and final forecast in
+`selected_tuning_series`. Validation actuals in this QA object are scoring data
+only and were never supplied to preparation or model fitting.
+
 Generated databases and reports remain ignored; `test` refuses to overwrite
 `data/shapefm.duckdb`.
 
@@ -130,7 +150,9 @@ src/python/util/                         shared Python implementation
 src/python/tests/                        unit, integration, and acceptance tests
 src/r/02_01_preprocess_series.R          R preprocessing substep
 src/r/04_01_forecast_auto_arima.R        R AutoARIMA substep
+src/r/04_01_forecast_r_methods.R         bounded AutoARIMA/ETS tuning substep
 src/r/util/forecast_methods.R             shared registered R forecast pool
+src/r/util/seasonal_period.R              shared period diagnostics
 src/r/util/time_series_input.R           shared R time-series input contract
 src/r/tests/                              focused R contract tests
 ```
@@ -151,9 +173,11 @@ workers = 35 Dask workers. One physical GPU and 15 logical execution slots are
 distinct facts. The complete 100-series pipeline and its restart passed with
 this topology; measured evidence is recorded in
 [`docs/poc2-preparation-completion.md`](docs/poc2-preparation-completion.md).
-The POC2 Import acceptance target is deliberately two workers: one Mac CPU and
-one Ubuntu GPU worker; the scheduler is not a worker. This new target has not
-yet been accepted.
+Objective 1's separate import acceptance used a two-worker target: one Mac CPU
+and one Ubuntu GPU worker. That limited case does not replace the approved
+heavy-test capacities. The current [execution policy](docs/execution-policy.md)
+defines profile selection, memory-safe admission, Ubuntu synchronisation and
+explicit user-approved exceptions when the laptop is away from Ubuntu.
 
 See the [research vision](docs/research-vision.md),
 [architecture](docs/architecture.md), [code standards](docs/code-standards.md),
