@@ -48,6 +48,7 @@ preprocess_one <- function(job) {
     id = job$id,
     values = processed,
     preprocessing_mode = mode,
+    r_period = as.integer(stats::frequency(input$series)),
     status = "success",
     missing_count_before = missing_before,
     missing_count_after = sum(is.na(processed)),

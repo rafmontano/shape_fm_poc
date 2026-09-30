@@ -292,6 +292,35 @@ def _r_forecast(
     return json.loads(completed.stdout)
 
 
+def _resolved_r_period(root: Path, configuration) -> int:
+    """Resolve the configured R period through the pinned GIFT-Eval bridge.
+
+    Purpose: Keep calibration consistent with experiment planning without adding
+    GluonTS to the lean coordinator environment or duplicating its frequency map.
+    Inputs: Repository root and a validated ``ExperimentConfiguration``.
+    Outputs: Positive integer period; launches one short pinned-environment process.
+    """
+    paths = configuration.resolved
+    command = [
+        str(root / paths["evaluation"]["gift_eval"]["environment"] / "bin/python"),
+        str(root / "src/python/06_01_evaluate_gift_eval.py"),
+        "resolve-period",
+        "--frequency",
+        paths["data"]["benchmark"]["frequency"],
+    ]
+    if configuration.r_period_override is not None:
+        command.extend(["--override", str(configuration.r_period_override)])
+    completed = subprocess.run(
+        command,
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    return int(json.loads(completed.stdout)["r_period"])
+
+
 def _peak_children_memory_bytes() -> int:
     """Purpose: Probe cumulative child-process peak resident memory. Inputs: None; data comes from ``RUSAGE_CHILDREN`` and is bytes on macOS or KiB elsewhere. Outputs: Peak RSS normalized to bytes; samples process resource state without resetting the cumulative counter."""
     value = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
@@ -313,6 +342,7 @@ def calibrate(
     execution = configuration.execution
     paths = configuration.execution_paths
     benchmark = config["data"]["benchmark"]
+    r_period = _resolved_r_period(root, configuration)
     contexts = representative_contexts(database_path)
     candidates = CALIBRATION_CANDIDATES[profile.name]
     started = time.monotonic()
@@ -330,7 +360,7 @@ def calibrate(
                     "id": f"auto-{index}",
                     "context": contexts[index % 3]["context"],
                     "horizon": benchmark["prediction_length"],
-                    "seasonality": benchmark["seasonality"],
+                    "seasonality": r_period,
                 }
                 for index in range(12)
             ]
@@ -824,6 +854,7 @@ def calibrate_dask_profile(
     configuration = load_database_configuration(database_path)
     config = configuration.resolved
     execution = configuration.execution
+    r_period = _resolved_r_period(root, configuration)
     contexts = _distributed_contexts(database_path)
     client = Client(scheduler_address, timeout="180s")
     client.wait_for_workers(expected_workers, timeout=180)
@@ -850,7 +881,7 @@ def calibrate_dask_profile(
                         "id": f"clean/{method}/{item['series_id']}",
                         "context": item["context"],
                         "mode": method,
-                        "seasonality": config["data"]["benchmark"]["seasonality"],
+                        "seasonality": r_period,
                         "official_frequency": config["data"]["benchmark"]["frequency"],
                         "series_id": item["series_id"],
                     }
@@ -931,7 +962,7 @@ def calibrate_dask_profile(
                         "id": f"model/auto_arima/{item['id']}",
                         "context": item["context"],
                         "horizon": config["data"]["benchmark"]["prediction_length"],
-                        "seasonality": config["data"]["benchmark"]["seasonality"],
+                        "seasonality": r_period,
                     }
                     for item in transformed.values()
                 ]

@@ -35,8 +35,9 @@ class ExperimentConfigurationError(ValueError):
     """
 
 
-# Code constant: configuration schema version implemented here; experiment JSON cannot override it.
-SUPPORTED_CONFIGURATION_VERSION = 1
+# Code constant: version 1 preserves the historical coupled period-7 policy;
+# version 2 resolves the R period independently from the pinned benchmark runtime.
+SUPPORTED_CONFIGURATION_VERSIONS = {1, 2}
 # Code constant: repository protocol mapping shared by JSON, DuckDB, CLI, and status output.
 PROCESS_NAMES = {
     1: "import",
@@ -195,6 +196,31 @@ class ExperimentConfiguration:
         return Path(self.resolved["data"]["source"]["directory"])
 
     @property
+    def r_period_override(self) -> int | None:
+        """Return the explicit R-period override encoded by this contract version.
+
+        Version 1 used ``data.benchmark.seasonality`` for preprocessing, R
+        forecasting, and evaluation. Treating that value as an override preserves
+        existing databases without rewriting their scientific interpretation.
+        Version 2 stores the optional override at its intended pipeline boundary.
+        """
+        if self.version == 1:
+            return int(self.resolved["data"]["benchmark"]["seasonality"])
+        value = self.resolved["pipeline"]["r_period_override"]
+        return None if value is None else int(value)
+
+    def evaluation_seasonality(self, pinned_default: int) -> int:
+        """Return the scorer period without coupling it to a v2 R-period override.
+
+        Version 1 retains its historical configured value. New version-2
+        experiments use the pinned GluonTS/GIFT-Eval convention supplied by the
+        bridge, even when the researcher overrides preprocessing and R models.
+        """
+        if self.version == 1:
+            return int(self.resolved["data"]["benchmark"]["seasonality"])
+        return int(pinned_default)
+
+    @property
     def import_settings(self) -> dict[str, Any]:
         """Purpose: Derive the reduced Stage 1 worker contract.
 
@@ -203,14 +229,12 @@ class ExperimentConfiguration:
         """
         data = self.resolved["data"]
         benchmark = data["benchmark"]
-        return {
+        result = {
             "schema_version": str(self.version),
             "dataset_name": data["dataset_name"],
             "source_system": data["source"]["system"],
             "benchmark": {
                 "frequency": benchmark["frequency"],
-                "seasonality": benchmark["seasonality"],
-                "seasonality_source": benchmark["seasonality_source"],
                 "term": benchmark["term"],
                 "prediction_length": benchmark["prediction_length"],
                 "evaluation_windows": benchmark["evaluation_windows"],
@@ -219,6 +243,13 @@ class ExperimentConfiguration:
             "max_series": self.series_count,
             "archived_forecasts": deepcopy(self.resolved["archived_forecasts"]),
         }
+        if self.version == 1:
+            # Preserve the historical import identity of existing v1 experiments.
+            result["benchmark"].update(
+                seasonality=benchmark["seasonality"],
+                seasonality_source=benchmark["seasonality_source"],
+            )
+        return result
 
     @property
     def workflow(self) -> dict[str, Any]:
@@ -269,7 +300,7 @@ def _require_keys(value: dict[str, Any], keys: set[str], field: str) -> None:
 def validate_experiment_configuration(value: dict[str, Any]) -> None:
     """Purpose: Validate the complete POC2 scientific and execution contract.
 
-    Inputs: Decoded configuration mapping claiming version 1.
+    Inputs: Decoded configuration mapping claiming version 1 or 2.
     Outputs: ``None`` when every nested field and fixed protocol value is valid;
     otherwise raises ``ExperimentConfigurationError`` with field-level context.
     """
@@ -278,9 +309,11 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
         {"configuration_version", "experiment", "reproducibility", "data", "pipeline", "models", "archived_forecasts", "evaluation", "execution"},
         "configuration",
     )
-    if value["configuration_version"] != SUPPORTED_CONFIGURATION_VERSION:
+    version = value["configuration_version"]
+    if isinstance(version, bool) or version not in SUPPORTED_CONFIGURATION_VERSIONS:
         raise ExperimentConfigurationError(
-            f"configuration_version must be {SUPPORTED_CONFIGURATION_VERSION}"
+            "configuration_version must be one of "
+            f"{sorted(SUPPORTED_CONFIGURATION_VERSIONS)}"
         )
     experiment = _require_mapping(value["experiment"], "experiment")
     _require_keys(experiment, {"name", "date", "description"}, "experiment")
@@ -326,8 +359,6 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
     expected_benchmark = {
         "configuration": "m4_daily/D/short",
         "frequency": "D",
-        "seasonality": 7,
-        "seasonality_source": "approved M4 Daily weekly cycle from official frequency",
         "term": "short",
         "domain": "Econ/Fin",
         "num_variates": 1,
@@ -335,6 +366,11 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
         "evaluation_windows": 1,
         "boundary_convention": "zero-based, end-exclusive",
     }
+    if version == 1:
+        expected_benchmark.update(
+            seasonality=7,
+            seasonality_source="approved M4 Daily weekly cycle from official frequency",
+        )
     if data["dataset_name"] != "m4_daily" or benchmark != expected_benchmark:
         raise ExperimentConfigurationError(
             f"data must define the exact M4 Daily benchmark {expected_benchmark!r}"
@@ -351,6 +387,19 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
         {"processes", "preprocessing", "transformations", "adjustment", "combination"},
         "pipeline",
     )
+    if version == 1 and "r_period_override" in pipeline:
+        raise ExperimentConfigurationError(
+            "pipeline.r_period_override belongs to configuration version 2"
+        )
+    if version == 2:
+        _require_keys(pipeline, {"r_period_override"}, "pipeline")
+        override = pipeline["r_period_override"]
+        if override is not None and (
+            isinstance(override, bool) or not isinstance(override, int) or override < 1
+        ):
+            raise ExperimentConfigurationError(
+                "pipeline.r_period_override must be null or a positive integer"
+            )
     expected_processes = [
         {"id": process_id, "name": name} for process_id, name in PROCESS_NAMES.items()
     ]
@@ -457,7 +506,11 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
         "axis": None,
         "mask_invalid_label": True,
         "allow_nan_forecast": False,
-        "seasonality": "configured official benchmark seasonality",
+        "seasonality": (
+            "configured official benchmark seasonality"
+            if version == 1
+            else "pinned GluonTS benchmark seasonality"
+        ),
     }
     if evaluation["options"] != expected_evaluation_options:
         raise ExperimentConfigurationError("unsupported GIFT-Eval options")

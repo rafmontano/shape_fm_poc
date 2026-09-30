@@ -183,6 +183,19 @@ check("registry names and callables match the allowlist", function() {
   assert_true(all(vapply(registry, is.function, logical(1L))), "registry contains a non-function")
 })
 
+check("shared R adapter preserves values and applies the resolved period", function() {
+  adapted <- time_series_from_values(TEST_CONTEXT, 7L, allow_missing = FALSE)
+  assert_identical(as.numeric(adapted), TEST_CONTEXT, "shared adapter changed input values")
+  assert_identical(as.integer(stats::frequency(adapted)), 7L, "shared adapter changed period")
+  source_lines <- readLines("src/r/util/forecast_methods.R", warn = FALSE)
+  code_lines <- source_lines[!grepl("^\\s*#", source_lines)]
+  assert_identical(
+    sum(grepl("stats::ts\\(", code_lines)),
+    0L,
+    "a forecast method independently constructs stats::ts"
+  )
+})
+
 check("unknown method identifiers are rejected", function() {
   assert_error(
     function() run_forecast_method(test_request("arbitrary_code")),
@@ -212,6 +225,8 @@ for (method_id in APPROVED_METHODS) {
     assert_identical(result$requested_method_id, method_id, "requested method changed")
     assert_identical(result$executed_method_id, method_id, "unexpected real-model fallback")
     assert_identical(result$fallback_used, FALSE, "normal result recorded fallback")
+    assert_identical(result$r_period, 7L, "resolved R period was not recorded")
+    assert_identical(result$provenance$r_period, 7L, "provenance lost R period")
     assert_true(is.null(result$fallback_reason), "normal result recorded fallback reason")
     assert_identical(length(result$mean), 3L, "mean length is not horizon")
     assert_identical(length(result$median), 3L, "median length is not horizon")

@@ -2,8 +2,11 @@
 
 ## Authority and lifecycle
 
-`config/experiments/poc2_m4_daily_100.json` is the complete creation-time
-definition for the POC2 Import experiment. A new database requires this file.
+`config/experiments/poc2_m4_daily_100.json` preserves the complete historical
+version-1, period-7 experiment. New default runs use
+`config/experiments/poc2_m4_daily_100_resolved_period.json`, the version-2
+contract whose R period is resolved in the pinned GIFT-Eval environment. A new
+database requires one complete configuration file.
 ShapeFM validates the entire document before writing, creates a temporary
 DuckDB, stores the original and resolved documents, creates six process-state
 rows, commits, and atomically renames the file. Invalid input leaves no database.
@@ -16,13 +19,30 @@ scientific fingerprint, and configuration-integrity fingerprint.
 `execution_events` appends each request and its effective operational settings,
 host/code provenance, result, or failure.
 
-## Version 1 fields
+## Version 1 compatibility and version 2 period policy
+
+Version 1 coupled `data.benchmark.seasonality = 7` to R preprocessing, R
+forecasting, and scoring. Stored v1 documents remain valid and keep that
+interpretation. They are not rewritten.
+
+Version 2 removes seasonality from `data.benchmark` and adds
+`pipeline.r_period_override`. `null` (the committed default) calls pinned
+GluonTS `get_seasonality()` using the stored frequency; the current Daily result
+is 1. A positive integer takes precedence for R preprocessing and R forecasting.
+Set it to 7 only for an explicit legacy-cleaning comparison. Evaluation remains
+on the pinned GluonTS benchmark convention and is not changed by this override.
+Both the resolved R period and evaluation seasonality are retained in existing
+benchmark metadata JSON; no schema column was added. The historical
+`official_seasonality` metadata/column names remain compatibility aliases for
+the R period.
+
+## Configuration fields
 
 | Field | Meaning and current value | Consumer |
 |---|---|---|
-| `configuration_version` | Contract decoder version `1` | validator and DuckDB loader |
-| `experiment.name` | `poc2_m4_daily_100` | experiment metadata and status |
-| `experiment.date` | required ISO date `2026-09-28` | DuckDB experiment metadata |
+| `configuration_version` | `1` for historical semantics; `2` for independently resolved R period | validator and DuckDB loader |
+| `experiment.name` | v2 default `poc2_m4_daily_100_resolved_period`; v1 name retained | experiment metadata and status |
+| `experiment.date` | required ISO date; v2 default `2026-09-30` | DuckDB experiment metadata |
 | `experiment.description` | required research objective | DuckDB experiment metadata |
 | `reproducibility.seed` | validated non-negative integer `1234` | scientific identity and future stochastic workers |
 | `data.dataset_name` | `m4_daily` | import and GIFT-Eval payloads |
@@ -38,8 +58,9 @@ host/code provenance, result, or failure.
 | `models.chronos_2` | repository, revision, package version, float32, nine quantiles, and batch/cross-learning policy | Process 04 Python/Dask payload and preflight |
 | `evaluation.method` | `gift_eval` | Process 06 selection |
 | `evaluation.gift_eval` | code revision, locked environment, submodule directory | bridge launch and distributed preflight |
-| `data.benchmark.frequency`, `seasonality` | official GIFT-Eval frequency and approved M4 cycle (`D`, `7`) | Gates 1–6 |
-| `evaluation.options` | axis, invalid-label, NaN, and benchmark seasonality policy | Process 06 payload |
+| `data.benchmark.frequency` | official GIFT-Eval frequency (`D`); v1 also retains historical `seasonality = 7` | import and period resolver |
+| `pipeline.r_period_override` | v2-only `null` or positive R preprocessing/forecast period override | planning, Processes 02 and 04 |
+| `evaluation.options` | axis, invalid-label, NaN, and versioned scoring-seasonality policy | Process 06 payload |
 | `evaluation.provisional_candidate` | development candidate selector | result export logic |
 | `evaluation.submission_metadata` | explicit draft/non-submittable fields | export validation only |
 | `execution.default` | mode, process/import workers, batch/in-flight/retry/timeout/thread controls, memory floors, one writer | ordinary `run` and execution provenance |
@@ -64,7 +85,9 @@ creation JSON → validated original/resolved JSON → DuckDB
               → process selection → explicit task payload → Python or R worker
 ```
 
-R receives JSON through stdin and returns JSON through stdout. R never reads
+R receives JSON through stdin and returns JSON through stdout. A shared R input
+utility creates `stats::ts` from unchanged values and the resolved period for
+both preprocessing and the nine-method pool. R never reads
 the experiment JSON or DuckDB. Distributed Python workers receive ordinary
 serialized arguments. The Mac coordinator remains the only DuckDB writer.
 

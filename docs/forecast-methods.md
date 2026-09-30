@@ -29,16 +29,23 @@ indexes only this validated registry; JSON cannot supply executable R code.
 
 A request contains optional task/run identity, dataset and series IDs, a
 non-empty finite numeric `context`, positive integer `horizon`, positive integer
-`frequency` (or `seasonality`), a registered `method_id`, method `settings`, and
+resolved R `frequency`/period (or `seasonality`), a registered `method_id`,
+method `settings`, and
 ordered unique `quantile_levels` strictly between zero and one. It must not
 contain future actual observations. Current GIFT-Eval forecasts request levels
 0.1 through 0.9.
+
+All nine methods receive a `stats::ts` created by the shared
+`time_series_from_values()` boundary. It preserves the prepared values and
+attaches the period resolved by experiment planning; individual methods do not
+independently infer a period or construct their own production input object.
 
 Every successful result contains:
 
 - dataset, series, and optional task/run identity;
 - `requested_method_id` and `executed_method_id`;
-- `horizon`, `mean`, `median`, `quantile_levels`, and a levels-by-horizon
+- `horizon`, resolved `r_period`, `mean`, `median`, `quantile_levels`, and a
+  levels-by-horizon
   `quantiles` matrix;
 - `fallback_used` and `fallback_reason`;
 - method, package-version, distribution, settings, and R provenance;

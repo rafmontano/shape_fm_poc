@@ -352,8 +352,44 @@ class ExperimentCoordinator:
         benchmark = self.configuration.resolved["data"]["benchmark"]
         if official["frequency"] != benchmark["frequency"]:
             raise RuntimeError("official GIFT-Eval frequency does not match configuration")
-        if official["seasonality"] != benchmark["seasonality"]:
-            raise RuntimeError("official preprocessing seasonality does not match configuration")
+        expected_override = self.configuration.r_period_override
+        if expected_override is not None and official["r_period"] != expected_override:
+            raise RuntimeError("resolved R period does not match the experiment override")
+        if (
+            official["evaluation_seasonality"]
+            != official["gluonts_default_seasonality"]
+        ):
+            raise RuntimeError("pinned evaluation seasonality is internally inconsistent")
+
+    def _gift_description_arguments(self, limit: int) -> list[str]:
+        """Build one version-aware GIFT-Eval description request.
+
+        Purpose: Resolve the R period once per benchmark description in the pinned
+        environment while preserving v1's historical period as an explicit override.
+        Inputs: Positive number of official instances to materialize.
+        Outputs: Bridge CLI arguments; performs no subprocess or database work.
+        """
+        benchmark = self.configuration.resolved["data"]["benchmark"]
+        arguments = [
+            "describe",
+            "--source-root",
+            str(self.root / self.configuration.source_directory),
+            "--dataset-name",
+            self.configuration.resolved["data"]["dataset_name"],
+            "--term",
+            benchmark["term"],
+            "--domain",
+            benchmark["domain"],
+            "--num-variates",
+            str(benchmark["num_variates"]),
+            "--limit",
+            str(limit),
+        ]
+        if self.configuration.r_period_override is not None:
+            arguments.extend(
+                ["--r-period-override", str(self.configuration.r_period_override)]
+            )
+        return arguments
 
     def _configured_execution(self) -> tuple[ExecutionProfile, ExecutionSettings]:
         """Purpose: Materialize execution controls from authoritative stored settings.
@@ -399,24 +435,7 @@ class ExperimentCoordinator:
         experiment, variant, instance, and Process 02–06 task rows and invalidates stale
         evaluation/export state when scope expands.
         """
-        source_root = self.root / self.configuration.source_directory
-        availability = self._gift_bridge(
-            "describe",
-            "--source-root",
-            str(source_root),
-            "--dataset-name",
-            self.configuration.resolved["data"]["dataset_name"],
-            "--term",
-            self.configuration.resolved["data"]["benchmark"]["term"],
-            "--domain",
-            self.configuration.resolved["data"]["benchmark"]["domain"],
-            "--num-variates",
-            str(self.configuration.resolved["data"]["benchmark"]["num_variates"]),
-            "--seasonality",
-            str(self.configuration.resolved["data"]["benchmark"]["seasonality"]),
-            "--limit",
-            "1",
-        )
+        availability = self._gift_bridge(*self._gift_description_arguments(1))
         self._validate_official_configuration(availability)
         available_instances = int(availability["available_instances"])
         limit = self.configuration.series_count
@@ -431,6 +450,14 @@ class ExperimentCoordinator:
                 "revision": self.config["benchmark"]["gift_eval_revision"],
                 "configuration": availability["configuration_name"],
             }
+            if self.configuration.version >= 2:
+                benchmark_identity["period_policy"] = {
+                    "r_period": availability["r_period"],
+                    "r_period_source": availability["r_period_source"],
+                    "evaluation_seasonality": self.configuration.evaluation_seasonality(
+                        availability["evaluation_seasonality"]
+                    ),
+                }
             benchmark_id = f"benchmark/{json_fingerprint(benchmark_identity)[:24]}"
             scientific = self.configuration.scientific_configuration
             configuration_hash = self.configuration.scientific_hash
@@ -465,23 +492,7 @@ class ExperimentCoordinator:
                     existing_counts,
                     availability["configuration_name"],
                 )
-        official = self._gift_bridge(
-            "describe",
-            "--source-root",
-            str(source_root),
-            "--dataset-name",
-            self.configuration.resolved["data"]["dataset_name"],
-            "--term",
-            self.configuration.resolved["data"]["benchmark"]["term"],
-            "--domain",
-            self.configuration.resolved["data"]["benchmark"]["domain"],
-            "--num-variates",
-            str(self.configuration.resolved["data"]["benchmark"]["num_variates"]),
-            "--seasonality",
-            str(self.configuration.resolved["data"]["benchmark"]["seasonality"]),
-            "--limit",
-            str(limit),
-        )
+        official = self._gift_bridge(*self._gift_description_arguments(limit))
         self._validate_official_configuration(official)
         instances = official["instances"]
         series_ids = [str(item["item_id"]) for item in instances]
@@ -532,7 +543,16 @@ class ExperimentCoordinator:
                     canonical_json(
                         {
                             "official_available_instances": official["available_instances"],
-                            "official_seasonality": official["seasonality"],
+                            # Compatibility alias retained for old readers/schema.
+                            "official_seasonality": official["r_period"],
+                            "r_period": official["r_period"],
+                            "r_period_source": official["r_period_source"],
+                            "evaluation_seasonality": self.configuration.evaluation_seasonality(
+                                official["evaluation_seasonality"]
+                            ),
+                            "gluonts_default_seasonality": official[
+                                "gluonts_default_seasonality"
+                            ],
                         }
                     ),
                 ],
@@ -1389,7 +1409,12 @@ class ExperimentCoordinator:
                 WHERE i.forecast_instance_id=?""",
                 [instance_id],
             ).fetchone()
-            seasonality = json.loads(metadata)["official_seasonality"]
+            benchmark_metadata = json.loads(metadata)
+            seasonality = benchmark_metadata.get(
+                "r_period", benchmark_metadata.get("official_seasonality")
+            )
+            if seasonality is None:
+                raise RuntimeError("benchmark metadata is missing the resolved R period")
             jobs.append(
                 {
                     "id": task_id,
@@ -1700,12 +1725,18 @@ class ExperimentCoordinator:
                 WHERE t.experiment_id=? AND t.variant_id=? AND t.forecast_instance_id=?""",
                 [experiment_id, variant_id, instance_id],
             ).fetchone()
+            metadata = json.loads(benchmark_metadata)
+            r_period = metadata.get(
+                "r_period", metadata.get("official_seasonality")
+            )
+            if r_period is None:
+                raise RuntimeError("benchmark metadata is missing the resolved R period")
             prepared.append(
                 {
                     "id": task_id,
                     "context": values,
                     "horizon": horizon,
-                    "seasonality": json.loads(benchmark_metadata)["official_seasonality"],
+                    "seasonality": r_period,
                     "model": model,
                     "instance_id": instance_id,
                     "variant_id": variant_id,
@@ -2308,6 +2339,16 @@ class ExperimentCoordinator:
             "SELECT benchmark_configuration_id FROM experiments WHERE experiment_id=?",
             [experiment_id],
         ).fetchone()[0]
+        benchmark_metadata = json.loads(
+            self.connection.execute(
+                "SELECT metadata FROM benchmark_configurations "
+                "WHERE benchmark_configuration_id=?",
+                [benchmark_id],
+            ).fetchone()[0]
+        )
+        evaluation_seasonality = benchmark_metadata.get(
+            "evaluation_seasonality", benchmark_metadata.get("official_seasonality")
+        )
         expected_count = self.connection.execute(
             """SELECT count(DISTINCT forecast_instance_id)
                FROM experiment_tasks
@@ -2364,13 +2405,7 @@ class ExperimentCoordinator:
                         "term": self.configuration.resolved["data"]["benchmark"]["term"],
                         "quantile_levels": list(self.quantiles),
                         "options": self.configuration.evaluation_options,
-                        "seasonality": json.loads(
-                            self.connection.execute(
-                                "SELECT metadata FROM benchmark_configurations "
-                                "WHERE benchmark_configuration_id=?",
-                                [benchmark_id],
-                            ).fetchone()[0]
-                        )["official_seasonality"],
+                        "seasonality": evaluation_seasonality,
                         "forecasts": [
                             {"mean": row[2], "quantiles": row[3]} for row in records
                         ]

@@ -49,6 +49,7 @@ class PreprocessingTests(unittest.TestCase):
         ]
         complete, missing = run_worker(jobs)["results"]
         self.assertEqual(complete["values"], jobs[0]["context"])
+        self.assertEqual(complete["r_period"], 7)
         self.assertFalse(complete["values_changed"])
         self.assertEqual(len(missing["values"]), len(jobs[1]["context"]))
         self.assertEqual(
@@ -70,6 +71,7 @@ class PreprocessingTests(unittest.TestCase):
             }
         ])["results"][0]
         self.assertEqual(result["preprocessing_mode"], "robust")
+        self.assertEqual(result["r_period"], 7)
         self.assertEqual(result["status"], "success")
         self.assertEqual(len(result["values"]), len(context))
         self.assertTrue(all(math.isfinite(value) for value in result["values"]))

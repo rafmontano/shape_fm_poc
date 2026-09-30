@@ -9,11 +9,20 @@ preserved; DuckDB represents both forms as missing list elements. Empty targets,
 malformed records, identity/frequency mismatches, and positive or negative
 infinity fail clearly.
 
-The official frequency comes from the GIFT-Eval dataset (`Dataset.freq`). The
-approved M4 Daily benchmark metadata records a seasonality of 7, representing
-the weekly cycle, and that same value is passed to preprocessing, live
-forecasting, and evaluation. It is stored with its provenance rather than
-derived from the former hidden period lookup. Gate 1 does not impute data.
+The official frequency comes from the GIFT-Eval dataset (`Dataset.freq`) and is
+stored in DuckDB. Gate 1 does not infer a seasonal period and does not impute
+data. At experiment planning, the pinned GIFT-Eval environment resolves the R
+period once with `gluonts.time_feature.get_seasonality(stored_frequency)`, unless
+the experiment has an explicit `pipeline.r_period_override`. This is a
+reproducible software convention, not a statistical seasonality test. In the
+current pinned environment, Daily (`D`) resolves to period 1.
+
+The resolved period is used only when constructing `stats::ts` objects for R
+preprocessing and R forecasting. Chronos does not receive it. GIFT-Eval scoring
+uses its independently resolved pinned benchmark seasonality; changing an R
+override does not silently change evaluation. Existing configuration-v1
+experiments retain their historical period-7 preprocessing/model and scoring
+interpretation without rewriting stored data or results.
 
 ## Gate 2 modes
 
@@ -26,9 +35,20 @@ Researchers select preprocessing through the existing experiment JSON:
 }
 ```
 
+In a configuration-v2 experiment, leave the adjacent setting null for the
+pinned default or set a positive integer for a deliberate comparison:
+
+```json
+"r_period_override": null
+```
+
+For example, `"r_period_override": 7` reproduces the former M4 Daily cleaning
+period when observations and package versions are held equal. It defines a
+different scientific experiment; it does not alter the evaluation convention.
+
 These are the only user-selectable modes:
 
-- **`standard`** calls `forecast::na.interp()` with the official seasonality.
+- **`standard`** calls `forecast::na.interp()` with the resolved R period.
   It fills only missing positions and must leave every finite input observation
   unchanged.
 - **`robust`** is the default and reproduces the previous cleaning expression:
@@ -37,8 +57,9 @@ These are the only user-selectable modes:
 
 Both modes receive historical context only—never future/test observations—and
 must return a finite vector with the original length. A result records the
-dataset/series lineage through its forecast instance, mode, official frequency
-and seasonality, R and `forecast` versions, input/output hashes, success status,
+dataset/series lineage through its forecast instance, mode, stored frequency
+and resolved R period (in the compatibility `official_seasonality` column), R
+and `forecast` versions, input/output hashes, success status,
 missing counts before and after, and whether values changed. Failures remain in
 the restartable task/attempt tables with their error. The raw `series.target`
 row is never overwritten or duplicated in each preprocessing result.

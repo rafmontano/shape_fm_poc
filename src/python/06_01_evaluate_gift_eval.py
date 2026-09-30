@@ -147,14 +147,39 @@ def json_observations(values) -> list[float | None]:
     return result
 
 
+def resolve_period(frequency: str, override: int | None = None) -> dict:
+    """Resolve the R period from an explicit override or pinned GluonTS.
+
+    Purpose: Keep the reproducible frequency convention in the environment that
+    pins GluonTS instead of copying a mapping into the lean coordinator or R.
+    Inputs: Stored dataset frequency and an optional positive integer override.
+    Outputs: JSON-ready period, source, frequency, and pinned default metadata.
+    """
+    if not isinstance(frequency, str) or not frequency:
+        raise ValueError("stored frequency must be a non-empty string")
+    if override is not None and (
+        isinstance(override, bool) or not isinstance(override, int) or override < 1
+    ):
+        raise ValueError("R-period override must be a positive integer")
+    pinned_default = int(get_seasonality(frequency))
+    return {
+        "frequency": frequency,
+        "r_period": override if override is not None else pinned_default,
+        "r_period_source": (
+            "experiment_override" if override is not None else "pinned_gluonts_get_seasonality"
+        ),
+        "gluonts_default_seasonality": pinned_default,
+    }
+
+
 def describe(
     source_root: str,
     dataset_name: str,
     term: str,
     domain: str,
     num_variates: int,
-    seasonality: int,
     limit: int,
+    r_period_override: int | None = None,
 ) -> dict:
     """Purpose: Describe and materialize the configured prefix of an official evaluation task.
 
@@ -164,8 +189,7 @@ def describe(
     """
     dataset = official_dataset(source_root, dataset_name, term)
     require_single_window(dataset)
-    if seasonality < 1:
-        raise ValueError("configured official seasonality must be positive")
+    period = resolve_period(dataset.freq, r_period_override)
     if dataset.target_dim != num_variates:
         raise ValueError(
             f"configured num_variates={num_variates} does not match source {dataset.target_dim}"
@@ -192,10 +216,13 @@ def describe(
         "term": dataset.term.value,
         "prediction_length": dataset.prediction_length,
         "window_count": dataset.windows,
-        # Frequency is read from GIFT-Eval. The configured benchmark seasonality
-        # records the approved M4 Daily weekly cycle (7), rather than a hidden map.
-        "seasonality": seasonality,
-        "gluonts_default_seasonality": get_seasonality(dataset.freq),
+        # ``seasonality`` remains a compatibility alias for historical callers.
+        # New code uses the explicit R/evaluation fields and never conflates them.
+        "seasonality": period["r_period"],
+        "r_period": period["r_period"],
+        "r_period_source": period["r_period_source"],
+        "gluonts_default_seasonality": period["gluonts_default_seasonality"],
+        "evaluation_seasonality": period["gluonts_default_seasonality"],
         "domain": domain,
         "num_variates": num_variates,
         "available_instances": len(dataset.test_data),
@@ -222,11 +249,15 @@ def evaluate(source_root: str, payload_path: Path) -> dict:
         "axis": None,
         "mask_invalid_label": True,
         "allow_nan_forecast": False,
-        "seasonality": "configured official benchmark seasonality",
     }
+    scientific_options = {key: value for key, value in options.items() if key != "batch_size"}
+    seasonality_policy = scientific_options.pop("seasonality", None)
     if (
-        {key: value for key, value in options.items() if key != "batch_size"}
-        != expected_options
+        scientific_options != expected_options
+        or seasonality_policy not in {
+            "configured official benchmark seasonality",
+            "pinned GluonTS benchmark seasonality",
+        }
         or isinstance(options.get("batch_size"), bool)
         or not isinstance(options.get("batch_size"), int)
         or options["batch_size"] < 1
@@ -379,7 +410,7 @@ def manifest(root: Path, gift_eval_directory: str) -> dict:
 def main() -> None:
     """Purpose: Parse and dispatch the isolated GIFT-Eval bridge CLI.
 
-    Inputs: ``describe``, ``evaluate``, or ``manifest`` arguments from the parent subprocess.
+    Inputs: ``describe``, ``resolve-period``, ``evaluate``, or ``manifest`` arguments.
     Outputs: One compact finite JSON record on stdout; argparse/exceptions determine failure status.
     Side effects: Reads pinned sources/payloads and may set the process ``GIFT_EVAL`` environment variable.
     """
@@ -391,8 +422,14 @@ def main() -> None:
     describe_parser.add_argument("--term", required=True)
     describe_parser.add_argument("--domain", required=True)
     describe_parser.add_argument("--num-variates", type=int, required=True)
-    describe_parser.add_argument("--seasonality", type=int, required=True)
+    describe_parser.add_argument("--r-period-override", type=int)
+    # Compatibility for historical direct invocations; coordinators use the
+    # accurately named option above. Supplying both is rejected below.
+    describe_parser.add_argument("--seasonality", type=int)
     describe_parser.add_argument("--limit", type=int, required=True)
+    period_parser = subparsers.add_parser("resolve-period")
+    period_parser.add_argument("--frequency", required=True)
+    period_parser.add_argument("--override", type=int)
     evaluate_parser = subparsers.add_parser("evaluate")
     evaluate_parser.add_argument("--source-root", required=True)
     evaluate_parser.add_argument("--payload", type=Path, required=True)
@@ -401,15 +438,19 @@ def main() -> None:
     manifest_parser.add_argument("--gift-eval-directory", required=True)
     args = parser.parse_args()
     if args.command == "describe":
+        if args.r_period_override is not None and args.seasonality is not None:
+            parser.error("describe accepts only one R-period override option")
         result = describe(
             args.source_root,
             args.dataset_name,
             args.term,
             args.domain,
             args.num_variates,
-            args.seasonality,
             args.limit,
+            args.r_period_override if args.r_period_override is not None else args.seasonality,
         )
+    elif args.command == "resolve-period":
+        result = resolve_period(args.frequency, args.override)
     elif args.command == "evaluate":
         result = evaluate(args.source_root, args.payload)
     else:

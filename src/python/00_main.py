@@ -67,7 +67,9 @@ DEFAULT_PLAN_DATABASE = ROOT / "results/poc2_local_plan.duckdb"
 DEFAULT_REPORT = ROOT / "results/poc2_acceptance_report.json"
 # Bootstrap/interface default: creation JSON used before DuckDB becomes authoritative;
 # ``plan|run --configuration`` overrides it, and the path itself is not scientific identity.
-DEFAULT_CONFIGURATION = ROOT / "config/experiments/poc2_m4_daily_100.json"
+DEFAULT_CONFIGURATION = (
+    ROOT / "config/experiments/poc2_m4_daily_100_resolved_period.json"
+)
 
 
 def positive_integer(value: str) -> int:

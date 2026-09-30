@@ -64,7 +64,7 @@ Inspect the deterministic first-100-series plan:
 
 ```sh
 .tools/uv/uv run --locked --no-sync python src/python/00_main.py plan \
-  --configuration config/experiments/poc2_m4_daily_100.json
+  --configuration config/experiments/poc2_m4_daily_100_resolved_period.json
 ```
 
 Create one experiment database and execute Processes 01–03:
@@ -72,7 +72,7 @@ Create one experiment database and execute Processes 01–03:
 ```sh
 .tools/uv/uv run --locked --no-sync python src/python/00_main.py run \
   --database results/poc2_m4_daily_100.duckdb \
-  --configuration config/experiments/poc2_m4_daily_100.json \
+  --configuration config/experiments/poc2_m4_daily_100_resolved_period.json \
   --processes 1-3
 ```
 

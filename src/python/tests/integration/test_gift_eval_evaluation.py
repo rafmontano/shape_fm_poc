@@ -113,6 +113,41 @@ class OfficialAdapterTests(unittest.TestCase):
         self.assertIn("MSE[mean]", metrics)
         self.assertIn("mean_weighted_sum_quantile_loss", metrics)
 
+    def test_pinned_period_resolver_supports_defaults_overrides_and_errors(self):
+        """The bridge uses actual pinned GluonTS defaults and explicit overrides."""
+        expected = {
+            "D": 1,
+            "H": 24,
+            "W": 1,
+            "M": 12,
+            "Q": 4,
+            "Y": 1,
+            "15min": 96,
+        }
+        for frequency, period in expected.items():
+            with self.subTest(frequency=frequency):
+                result = self.bridge_call(
+                    "resolve-period", "--frequency", frequency
+                )
+                self.assertEqual(result["r_period"], period)
+                self.assertEqual(
+                    result["r_period_source"], "pinned_gluonts_get_seasonality"
+                )
+        overridden = self.bridge_call(
+            "resolve-period", "--frequency", "D", "--override", "7"
+        )
+        self.assertEqual(overridden["r_period"], 7)
+        self.assertEqual(overridden["gluonts_default_seasonality"], 1)
+        self.assertEqual(overridden["r_period_source"], "experiment_override")
+        for arguments in (
+            ("resolve-period", "--frequency", "unsupported"),
+            ("resolve-period", "--frequency", "D", "--override", "0"),
+        ):
+            with self.subTest(arguments=arguments), self.assertRaises(
+                subprocess.CalledProcessError
+            ):
+                self.bridge_call(*arguments)
+
     def test_manifest_is_complete_qualified_and_validated(self):
         """The manifest contains the validated 97-configuration consensus and full metadata."""
         manifest = self.bridge_call(

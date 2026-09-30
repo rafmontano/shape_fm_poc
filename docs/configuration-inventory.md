@@ -1,18 +1,20 @@
 # Global-setting mapping
 
 This is the concise Objective 1 disposition for active production settings.
-The single creation-time authority is
-`config/experiments/poc2_m4_daily_100.json`; DuckDB is authoritative after
-creation. Derived counts and identities are calculated rather than configured.
+The default creation-time authority is
+`config/experiments/poc2_m4_daily_100_resolved_period.json`; DuckDB is
+authoritative after creation. The original `poc2_m4_daily_100.json` remains the
+historical version-1 period-7 experiment. Derived counts and identities are
+calculated rather than configured.
 
 ## Experiment globals
 
 | JSON area | Current scope | Consumers |
 |---|---|---|
-| `configuration_version`, `experiment` | version 1; name, date, objective | validator, DuckDB metadata, status |
+| `configuration_version`, `experiment` | version 2 by default; name, date, objective | validator, DuckDB metadata, status |
 | `reproducibility.seed` | `1234` | scientific identity and future stochastic workers |
 | `data` | pinned GIFT-Eval M4 Daily source; first 100 official series; 14-step, one-window benchmark | import, planning, evaluation |
-| `pipeline` | Processes 01–06; standard/robust preprocessing (robust default); identity/min-max-standardize; identity adjustment; equal-weight combination | task planning and Processes 02–05 |
+| `pipeline` | Processes 01–06; optional R-period override; standard/robust preprocessing (robust default); identity/min-max-standardize; identity adjustment; equal-weight combination | task planning and Processes 02–05 |
 | `models` | AutoARIMA settings; pinned Chronos-2 identity, dtype, quantiles, and prediction policies | Process 04 workers and provenance |
 | scientific `evaluation` fields | GIFT-Eval revision, method, options, provisional candidate and submission metadata | Process 06 and export validation |
 

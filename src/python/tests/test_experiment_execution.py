@@ -735,6 +735,10 @@ class ConfiguredPlanningTests(unittest.TestCase):
             "prediction_length": 14,
             "window_count": 1,
             "seasonality": 7,
+            "r_period": 7,
+            "r_period_source": "experiment_override",
+            "gluonts_default_seasonality": 1,
+            "evaluation_seasonality": 1,
             "domain": "Econ/Fin",
             "num_variates": 1,
             "available_instances": 4_227,
@@ -810,6 +814,40 @@ class ConfiguredPlanningTests(unittest.TestCase):
             ).fetchone()[0],
             sum(EXPECTED_100_TASK_COUNTS.values()),
         )
+
+    def test_v2_r_override_does_not_change_evaluation_seasonality(self):
+        """A v2 period-7 R override leaves the pinned daily scorer period at one."""
+        config_path = self.directory / "period-7.json"
+        document = json.loads(
+            (
+                Path(__file__).resolve().parents[3]
+                / "config/experiments/poc2_m4_daily_100_resolved_period.json"
+            ).read_text(encoding="utf-8")
+        )
+        document["experiment"]["name"] += "_period_7"
+        document["pipeline"]["r_period_override"] = 7
+        config_path.write_text(json.dumps(document), encoding="utf-8")
+        database = self.directory / "period-7.duckdb"
+        initialize_experiment_database(database, config_path)
+        with ExperimentCoordinator(database) as coordinator:
+            coordinator.connection.execute(
+                """INSERT INTO datasets
+                (dataset_id, dataset_name, source_system, source_revision,
+                 source_file_hashes, import_configuration,
+                 import_configuration_hash, frequency)
+                VALUES ('dataset', 'm4_daily', 'test', 'revision', '{}', '{}',
+                        'configuration', 'D')"""
+            )
+            coordinator._gift_bridge = self._gift_bridge
+            coordinator.plan()
+            metadata = json.loads(
+                coordinator.connection.execute(
+                    "SELECT metadata FROM benchmark_configurations"
+                ).fetchone()[0]
+            )
+        self.assertEqual(metadata["r_period"], 7)
+        self.assertEqual(metadata["r_period_source"], "experiment_override")
+        self.assertEqual(metadata["evaluation_seasonality"], 1)
 
 
 if __name__ == "__main__":

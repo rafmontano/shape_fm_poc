@@ -14,9 +14,9 @@ results, configured execution, and the 100-series acceptance workflow.
 
 ```sh
 .tools/uv/uv run --locked --no-sync python src/python/00_main.py plan \
-  --configuration config/experiments/poc2_m4_daily_100.json
+  --configuration config/experiments/poc2_m4_daily_100_resolved_period.json
 .tools/uv/uv run --locked --no-sync python src/python/00_main.py run \
-  --database DATABASE --configuration config/experiments/poc2_m4_daily_100.json \
+  --database DATABASE --configuration config/experiments/poc2_m4_daily_100_resolved_period.json \
   --processes 1-3
 .tools/uv/uv run --locked --no-sync python src/python/00_main.py run \
   --database DATABASE --processes 4-6

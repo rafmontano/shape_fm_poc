@@ -25,6 +25,10 @@
 .NNETAR_DEFAULT_SEED <- 1234L
 .NNETAR_DEFAULT_PATHS <- 1000L
 
+# Shared object adapter: preprocessing and every R forecasting method construct
+# stats::ts through this one utility; methods receive an already adapted object.
+source("src/r/util/time_series_input.R")
+
 #' Return the approved M4 forecasting method identifiers.
 #'
 #' Purpose: Expose the initial forecast pool in the original FFORMA order.
@@ -344,6 +348,7 @@ validate_forecast_result <- function(result) {
 #   and concise provenance.
 # Outputs: Validated JSON-safe result with no fallback and no actual observations.
 .normal_result <- function(request, method_id, distribution, provenance) {
+  provenance$r_period <- request$frequency
   result <- list(
     task_id = request$task_id,
     run_id = request$run_id,
@@ -352,6 +357,7 @@ validate_forecast_result <- function(result) {
     requested_method_id = method_id,
     executed_method_id = method_id,
     horizon = request$horizon,
+    r_period = request$frequency,
     mean = as.numeric(distribution$mean),
     median = as.numeric(distribution$median),
     quantile_levels = as.numeric(request$quantile_levels),
@@ -379,7 +385,9 @@ validate_forecast_result <- function(result) {
     request$settings,
     .central_interval_levels(request$quantile_levels)
   )
-  series <- stats::ts(request$context, frequency = request$frequency)
+  series <- time_series_from_values(
+    request$context, request$frequency, allow_missing = FALSE
+  )
   predicted <- forecast_function(series, request$horizon, levels, request$settings)
   distribution <- .distribution_from_intervals(
     predicted, request$quantile_levels, request$horizon
@@ -485,7 +493,9 @@ nnetar_forec <- function(request) {
   repeats <- .integer_setting(request$settings, "repeats", 20L)
   npaths <- .integer_setting(request$settings, "npaths", .NNETAR_DEFAULT_PATHS)
   bootstrap <- .logical_setting(request$settings, "bootstrap", FALSE)
-  series <- stats::ts(request$context, frequency = request$frequency)
+  series <- time_series_from_values(
+    request$context, request$frequency, allow_missing = FALSE
+  )
 
   distribution <- .with_seed(seed, function() {
     fit <- forecast::nnetar(series, repeats = repeats, lambda = NULL)

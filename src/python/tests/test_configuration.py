@@ -34,6 +34,10 @@ REFERENCE_CONFIGURATION = (
     Path(__file__).resolve().parents[3]
     / "config/experiments/poc2_m4_daily_100.json"
 )
+RESOLVED_PERIOD_CONFIGURATION = (
+    Path(__file__).resolve().parents[3]
+    / "config/experiments/poc2_m4_daily_100_resolved_period.json"
+)
 
 
 class ExperimentConfigurationTests(unittest.TestCase):
@@ -66,6 +70,39 @@ class ExperimentConfigurationTests(unittest.TestCase):
             configuration.resolved["execution"]["final_acceptance"]["workers"],
             {"mac_cpu": 1, "ubuntu_cpu": 0, "ubuntu_gpu": 1, "total": 2},
         )
+
+    def test_v2_default_and_override_are_distinct_valid_experiments(self) -> None:
+        """Version 2 defaults to bridge resolution and permits a positive R override."""
+        default = load_experiment_configuration(RESOLVED_PERIOD_CONFIGURATION)
+        self.assertEqual(default.version, 2)
+        self.assertIsNone(default.r_period_override)
+        self.assertEqual(default.evaluation_seasonality(1), 1)
+        self.assertNotIn("seasonality", default.resolved["data"]["benchmark"])
+
+        overridden_document = deepcopy(default.original)
+        overridden_document["experiment"]["name"] += "_period_7"
+        overridden_document["pipeline"]["r_period_override"] = 7
+        overridden = resolve_experiment_configuration(overridden_document)
+        self.assertEqual(overridden.r_period_override, 7)
+        self.assertEqual(overridden.evaluation_seasonality(1), 1)
+        self.assertNotEqual(overridden.scientific_hash, default.scientific_hash)
+
+    def test_v2_rejects_invalid_period_overrides(self) -> None:
+        """Null or a positive integer are the only accepted v2 override values."""
+        original = json.loads(RESOLVED_PERIOD_CONFIGURATION.read_text(encoding="utf-8"))
+        for invalid in (True, 0, -1, 1.5, "7"):
+            value = deepcopy(original)
+            value["pipeline"]["r_period_override"] = invalid
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(
+                ExperimentConfigurationError, "r_period_override"
+            ):
+                resolve_experiment_configuration(value)
+
+    def test_v1_period_7_semantics_remain_interpretable(self) -> None:
+        """Existing v1 documents retain their coupled period-7 interpretation."""
+        legacy = load_experiment_configuration(REFERENCE_CONFIGURATION)
+        self.assertEqual(legacy.r_period_override, 7)
+        self.assertEqual(legacy.evaluation_seasonality(1), 7)
 
     def test_invalid_document_leaves_no_database_file(self) -> None:
         """Missing mandatory metadata fails before even an empty DuckDB file exists."""

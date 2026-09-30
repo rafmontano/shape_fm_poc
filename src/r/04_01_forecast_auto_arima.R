@@ -49,6 +49,7 @@ forecast_one <- function(job, settings) {
     mean = result$mean,
     median = result$median,
     quantiles = quantiles,
+    r_period = result$r_period,
     requested_method_id = result$requested_method_id,
     executed_method_id = result$executed_method_id,
     fallback_used = result$fallback_used,
