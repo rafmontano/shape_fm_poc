@@ -66,6 +66,15 @@ are documented in [`forecast-methods.md`](forecast-methods.md).
 Gate 1 missingness preservation, Gate 2 modes, and evaluation masking are
 documented in [`preprocessing.md`](preprocessing.md).
 
+Configuration v4 adds the Gate 3 `standardise_sample_v1` recipe alongside the
+no-transformation `identity` route. Gate 3 fits each state from that variant's
+prepared history only, stores it in `transformed_series.parameters`, and Gate 4
+uses the same state to invert supplied mean, median and quantiles. The portable
+state has exactly `recipe`, `version`, `centre`, `scale`, `count` and `constant`.
+R and Python implement the same sample-SD rule and positive affine inverse.
+Older `minmax_then_standardize` results retain their historical interpretation;
+they are not relabelled or migrated.
+
 ### Current forecast-pool integration boundary
 
 The approved R library registers the nine original FFORMA-derived forecast
@@ -249,6 +258,37 @@ This procedure searches forecasting policies for a series and model. It does
 not claim to discover an immutable true seasonal period. The fixed
 preprocessing period and independent official evaluation seasonality are not
 tuned.
+
+### Configuration v4 standardisation
+
+Configuration version 4 preserves the version-2 period resolver and normal
+AutoARIMA/Chronos route while replacing the new experiment's historical
+`minmax_then_standardize` selection with `standardise_sample_v1`. A v4 tuning
+document may also carry the version-3 tuning policy, but the committed
+standardisation acceptance configuration does not enable tuning.
+
+For a finite nonconstant history, the recipe stores the arithmetic mean and
+sample standard deviation with denominator n−1. Exact constants and singleton
+histories store the first value as centre, effective scale 1 and
+`constant = true`; additional values therefore retain real differences instead
+of being collapsed. Apply and inverse operations validate the exact state and
+never refit it. Ordered composition is deliberately limited to registered
+`identity` and `standardise_sample_v1` steps, applied forward and inverted in
+reverse.
+
+Version 4 also declares a positive `pipeline.window_preparation.context_length`.
+The shared R/Python utilities implement explicit trailing selection and the
+legacy first-value left padding, without deriving a window from horizon or
+frequency. This is a tested configuration capability for selected future
+consumers; current AutoARIMA and Chronos adapters still receive full prepared
+histories and do not yet consume that field.
+
+The fresh 100-series acceptance stopped after Processes 01–03. It validates
+import, both preprocessing variants, both transformation variants, persistence,
+portable state, and restart. It is not a forecasting, full-pipeline, or accuracy
+acceptance and does not alter accepted historical databases. Its configuration
+records one sequential Mac worker and Processes 1–3; computationally heavy work
+continues to require the approved named 8-Mac/15-Ubuntu execution profile.
 
 The complete field contract and evolution procedure are documented in
 [`experiment-configuration.md`](experiment-configuration.md). The exhaustive

@@ -9,6 +9,8 @@ contract whose R period is resolved in the pinned GIFT-Eval environment. A new
 database requires one complete configuration file.
 The optional 100-series AutoARIMA/ETS tuning experiment is
 `config/experiments/poc2_m4_daily_100_period_tuning.json` and uses version 3.
+The gate-local standardisation experiment is
+`config/experiments/poc2_m4_daily_100_standardised.json` and uses version 4.
 ShapeFM validates the entire document before writing, creates a temporary
 DuckDB, stores the original and resolved documents, creates six process-state
 rows, commits, and atomically renames the file. Invalid input leaves no database.
@@ -30,7 +32,7 @@ constants, monitors active owned R processes and implements eight Mac CPU
 workers. Preserve stored creation documents and integrity hashes; do not reload
 or rewrite scientific configuration.
 
-## Versions 1–3
+## Versions 1–4
 
 Version 1 coupled `data.benchmark.seasonality = 7` to R preprocessing, R
 forecasting, and scoring. Stored v1 documents remain valid and keep that
@@ -57,11 +59,33 @@ readable; an explicit operational profile enabled recovery. It cannot silently
 authorise a new heavy local run; only an explicit recorded researcher-approved
 exception can do so. Chronos is intentionally outside this R-only acceptance.
 
+Version 4 preserves the version-2 period resolver and normal
+AutoARIMA/Chronos model route, registers `identity` plus
+`standardise_sample_v1`, and requires an explicit positive
+`pipeline.window_preparation.context_length`. The committed v4 document uses 64.
+That window setting is validated, stored and exposed through the central
+configuration interface, but current model adapters continue to consume full
+histories. A v4 configuration can optionally include the approved v3 tuning
+policy; absence of that policy is the normal v4 route.
+
+The committed v4 `execution.final_acceptance` is an evidence snapshot of the
+acceptance actually performed: sequential mode, Processes 1–3, and one Mac CPU
+worker. It is not a scheduler profile and does not authorise heavy local work.
+Any heavy execution continues to use the approved named profile with 8 Mac and
+15 Ubuntu CPU workers under the execution policy.
+
+`standardise_sample_v1` fits on history only using sample SD (n−1). Its exact
+portable state is `recipe`, `version`, `centre`, `scale`, `count`, and
+`constant`. Exact constants and singletons use scale 1, so apply and inverse
+remain positive affine maps for additional values. Configuration versions 1–3
+retain `minmax_then_standardize` exactly as stored and are never silently
+reinterpreted as the new recipe.
+
 ## Configuration fields
 
 | Field | Meaning and current value | Consumer |
 |---|---|---|
-| `configuration_version` | `1` historical; `2` independently resolved R period; `3` opt-in period tuning | validator and DuckDB loader |
+| `configuration_version` | `1` historical; `2` independently resolved R period; `3` opt-in period tuning; `4` portable sample standardisation | validator and DuckDB loader |
 | `experiment.name` | v2 default `poc2_m4_daily_100_resolved_period`; v1 name retained | experiment metadata and status |
 | `experiment.date` | required ISO date; v2 default `2026-09-30` | DuckDB experiment metadata |
 | `experiment.description` | required research objective | DuckDB experiment metadata |
@@ -72,7 +96,8 @@ exception can do so. Chronos is intentionally outside this R-only acceptance.
 | `data.selection` | deterministic `first_official`, count `100` | import and plan |
 | `pipeline.processes` | ordered IDs/names 01–06 | process state, CLI selection, status |
 | `pipeline.preprocessing` | modes `standard`, `robust`; default `robust` | Process 02 task creation and R payload |
-| `pipeline.transformations.methods` | `identity`, `minmax_then_standardize` | Process 03 task creation and worker payload |
+| `pipeline.transformations.methods` | v1–v3: `identity`, `minmax_then_standardize`; v4: `identity`, `standardise_sample_v1` | Process 03 task creation and worker payload |
+| `pipeline.window_preparation.context_length` | v4 positive integer; committed value `64`; capability not yet consumed by current model adapters | central configuration and future selected window consumers |
 | `pipeline.adjustment` | `identity` | variant identity |
 | `pipeline.combination` | equal weight; v1/v2 AutoARIMA + Chronos-2, v3 AutoARIMA + ETS | Process 05 payload and provenance |
 | `models.auto_arima` | R `forecast` package and all `auto.arima`/interval settings | Process 04 R payload |
@@ -87,13 +112,15 @@ exception can do so. Chronos is intentionally outside this R-only acceptance.
 | `evaluation.provisional_candidate` | development candidate selector | result export logic |
 | `evaluation.submission_metadata` | explicit draft/non-submittable fields | export validation only |
 | `execution.default` | mode, process/import workers, batch/in-flight/retry/timeout/thread controls, memory floors, one writer | ordinary `run` and execution provenance |
-| `execution.final_acceptance` | scoped acceptance snapshot; legacy small profiles remain readable, current heavy runs follow the execution policy | acceptance execution and preflight |
+| `execution.final_acceptance` | versioned evidence snapshot; v4 records sequential Processes 1–3 on one Mac worker; legacy snapshots remain readable and heavy runs use the named execution profile | acceptance execution and preflight |
 | `execution.paths` | project, Chronos and R worker paths | coordinator, Dask workers, acceptance preflight |
 | `execution.restart` | skip completed; retry failed/interrupted | coordinator selection policy |
 
 Resolution derives four variants, three candidates, task counts
 100/200/400/800/1,200/12 for Processes 01–06, 1,200 forecast rows, and 12
 official evaluations. These values are not independent configuration fields.
+For the gate-local v4 acceptance, only Processes 01–03 were run: 100 imports,
+200 preprocessing tasks, and 400 transformation tasks.
 
 The scientific fingerprint covers data and selection, the scientific pipeline,
 models and intentionally controlled model settings, combination, evaluation,

@@ -6,16 +6,19 @@ The default creation-time authority is
 authoritative after creation. The original `poc2_m4_daily_100.json` remains the
 historical version-1 period-7 experiment. Derived counts and identities are
 calculated rather than configured.
+The separately approved Gate 3 acceptance uses
+`config/experiments/poc2_m4_daily_100_standardised.json` (version 4); it does
+not replace the production default or reinterpret older experiments.
 
 ## Experiment globals
 
 | JSON area | Current scope | Consumers |
 |---|---|---|
-| `configuration_version`, `experiment` | version 2 by default; opt-in v3 tuning; name, date, objective | validator, DuckDB metadata, status |
+| `configuration_version`, `experiment` | version 2 by default; opt-in v3 tuning; v4 standardisation experiment; name, date, objective | validator, DuckDB metadata, status |
 | `reproducibility.seed` | `1234` | scientific identity and future stochastic workers |
 | `data` | pinned GIFT-Eval M4 Daily source; first 100 official series; 14-step, one-window benchmark | import, planning, evaluation |
-| `pipeline` | Processes 01–06; optional R-period override; standard/robust preprocessing; transformations; combination; opt-in v3 period tuning | task planning and Processes 02–05 |
-| `models` | v1/v2 AutoARIMA + Chronos-2; v3 tuning AutoARIMA + ETS | Process 04 workers and provenance |
+| `pipeline` | Processes 01–06; optional R-period override; standard/robust preprocessing; versioned transformations; v4 explicit context length; combination; opt-in v3/v4 period tuning | task planning and Processes 02–05 |
+| `models` | v1/v2 and normal v4 AutoARIMA + Chronos-2; tuning v3/v4 AutoARIMA + ETS | Process 04 workers and provenance |
 | scientific `evaluation` fields | GIFT-Eval revision, method, options, provisional candidate and submission metadata | Process 06 and export validation |
 
 The scientific fingerprint covers the data, scientific pipeline, models,
@@ -35,7 +38,7 @@ permission to reuse a smaller profile implicitly.
 | `execution.default.mode`, workers and batch sizes | creation snapshot; approved resume override is resolved centrally and recorded | coordinator and execution events |
 | in-flight, retries, worker timeouts and thread limits | shared local/distributed execution behaviour | coordinator, Dask, R and Chronos worker payloads |
 | memory floors and one-writer rule | resource safety and database ownership | run gate and acceptance telemetry |
-| `execution.final_acceptance` | explicitly scoped acceptance profile; historical small cases are not heavy-test defaults | acceptance harness and preflight |
+| `execution.final_acceptance` | acceptance evidence snapshot; v4 is sequential Processes 1–3 on one Mac worker; historical small cases are not heavy-test defaults | acceptance harness and preflight |
 | `execution.paths` | prepared environments and worker entry points | subprocess launch and preflight |
 | `execution.restart` | skip completed; retry failed/interrupted | process and task selection |
 
@@ -75,3 +78,9 @@ subject to profile-owned memory admission. Runtime configuration does not
 introduce a competing scientific experiment authority.
 `config/dependencies/gift_eval.json` remains a setup dependency input.
 The removed `config/imports/m4_daily.json` must not be reintroduced.
+
+The registered v4 transformation state is persisted in the existing
+`transformed_series.parameters` JSON field; no parallel state table or
+configuration source was introduced. The explicit context length is currently
+a stored and tested capability only. It must not be described as active model
+windowing until a selected consumer is integrated.

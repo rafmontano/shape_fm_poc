@@ -15,8 +15,9 @@ that profile, and owned R process trees are monitored throughout execution.
 
 The [acceptance record](poc2-seasonal-period-tuning-results.md) preserves the
 completed five-Mac-worker run separately from the focused eight-worker safeguard
-evidence. Do not repeat the completed acceptance. ID 010 remains queued for the
-researcher's next instruction.
+evidence. Do not repeat the completed acceptance. The researcher reviewed the
+safeguard result and authorised ID 010 implementation on 1 October 2026; its
+heavy tests remain subject to this policy.
 
 ## Approved worker capacity
 

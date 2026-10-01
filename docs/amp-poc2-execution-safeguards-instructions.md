@@ -1,5 +1,10 @@
 # AMP instructions for eight Mac workers and execution safeguards
 
+Status update, 1 October 2026: this task was completed and published as commit
+`9579fc9`. Its instruction to leave ID 010 queued records the boundary at that
+time; the researcher subsequently reviewed the result and authorised ID 010 in
+the [standardisation decision](poc2-standardisation.md).
+
 Approved on 30 September 2026. Implement the three reviewed execution fixes
 and increase Mac CPU capacity from five to eight workers. Ubuntu remains at
 15 CPU workers and 15 logical GPU workers on one physical GPU. Follow the

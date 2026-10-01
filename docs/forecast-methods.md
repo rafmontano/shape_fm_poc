@@ -129,6 +129,10 @@ results <- run_forecast_methods(
 )
 ```
 
-Gate 3 transformation composition remains deferred. When it is implemented,
-it will retain fitted transformation state and invert Gate 4 mean, median, and
-quantiles in reverse transformation order under an approved mean policy.
+Gate 3 now persists fitted transformation state for `standardise_sample_v1`.
+Gate 4 applies registered preparation steps in forward order and inverses the
+forecast `mean` and any supplied `median` or quantiles in reverse order; it does
+not fabricate absent probabilistic fields. Historical
+`minmax_then_standardize` inversion remains available only for configuration
+v1–v3 compatibility. The v4 context-window utility is configured and tested,
+but current forecast adapters still receive complete prepared histories.

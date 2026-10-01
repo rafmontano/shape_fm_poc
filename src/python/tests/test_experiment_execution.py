@@ -37,15 +37,17 @@ from util.transformations import inverse, transform
 EXPECTED_100_TASK_COUNTS = {2: 200, 3: 400, 4: 800, 5: 1_200, 6: 12}
 
 
-def initialize_test_database(path: Path) -> None:
+def initialize_test_database(
+    path: Path, configuration_name: str = "poc2_m4_daily_100.json"
+) -> None:
     """Purpose: Create a configured database for experiment coordinator tests.
 
-    Inputs: Destination ``Path`` and the committed 100-series experiment configuration.
+    Inputs: Destination ``Path`` and one committed 100-series configuration name.
     Outputs: None; creates and initializes the DuckDB file at ``path``.
     """
     initialize_experiment_database(
         path,
-        Path(__file__).resolve().parents[3] / "config/experiments/poc2_m4_daily_100.json",
+        Path(__file__).resolve().parents[3] / "config/experiments" / configuration_name,
     )
 
 
@@ -558,6 +560,110 @@ class TransactionTests(unittest.TestCase):
             ).fetchall(),
             [(1,), (2,)],
         )
+
+    def test_process_04_inverts_persisted_sample_standardisation_forecast(self):
+        """Process 04 restores every probabilistic field with persisted v4 state."""
+        self.coordinator.close()
+        database = self.directory / "poc1.duckdb"
+        database.unlink()
+        initialize_test_database(
+            database, "poc2_m4_daily_100_standardised.json"
+        )
+        self.coordinator = ExperimentCoordinator(database)
+        self._insert_benchmark_and_instances()
+        connection = self.coordinator.connection
+        state = {
+            "recipe": "standardise_sample_v1",
+            "version": 1,
+            "centre": 20.0,
+            "scale": 10.0,
+            "count": 3,
+            "constant": False,
+        }
+        connection.execute(
+            """INSERT INTO experiment_variants
+            (variant_id, experiment_id, cleaning_method, transformation_method,
+             adjustment_method, configuration)
+            VALUES ('variant-v4', 'experiment', 'robust',
+                    'standardise_sample_v1', 'identity', '{}')"""
+        )
+        connection.execute(
+            """INSERT INTO transformed_series
+            (transformation_id, experiment_id, variant_id,
+             forecast_instance_id, preprocessing_id, transformation_method,
+             input_hash, output_hash, transformed_target, parameters,
+             parent_result_id)
+            VALUES ('transformed-v4', 'experiment', 'variant-v4', 'instance-0',
+                    'pre-0', 'standardise_sample_v1', 'in', 'out',
+                    [-1.0, 0.0, 1.0], ?, 'pre-0')""",
+            [json.dumps(state)],
+        )
+        connection.execute(
+            """INSERT INTO experiment_tasks
+            (task_id, experiment_id, stage, forecast_instance_id, variant_id,
+             candidate, status)
+            VALUES ('task-v4', 'experiment', 4, 'instance-0', 'variant-v4',
+                    'auto_arima', 'pending')"""
+        )
+        transformed_quantiles = [
+            [-4.0, -3.0],
+            [-3.0, -2.0],
+            [-2.0, -1.0],
+            [-1.0, 0.0],
+            [-0.5, 1.5],
+            [0.0, 2.0],
+            [1.0, 3.0],
+            [2.0, 4.0],
+            [3.0, 5.0],
+        ]
+        received_contexts = []
+
+        def stub_worker(payload):
+            """Return asymmetric transformed-scale output without fitting a model."""
+            job = payload["jobs"][0]
+            received_contexts.append(job["context"])
+            return {
+                "results": [{
+                    "id": job["id"],
+                    "mean": [0.0, 1.0],
+                    "median": [-0.5, 1.5],
+                    "quantiles": transformed_quantiles,
+                }],
+                "packages": {"forecast": "stub"},
+            }
+
+        self.coordinator._r_worker = stub_worker
+        result = self.coordinator.run_process(
+            "experiment", 4, workers=1, batch_size=1
+        )
+
+        self.assertEqual(result["counts"], {"completed": 1})
+        self.assertEqual(received_contexts, [[-1.0, 0.0, 1.0]])
+        forecast = connection.execute(
+            """SELECT scale, mean, median, quantile_levels, quantiles,
+                      parent_result_id, forecast_capability
+               FROM forecasts WHERE candidate = 'auto_arima'"""
+        ).fetchone()
+        self.assertEqual(forecast[0], "original")
+        self.assertEqual(forecast[1], [20.0, 30.0])
+        self.assertEqual(forecast[2], [15.0, 35.0])
+        self.assertEqual(forecast[3], list(self.coordinator.quantiles))
+        self.assertEqual(
+            forecast[4],
+            [
+                [-20.0, -10.0],
+                [-10.0, 0.0],
+                [0.0, 10.0],
+                [10.0, 20.0],
+                [15.0, 35.0],
+                [20.0, 40.0],
+                [30.0, 50.0],
+                [40.0, 60.0],
+                [50.0, 70.0],
+            ],
+        )
+        self.assertEqual(forecast[5], "transformed-v4")
+        self.assertEqual(forecast[6], "probabilistic")
 
     def test_chronos_oom_restarts_splits_and_preserves_successes(self):
         """Chronos restarts after OOM, splits the batch, and records retry metadata."""

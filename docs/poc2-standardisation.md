@@ -1,18 +1,22 @@
 # POC2 Standardisation Decision
 
-Approved: 30 September 2026.
+Approved: 30 September 2026; implementation authorised: 1 October 2026.
 Scope: Objective 2, migration list ID 010, Gate 3.
-Status: Approved design; implementation and acceptance pending.
+Status: Implemented; focused Gate 1–3 acceptance completed 1 October 2026.
 
-Implement only after AMP has completed and reported its current
-[execution safeguard follow-up](amp-poc2-execution-safeguards-instructions.md) and the
-researcher instructs resumption of ID 010. This item remains queued; prior
-design approval does not start it automatically. The
-[execution policy](execution-policy.md) governs eventual heavy testing.
+The prerequisite [execution safeguard follow-up](amp-poc2-execution-safeguards-instructions.md)
+was completed, validated and published as commit `9579fc9` on 30 September
+2026. The researcher reviewed that result and authorised ID 010 to start on
+1 October 2026. The [execution policy](execution-policy.md) governs any heavy
+testing.
 
 ## Decision
 
-Use direct per-series or per-window standardisation, with explicit constant-input handling and consistent local implementations in R and Python. Do not add min–max scaling or the redundant min–max followed by standardisation recipe to the new POC2 workflow.
+Use the versioned recipe `standardise_sample_v1` for direct per-series or
+per-window standardisation, with explicit constant-input handling and
+consistent local implementations in R and Python. Do not add min–max scaling
+or the redundant min–max followed by standardisation recipe to the new POC2
+workflow.
 
 This is a Bake Off inspired approach adapted to ShapeFM, not an exact historical Bake Off reproduction. The aim is reliable, reproducible preparation, not a study of whether transformations improve forecast accuracy. See the [evidence record](poc2-standardisation-evidence.md) and [AMP implementation instructions](amp-poc2-standardisation-instructions.md).
 
@@ -59,7 +63,11 @@ Both implementations share:
 - Separate fit, apply and inverse operations. Apply and inverse never refit.
 - Validation rules, numerical test fixtures and declared comparison tolerances.
 
-Maintain the agreed small ordered-list interface, initially containing standardisation only. Apply forward steps in order and inverse steps in reverse order. Do not build a formula interpreter or universal translation framework. Existing no-transformation execution remains available where already selected; it is not a new cleaning mode.
+Maintain the agreed small ordered-list interface with `identity` and
+`standardise_sample_v1`. Apply forward steps in order and inverse steps in
+reverse order. Do not build a formula interpreter or universal translation
+framework. Existing no-transformation execution remains available where
+already selected; it is not a new cleaning mode.
 
 Human-readable source headers and function comments must explain the fitting boundary, mathematical rule, constant safeguard and inverse.
 
@@ -116,8 +124,17 @@ No forecast-pool expansion, new feature/meta-learner training pipeline, seasonal
 
 ## Approval and future reference
 
-The researcher approved the reviewed ID 010 decision and then authorised repository documentation and AMP implementation instructions on 30 September 2026. The approved design is recorded here; the [evidence record](poc2-standardisation-evidence.md) separates verified historical observations from future acceptance requirements.
+The researcher approved the reviewed ID 010 decision and repository
+documentation on 30 September 2026, reviewed the completed execution
+safeguards, and authorised implementation on 1 October 2026. The approved
+design is recorded here; the [evidence record](poc2-standardisation-evidence.md)
+separates verified historical observations from future acceptance
+requirements.
 
 This decision refines the previously deferred transformation composition discussion: standardisation is the only initial transformation step; the small compositional boundary remains. The [code standards](code-standards.md) still govern configuration authority, comments and naming. The explicit R/Python mathematical counterparts are intentional, not competing orchestration implementations.
 
-Implementation may start only after the current AMP task is complete. This document does not certify implementation, acceptance, a commit or GitHub publication.
+Implementation started from the clean, synchronised `9579fc9` baseline. The
+focused Gate 1–3 acceptance and its limits are recorded in the
+[evidence record](poc2-standardisation-evidence.md). This status does not certify
+a full forecasting/evaluation pipeline, forecast improvement, a commit, or
+GitHub publication.

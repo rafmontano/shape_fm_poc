@@ -14,8 +14,11 @@ the command does not install or update dependencies. The public actions are
 Heavy testing must follow the [approved execution policy](docs/execution-policy.md).
 The [execution safeguard instructions](docs/amp-poc2-execution-safeguards-instructions.md)
 record the implemented eight Mac CPU workers and enforcement fixes. The focused
-8+15 CPU validation passed without repeating the completed seasonal test. ID 010
-remains queued until the researcher explicitly instructs its resumption.
+8+15 CPU validation passed without repeating the completed seasonal test.
+Migration ID 010 subsequently implemented the portable
+`standardise_sample_v1` Gate 3 recipe and completed its focused, gate-local
+100-series acceptance; see the
+[standardisation evidence](docs/poc2-standardisation-evidence.md).
 
 ## Installation
 
@@ -62,6 +65,9 @@ seasonal-naive fallback are documented in
 [`docs/forecast-methods.md`](docs/forecast-methods.md).
 Import missingness and the two preprocessing modes are documented in
 [`docs/preprocessing.md`](docs/preprocessing.md).
+New standardised experiments use configuration v4 and keep v1–v3 interpretation
+unchanged. The committed v4 acceptance configuration is
+`config/experiments/poc2_m4_daily_100_standardised.json`.
 Completed task state and scientific provenance are stored transactionally, so
 rerunning the same experiment skips completed work without changing experiment,
 task, forecast, or evaluation identity.
@@ -131,6 +137,14 @@ candidates, diagnostics, validation scores, selection, and final forecast in
 `selected_tuning_series`. Validation actuals in this QA object are scoring data
 only and were never supplied to preparation or model fitting.
 
+For the standardisation acceptance, set
+`STANDARDISATION_QA_DATABASE <- ".amp/in/id010_standardisation_acceptance.duckdb"`
+and source `src/r/qa/inspect_standardisation.R` in a repository-root R session.
+It leaves `selected_standardisation`, original/model/standardised/restored
+histories, the fitted/stored state, and validation checks available for manual
+inspection. The script opens DuckDB read-only and uses future actuals for QA
+display only, never fitting.
+
 Generated databases and reports remain ignored; `test` refuses to overwrite
 `data/shapefm.duckdb`.
 
@@ -152,6 +166,9 @@ src/r/02_01_preprocess_series.R          R preprocessing substep
 src/r/04_01_forecast_auto_arima.R        R AutoARIMA substep
 src/r/04_01_forecast_r_methods.R         bounded AutoARIMA/ETS tuning substep
 src/r/util/forecast_methods.R             shared registered R forecast pool
+src/r/util/transformations.R               portable fitted standardisation
+src/r/util/window_preparation.R            explicit trailing-context preparation
+src/r/util/labels.R                        strict direction-label utility
 src/r/util/seasonal_period.R              shared period diagnostics
 src/r/util/time_series_input.R           shared R time-series input contract
 src/r/tests/                              focused R contract tests

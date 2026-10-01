@@ -1,8 +1,14 @@
 # POC2 Standardisation Evidence
 
-Recorded: 30 September 2026. Related [approved decision](poc2-standardisation.md).
+Recorded: 30 September 2026; prerequisite status updated 1 October 2026.
+Related [approved decision](poc2-standardisation.md).
 
-This record preserves the reasons for the decision and small read-only observations made before implementation. It is not evidence that the new design has been implemented or accepted. No full experiment, GPU job or 100-series acceptance was run for this record.
+This document has two dated evidence phases. The opening sections preserve the
+decision basis and small read-only observations recorded before implementation;
+those observations alone did not establish implementation or acceptance. The
+sections dated 1 October 2026 separately record the later implementation,
+focused tests, and bounded 100-series Gate 1–3 acceptance. No section records a
+full forecasting pipeline, GPU, full-dataset, or forecast-accuracy acceptance.
 
 ## Literature and implementation evidence
 
@@ -100,12 +106,152 @@ inverse([-100, 0, 100], method, flat.parameters)
 
 Run such historical probes in a separate checkout/session if later changes replace these interfaces; do not reset an active project or modify an experiment database to reproduce them.
 
-## Evidence still required
+## Requirements recorded before implementation
 
-AMP must add dated, reproducible evidence for the new implementation: changed revision and environments, commands actually run, shared R/Python fixtures, state interoperability, declared tolerances, fold leakage tests, source immutability, old-recipe compatibility, persistence/resume, bounded parallel consistency and manual QA. Include failures and skipped checks.
+The preimplementation review required dated, reproducible evidence for the new
+implementation: changed revision and environments, commands actually run,
+shared R/Python fixtures, state interoperability, declared tolerances, fold
+leakage tests, source immutability, old-recipe compatibility,
+persistence/resume, bounded parallel consistency and manual QA. Failures and
+skipped checks also had to be retained. The later dated sections report the
+completed evidence and remaining limits.
 
 Following the researcher's 30 September 2026 execution update, heavy-test evidence must include both Mac and Ubuntu until advised otherwise: readiness/code/environment checks, host and worker IDs, completed task counts per host, task timestamps demonstrating overlapping execution, wall time, failures/retries and comparison with a small sequential reference. Connected workers alone are insufficient. Record an unavailable host as an outstanding distributed check, not a successful Mac-only substitute. This is a requirement for future runs; the historical Mac-only probes above remain unchanged and do not establish Ubuntu readiness or two-machine acceptance.
 
-Record the Ubuntu code synchronisation performed before testing: method, verified source/target checkout identities, revisions and relevant submodule revisions, source fingerprints for relevant uncommitted changes, and confirmation that test workers loaded the updated code. Revalidate after code changes. Synchronisation must preserve work on both machines and exclude platform-specific environments, secrets and existing databases/results. No synchronisation or Ubuntu readiness check has been performed as part of this documentation update.
+Record the Ubuntu code synchronisation performed before testing: method,
+verified source/target checkout identities, revisions and relevant submodule
+revisions, source fingerprints for relevant uncommitted changes, and
+confirmation that test workers loaded the updated code. Revalidate after code
+changes. Synchronisation must preserve work on both machines and exclude
+platform-specific environments, secrets and existing databases/results.
+
+## Prerequisite closure reviewed on 1 October 2026
+
+AMP reported the execution safeguards complete and published at commit
+`9579fc9`. Mac, Ubuntu and `origin/main` were clean at that commit, with the
+same 61-file runtime-source manifest (`e28154d3...a365`). The focused two-host
+evidence used 8 Mac CPU and 15 Ubuntu CPU workers; all eight Mac workers
+completed useful overlapping work, and a real comparison overlapped two ETS
+fits on Mac with AutoARIMA on Ubuntu. The three fresh-fold outputs matched the
+sequential references with maximum difference 0 at tolerance `1e-10`.
+
+The reported safeguards also passed 81 broader Python tests, 51 focused safety
+tests and all nine R forecast-method tests. The accepted 800-forecast database
+remained unchanged and an isolated restart skipped completed work. This closes
+the operational prerequisite for beginning ID 010; it is not implementation or
+acceptance evidence for the standardisation contract itself.
+
+The prerequisite report also noted that `renv` considers the lock not fully
+synchronised, although all required pinned R packages loaded. ID 010 must not
+turn that observation into an unapproved dependency upgrade or wholesale lock
+regeneration.
 
 Use at most the first 100 official M4 Daily series for gate-local acceptance and report nonconstant/constant counts and expected discrepancies. Do not label the small historical probes above as cross-language acceptance of the new code, a full pipeline test or evidence of forecast improvement.
+
+## ID 010 implementation and gate-local acceptance — 1 October 2026
+
+Implementation started from commit `9579fc9` after confirming Mac, Ubuntu and
+`origin/main` at that revision with stopped workers. The six approved pending
+documentation edits listed in the implementation instructions were retained.
+No dependency was added, no lockfile was regenerated, and accepted experiment
+databases were not modified.
+
+The new `standardise_sample_v1` implementation is local to both R and Python.
+It uses separate fit/apply/inverse operations, exact six-key portable state,
+sample SD (n−1), and an effective scale of 1 for exact constants and singletons.
+The ordered interface contains only `identity` and the new recipe. The legacy
+Python `minmax_then_standardize` path remains unchanged for v1–v3 retrieval and
+resume. `standardise_vec` and `scale_pair_std` reuse the same R fit/apply
+implementation. Direction labels retain strict future > final-history
+semantics, including zero for ties.
+
+Focused commands executed on Mac included:
+
+```sh
+PYTHONPATH=src/python .tools/uv/uv run --locked --no-sync python -m unittest \
+  tests.test_transformations tests.test_configuration tests.test_experiment_execution
+Rscript src/r/tests/test_transformations.R
+.tools/uv/uv run --locked --no-sync python src/python/00_main.py run \
+  --database .amp/in/id010_standardisation_acceptance.duckdb \
+  --configuration config/experiments/poc2_m4_daily_100_standardised.json \
+  --processes 1-3
+.tools/uv/uv run --locked --no-sync python src/python/00_main.py run \
+  --database .amp/in/id010_standardisation_acceptance.duckdb --processes 1-3
+```
+
+The initial focused Python standardisation set passed 30 tests; the broader
+configuration, execution and tuning selection passed 73 tests. After final
+documentation and source synchronisation, the exact Python command shown above
+passed 43 tests on each host, and the R contract suite passed on each host.
+Python was 3.12.14, R was 4.6.1 and jsonlite was 2.0.0. Expected synthetic Dask
+failure logs in the broader suite were recovery assertions, not test failures.
+The final top-level Python suite passed 155 tests. An unscoped recursive
+discovery also loaded the GIFT-Eval integration module in the main environment
+and failed because NumPy is intentionally absent there; rerunning that module
+with its documented locked GIFT-Eval environment passed both tests. No package
+was installed or lock changed to hide this environment boundary.
+Manual QA succeeded under the normal repository R startup by sourcing
+`src/r/qa/inspect_standardisation.R`; `Rscript --vanilla` could not load the
+project DuckDB package and was not used to change dependencies.
+
+The fresh acceptance database contains 100 selected series and 57,235 raw
+observations, 200 completed preprocessing rows, and 400 completed
+transformations (200 identity and 200 standardised). All 200 fitted histories
+were nonconstant. Every standardisation state had exactly the approved keys.
+The largest transform/inverse round-trip discrepancy was
+`1.8189894035458565e-12`. A resume request skipped Processes 01–03 and every
+scientific task attempt remained exactly 1.
+
+Across the 100 robust histories, the maximum R/Python centre difference was
+`4.9112713895738125e-11`, the maximum scale difference was
+`1.8189894035458565e-12`, and the maximum transformed-value difference was
+`1.865174681370263e-14`. New R output matched the prior direct nonconstant
+sample-standardisation formula exactly. The observed historical Python
+population/sample relation differed from its algebraic expectation by at most
+`8.881784197001252e-16`. These are double-precision arithmetic-order effects,
+not materially different recipes.
+
+Ubuntu initially received 16 implementation paths and then the complete final
+22-path source/documentation set through checksum `rsync`, without `--delete`
+and excluding environments, databases and results. Mac and Ubuntu file
+manifests were compared after each transfer.
+Small isolated process-pool checks used 8 Mac and 15 Ubuntu CPU workers; each
+completed 64 deterministic tasks and produced result SHA-256
+`73f7cfbc7f7b4bcd1d247aae4a56276f5f251eb8e909dce712edb590ba82d49d`.
+This proves both configured host capacities for the bounded numerical work; it
+is not presented as a heavy distributed forecast acceptance. A first Mac
+stdin-based multiprocessing harness failed because macOS spawn cannot reload
+`<stdin>`; the file-based rerun passed and its temporary file was removed.
+
+Preservation checks before and after acceptance retained SHA-256
+`cbb5a8604dcfd7dbc8a5c4c6d930825d74711c6721061e13bfafcee884c2dbc7`
+for `results/poc2_m4_daily_100_period_tuning.duckdb` and
+`a2b99cf97be2bc833aff60874627dcedd16ced13399dfaf3318f673ade84b4fe`
+for `data/shapefm.duckdb`. The new context-length utility and v4 setting are
+tested but not consumed by current forecast adapters. Gate 4 model refits,
+full evaluation, accuracy claims, full-dataset acceptance and GPU execution
+remain outside this gate-local migration.
+
+## ID 010 review corrections — 1 October 2026
+
+A focused Process 04 integration test now creates a temporary configuration-v4
+database, persists one `standardise_sample_v1` state, and supplies an asymmetric
+stub AutoARIMA response on the transformed scale. The coordinator test verifies
+that the stored state—not a refit—restores mean `(0, 1)` to `(20, 30)`, median
+`(-0.5, 1.5)` to `(15, 35)`, and each of nine distinct quantile vectors to its
+independently specified original-scale expectation. It also verifies original
+scale, transformation lineage and probabilistic capability. No forecast model
+was fitted.
+
+The committed v4 `execution.final_acceptance` snapshot was corrected to the
+acceptance actually run: sequential Processes 1–3, one Mac CPU worker, and its
+2 GiB system-memory floor. It no longer inherits the historical Objective
+1 Mac/GPU topology. This snapshot is not a heavy execution profile; heavy work
+still requires the approved named 8-Mac/15-Ubuntu CPU profile.
+
+After checksum synchronisation, the affected suite passed 44 Python tests and
+the R standardisation suite independently on both Mac and Ubuntu. The accepted
+Gate 1–3 database and both pre-existing accepted databases remained unchanged.
+This review test closes the missing inversion-path coverage; it does not expand
+the Gate 1–3 acceptance into a real forecasting, distributed, full-pipeline, or
+accuracy acceptance.

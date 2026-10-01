@@ -124,7 +124,10 @@ selection and final forecast available in the session. The existing
 - Five estimated-policy fold fits and two final estimated fits reached the
   approved 30-minute timeout. Their failures and substitutions remain visible;
   model settings and timeout were not weakened to make the acceptance pass.
-- ID 010 remains queued and no control spreadsheet was changed.
+- At completion on 30 September, ID 010 remained queued and no control
+  spreadsheet was changed. The researcher subsequently reviewed the safeguard
+  follow-up and authorised ID 010 on 1 October 2026; see the
+  [standardisation decision](poc2-standardisation.md).
 
 ## Eight-worker safeguard evidence
 

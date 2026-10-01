@@ -4,14 +4,18 @@ Implement approved migration ID 010 in `/Users/monta/Documents/Projects/shape_fm
 
 ## Sequence and authority
 
-Queue status updated on 30 September 2026: do not start ID 010 automatically.
-The seasonal test is complete. Complete and report its
-[execution safeguard follow-up](amp-poc2-execution-safeguards-instructions.md),
-then wait for the researcher's instruction to return to this item. The
-[execution policy](execution-policy.md) also governs its eventual heavy tests,
-including explicit approval for any laptop-only exception.
+Start authorised on 1 October 2026. The seasonal test and its
+[execution safeguard follow-up](amp-poc2-execution-safeguards-instructions.md)
+are complete at published commit `9579fc9`. Mac, Ubuntu and `origin/main` were
+reported clean and synchronised at that commit. The researcher reviewed the
+result and explicitly authorised ID 010. The [execution policy](execution-policy.md)
+governs any heavy tests, including explicit approval for a laptop-only
+exception.
 
-Do not interrupt or mix this work with the current seasonal-period task. Finish its approved implementation and acceptance, report its outcome, and stop its active processes before beginning ID 010. If it remains blocked or unfinished, report that dependency instead of silently superseding it. Do not start a second concurrent editor/agent on shared files.
+Confirm that the reported clean `9579fc9` baseline and stopped worker state
+still hold before editing. If either host has subsequently changed, preserve
+that work and resolve the difference safely rather than resetting, stashing or
+overwriting it. Do not start a second concurrent editor/agent on shared files.
 
 After that boundary, inspect the actual worktree and re-read the completed code. File names and configuration versions mentioned here are observations, not assumptions about the final previous-task result. Preserve all unrelated changes, original data, accepted results and existing QA scripts. Do not reset, stash, delete or overwrite another task's work.
 
@@ -19,7 +23,10 @@ Read the decision and evidence, research-vision.md, code-standards.md, architect
 
 ## Synchronise Ubuntu before use
 
-Ubuntu requires code synchronisation first. After the preceding task is complete, inspect the repositories and active workers on both machines, then use the established non-destructive code synchronisation workflow to bring Ubuntu to the intended Mac baseline. Preserve uncommitted and unrelated work on both hosts; resolve any overlapping edits with the researcher rather than overwriting them.
+Ubuntu was synchronised to the published `9579fc9` baseline during the
+prerequisite task. Verify that baseline before editing; do not repeat a transfer
+merely for appearance. Preserve uncommitted and unrelated work on both hosts;
+resolve any overlapping edits with the researcher rather than overwriting them.
 
 After ID 010 implementation, synchronise its changes again before distributed tests. Repeat this check whenever the code under test changes. Include the required source, tests, shared configuration and relevant dependency declarations, not just the last committed revision if the tested Mac code has uncommitted changes. Do not copy Mac virtual environments, compiled R libraries, secrets, databases, results or machine-specific settings onto Ubuntu.
 
@@ -31,8 +38,15 @@ Verify and record matching tested revisions, submodule revisions where applicabl
 2. For finite nonconstant history use centre=mean(x), scale=sample SD with n−1, forward(y)=(y−centre)/scale and inverse(z)=centre+scale*z. In Python select the sample convention explicitly; use double precision in both languages.
 3. Detect exactly constant nonempty history before calculating SD, including length one. Store centre=x[1], effective scale=1 and constant=true. Apply y−centre and invert centre+z for every supplied value. Do not zero arbitrary future values or force every forecast to the historical constant. Nearly constant nonconstant input is not silently clipped to constant.
 4. Validate inputs, fitted state, supported versions and finite results. Empty/nonfinite histories, invalid state and numerical failures produce clear structured errors through existing failure handling, not fabricated zero-series success. Missing-value repair belongs to Gate 2. Invalid test actuals remain subject to existing evaluation rules, not imputation by the transformer.
-5. Use matching registered names, versions, parameter keys and JSON-serialisable fitted state. Retain centre, effective scale, count and constant flag with the recipe identity. Applying/inverting a fitted state must not refit. State produced by one language must be usable by the other without reinterpretation.
-6. Retain only the small ordered-step interface agreed previously; register direct standardisation as the initial nontrivial step. Compose registered steps, not executable formula strings or model-specific branches. Apply in order, invert in reverse. Do not add new min–max, nonlinear or automatic transformation-selection capabilities.
+5. Register the approved recipe as `standardise_sample_v1` in both languages.
+Use the same JSON-serialisable state keys: `recipe`, `version`, `centre`,
+`scale`, `count` and `constant`. Do not silently accept aliases with different
+semantics. Applying/inverting a fitted state must not refit. State produced by
+one language must be usable by the other without reinterpretation.
+6. Retain only the small ordered-step interface `identity` and
+`standardise_sample_v1`. Compose registered steps, not executable formula
+strings or model-specific branches. Apply in order, invert in reverse. Do not
+add new min–max, nonlinear or automatic transformation-selection capabilities.
 
 ## Integrate without changing the preceding experiment
 
@@ -63,6 +77,13 @@ For heavy tests, complete and verify the Ubuntu code synchronisation above befor
 - If either host or its required environment is unavailable, report the limitation and leave the two-machine check outstanding. Continue safe independent lightweight checks where useful; do not silently substitute a Mac-only heavy run or report distributed acceptance as passed.
 
 This changes execution placement, not scientific scope. Keep the existing 100-series limit and gate-local tests. Do not add model downloads, dependency upgrades, a full-dataset run or full import-to-evaluation run. Use GPU acceleration only where an already approved workload needs it; CPU standardisation does not require GPU computation.
+
+The prerequisite run reported that `renv` considers the project lock not fully
+synchronised, while all required pinned R dependencies loaded successfully.
+Treat that as a recorded repository-maintenance limitation, not permission to
+upgrade packages or regenerate the whole lock during ID 010. If ID 010 genuinely
+requires a new dependency, stop and report it for review; prefer the existing
+base R/Python numerical facilities.
 
 1. Add shared numerical fixtures for both languages: positive/nonconstant, negative, exactly constant, one observation, small real variation, invalid empty/nonfinite input, malformed state, values beyond training range, and finite inverse recovery. Establish explicit absolute/relative tolerances appropriate to double precision; report maximum discrepancies rather than claiming bitwise equality.
 2. Check new R versus new Python values and parameters. Fit in R then apply/invert in Python, and vice versa, including JSON state round trips. Do not use either new implementation as the sole expected-value oracle; include hand-calculated fixtures such as x=(10,20,30) giving (-1,0,1).

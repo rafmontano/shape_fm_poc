@@ -68,6 +68,22 @@ The database retains the historical column name `cleaning_method` for safe
 schema compatibility. New configuration, APIs, and documentation call the
 values preprocessing modes.
 
+## Gate 3 standardisation boundary
+
+Preprocessing and transformation are separate. Configuration v4 may route each
+`standard` or `robust` result through either `identity` or
+`standardise_sample_v1`; it never applies standardisation to the canonical raw
+row. The recipe fits only the finite Gate 2 historical output and stores its
+six-field state with the transformed row. Exact constant and singleton inputs
+use centre equal to the first value and effective scale 1. Nonconstant inputs
+use sample SD (n−1). Gate 4 reuses this fitted state for inversion rather than
+refitting on forecasts or actuals.
+
+The original raw target and Gate 2 outputs remain unchanged and separately
+queryable. Historical configuration-v1 through v3
+`minmax_then_standardize` rows keep their former population-SD and constant
+semantics for retrieval and resume compatibility.
+
 ## Evaluation and official references
 
 Forecast vectors must be finite. Actual observations are different: missing
