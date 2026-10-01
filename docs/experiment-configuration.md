@@ -11,6 +11,8 @@ The optional 100-series AutoARIMA/ETS tuning experiment is
 `config/experiments/poc2_m4_daily_100_period_tuning.json` and uses version 3.
 The gate-local standardisation experiment is
 `config/experiments/poc2_m4_daily_100_standardised.json` and uses version 4.
+The opt-in rolling-window/S1 experiment is
+`config/experiments/poc2_m4_daily_100_rolling_windows.json` and uses version 5.
 ShapeFM validates the entire document before writing, creates a temporary
 DuckDB, stores the original and resolved documents, creates six process-state
 rows, commits, and atomically renames the file. Invalid input leaves no database.
@@ -32,7 +34,7 @@ constants, monitors active owned R processes and implements eight Mac CPU
 workers. Preserve stored creation documents and integrity hashes; do not reload
 or rewrite scientific configuration.
 
-## Versions 1–4
+## Versions 1–5
 
 Version 1 coupled `data.benchmark.seasonality = 7` to R preprocessing, R
 forecasting, and scoring. Stored v1 documents remain valid and keep that
@@ -81,11 +83,20 @@ remain positive affine maps for additional values. Configuration versions 1–3
 retain `minmax_then_standardize` exactly as stored and are never silently
 reinterpreted as the new recipe.
 
+Version 5 preserves version-4 transformation and period behavior and adds the
+combined ID 011/016 contract under `pipeline.window_preparation`. It defines all
+ten approved frequency W/H pairs, derives stride as W+H, selects frequencies
+explicitly, protects official training boundaries, and fixes preprocessing,
+transformation and S1 settings. The production document selects only Daily; the
+frequency table is a reusable resolver contract, not a claim that every
+GIFT-Eval dataset is production-ready. The exact S1 membership is generated and
+persisted once, then controls resume without rerunning random allocation.
+
 ## Configuration fields
 
 | Field | Meaning and current value | Consumer |
 |---|---|---|
-| `configuration_version` | `1` historical; `2` independently resolved R period; `3` opt-in period tuning; `4` portable sample standardisation | validator and DuckDB loader |
+| `configuration_version` | `1` historical; `2` independently resolved R period; `3` opt-in period tuning; `4` portable sample standardisation; `5` rolling windows and persisted S1 | validator and DuckDB loader |
 | `experiment.name` | v2 default `poc2_m4_daily_100_resolved_period`; v1 name retained | experiment metadata and status |
 | `experiment.date` | required ISO date; v2 default `2026-09-30` | DuckDB experiment metadata |
 | `experiment.description` | required research objective | DuckDB experiment metadata |
@@ -98,6 +109,9 @@ reinterpreted as the new recipe.
 | `pipeline.preprocessing` | modes `standard`, `robust`; default `robust` | Process 02 task creation and R payload |
 | `pipeline.transformations.methods` | v1–v3: `identity`, `minmax_then_standardize`; v4: `identity`, `standardise_sample_v1` | Process 03 task creation and worker payload |
 | `pipeline.window_preparation.context_length` | v4 positive integer; committed value `64`; capability not yet consumed by current model adapters | central configuration and future selected window consumers |
+| `pipeline.window_preparation.frequencies` | v5 approved W/H definitions for 10S, 5T, 10T, 15T, H, D, W, M, Q and Y; resolved stride is W+H | rolling-window coordinator and child definitions |
+| `pipeline.window_preparation.split` | v5 S1 by original series, fraction 0.80, seed 123, pinned tsai generator; persisted membership controls resume | eligible-cohort allocation and child membership |
+| `pipeline.window_preparation.block_policy` | v5 complete non-overlapping blocks at segment start; no padding, partial block, random offset or protected-boundary crossing | tsai window creation |
 | `pipeline.adjustment` | `identity` | variant identity |
 | `pipeline.combination` | equal weight; v1/v2 AutoARIMA + Chronos-2, v3 AutoARIMA + ETS | Process 05 payload and provenance |
 | `models.auto_arima` | R `forecast` package and all `auto.arima`/interval settings | Process 04 R payload |
@@ -126,6 +140,12 @@ The scientific fingerprint covers data and selection, the scientific pipeline,
 models and intentionally controlled model settings, combination, evaluation,
 and seed. It excludes experiment metadata and execution controls. The
 configuration-integrity fingerprint covers the complete resolved document.
+
+Version 5's resolved configuration stores derived strides. Its parent schema
+adds stable numeric frequency/dataset/series lookups and preparation-run state;
+the normalized child schema stores definitions, S1 membership, tasks and
+prepared windows. Raw arrays remain in the parent and future values are resolved
+by zero-based, end-exclusive positions.
 
 ## Consumer flow
 

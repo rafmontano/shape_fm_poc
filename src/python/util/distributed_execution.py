@@ -24,7 +24,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable, Iterable, Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -52,6 +52,13 @@ MAC_TUNING_R_RESOURCE = "MAC_TUNING_R_SLOT"
 UBUNTU_TUNING_R_RESOURCE = "UBUNTU_TUNING_R_SLOT"
 # Machine-local coordination directory for cross-worker R-memory reservations.
 TUNING_RESERVATION_DIRECTORY = Path("/tmp/shapefm-r-tuning-reservations")
+
+
+def package_version_probe(package: str) -> str:
+    """Return one installed package version through a serializable worker probe."""
+    import importlib.metadata
+
+    return importlib.metadata.version(package)
 
 
 def _worker_provenance(
@@ -194,6 +201,7 @@ def repository_source_manifest() -> dict[str, str]:
     runtime_files = {
         "config/execution_profiles.json",
         "config/experiments/poc2_m4_daily_100_period_tuning.json",
+        "config/experiments/poc2_m4_daily_100_rolling_windows.json",
         "pyproject.toml",
         "uv.lock",
         "renv.lock",
@@ -640,6 +648,115 @@ def transform_batch(batch: list[dict[str, Any]], retry_count: int = 0) -> dict[s
         "results": results,
         "runtime_seconds": time.monotonic() - started,
         "worker": _worker_provenance(retry_count),
+    }
+
+
+def window_preparation_batch(
+    batch: list[dict[str, Any]],
+    script: str,
+    timeout: float,
+    threads: int,
+    memory_safety: dict[str, Any] | None = None,
+    retry_count: int = 0,
+) -> dict[str, Any]:
+    """Clean and standardise complete windows without reading either DuckDB file.
+
+    Each outer job represents one source series and contains only bounded input
+    windows. Future observations are represented by positions and never enter this
+    worker. The R boundary applies the configured Gate 2 mode to each input, then
+    Python fits ``standardise_sample_v1`` independently to the cleaned input.
+    """
+    started = time.monotonic()
+    r_jobs = []
+    metadata: dict[str, dict[str, Any]] = {}
+    for series_job in batch:
+        for window in series_job["windows"]:
+            window_id = window["window_id"]
+            metadata[window_id] = window
+            r_jobs.append(
+                {
+                    "id": window_id,
+                    "context": window["input"],
+                    "mode": series_job["preprocessing_mode"],
+                    "seasonality": series_job["seasonality"],
+                }
+            )
+    monitor_context = nullcontext(None)
+    if memory_safety is not None:
+        is_mac = socket.gethostname() == memory_safety["mac_hostname"]
+        monitor_context = tuning_memory_reservation(
+            minimum_available_gib=float(
+                memory_safety["mac_minimum_available_gib"]
+                if is_mac
+                else memory_safety["ubuntu_minimum_available_gib"]
+            ),
+            fit_budget_gib=float(memory_safety["fit_budget_gib"]),
+            timeout_seconds=float(memory_safety["admission_timeout_seconds"]),
+            poll_interval_seconds=float(memory_safety["poll_interval_seconds"]),
+            breach_grace_seconds=float(memory_safety["breach_grace_seconds"]),
+            swap_growth_limit_gib=float(memory_safety["swap_growth_limit_gib"]),
+        )
+    with monitor_context as memory_monitor:
+        response = _run_r(
+            {"action": "preprocess", "jobs": r_jobs},
+            script,
+            timeout,
+            threads,
+            memory_monitor=memory_monitor,
+        )
+    cleaned = {item["id"]: item for item in response["results"]}
+    if set(cleaned) != set(metadata) or len(cleaned) != len(response["results"]):
+        raise RuntimeError("window preprocessing returned mismatched window identities")
+    by_series: dict[str, list[dict[str, Any]]] = {
+        job["id"]: [] for job in batch
+    }
+    for series_job in batch:
+        for window in series_job["windows"]:
+            prepared = cleaned[window["window_id"]]
+            transformed = transform(
+                prepared["values"], series_job["transformation"]
+            )
+            by_series[series_job["id"]].append(
+                {
+                    **{key: value for key, value in window.items() if key != "input"},
+                    "input_hash": json_fingerprint(window["input"]),
+                    "cleaned_hash": json_fingerprint(prepared["values"]),
+                    "transformed_hash": json_fingerprint(transformed.values),
+                    "transformed_input": list(transformed.values),
+                    "transformation_state": transformed.parameters,
+                    "preprocessing": {
+                        key: prepared[key]
+                        for key in (
+                            "preprocessing_mode",
+                            "r_period",
+                            "status",
+                            "missing_count_before",
+                            "missing_count_after",
+                            "values_changed",
+                        )
+                    },
+                }
+            )
+    try:
+        worker = _worker_provenance(retry_count)
+    except ValueError:
+        # Focused sequential checks deliberately call the same scientific worker
+        # contract without constructing a Dask cluster.
+        worker = {
+            "execution_backend": "local",
+            "hostname": socket.gethostname(),
+            "retry_count": retry_count,
+        }
+    if memory_monitor is not None:
+        worker["memory_safety"] = memory_monitor.evidence()
+    return {
+        "results": [
+            {"id": job["id"], "windows": by_series[job["id"]]}
+            for job in batch
+        ],
+        "packages": response["packages"],
+        "runtime_seconds": time.monotonic() - started,
+        "worker": worker,
     }
 
 

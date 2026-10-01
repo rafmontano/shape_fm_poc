@@ -3,9 +3,9 @@
 # 00_main.py
 #
 # Purpose: Single researcher entry point for ShapeFM.
-# Inputs: A plan, run, status, results, or test subcommand plus configuration/database selectors.
+# Inputs: A plan, run, prepare-windows, status, results, or test subcommand and selectors.
 # Outputs: JSON planning, execution, status, result, or acceptance records on stdout.
-# Run from: .tools/uv/uv run --locked --no-sync python src/python/00_main.py <plan|run|status|results|test> [options]
+# Run from: .tools/uv/uv run --locked --no-sync python src/python/00_main.py <action> [options]
 # ==============================================================================
 
 """Single researcher entry point for ShapeFM."""
@@ -41,6 +41,7 @@ from util.experiment_execution import (
     latest_experiment_id,
     official_results,
 )
+from util.window_preparation import WindowPreparationCoordinator, get_prepared_window
 from util.execution_profiles import (
     APPROVED_HEAVY_TUNING_PROFILE,
     ExecutionSettings,
@@ -185,7 +186,7 @@ def build_parser() -> argparse.ArgumentParser:
     """Purpose: Define parsing and dispatch inputs for the researcher-facing CLI.
 
     Inputs: Defaults derived from repository paths plus later command-line arguments.
-    Outputs: An argparse parser for ``plan``, ``run``, ``status``, ``results``, and ``test``.
+    Outputs: Parser for the six-process actions plus explicit window preparation.
     """
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="action")
@@ -207,6 +208,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="recorded researcher approval for a bounded local heavy run",
     )
 
+    prepare_windows = subparsers.add_parser(
+        "prepare-windows",
+        help="create or resume the configured rolling-window child database",
+    )
+    prepare_windows.add_argument("--database", type=Path, required=True)
+    prepare_windows.add_argument("--windows-database", type=Path, required=True)
+    prepare_windows.add_argument(
+        "--execution-profile",
+        help="approved operational profile for distributed preparation",
+    )
+
     status = subparsers.add_parser("status", help="read acceptance experiment status")
     status.add_argument("--database", type=Path, default=DEFAULT_DATABASE)
     status.add_argument("--experiment-id")
@@ -219,6 +231,9 @@ def build_parser() -> argparse.ArgumentParser:
     results.add_argument("--variant-id")
     results.add_argument("--series-id")
     results.add_argument("--candidate")
+    results.add_argument("--windows-database", type=Path)
+    results.add_argument("--dataset-id")
+    results.add_argument("--window-ordinal", type=int)
 
     test = subparsers.add_parser("test", help="run or restart the 100-series acceptance case")
     test.add_argument("--database", type=Path, default=DEFAULT_DATABASE)
@@ -489,6 +504,100 @@ def run_configured_processes(
             managed_cluster.stop()
 
 
+def run_window_preparation(
+    database: Path,
+    windows_database: Path,
+    execution_profile: str | None = None,
+) -> dict[str, Any]:
+    """Purpose: Run the opt-in v5 preparation locally or on the approved CPU cluster.
+
+    Inputs: Existing parent DuckDB, child destination, and optional named profile.
+    Outputs: Persisted split/window summary and execution/source evidence.
+    Side effects: Starts and stops only its managed Dask processes when requested;
+    the Mac coordinator remains the sole writer to both DuckDB files.
+    """
+    from util.distributed_execution import (
+        package_version_probe,
+        repository_source_manifest,
+        source_manifest_fingerprint,
+        validate_tuning_cluster,
+    )
+
+    manifest = repository_source_manifest()
+    manifest_hash = source_manifest_fingerprint(manifest)
+    if execution_profile is None:
+        with WindowPreparationCoordinator(database, windows_database) as coordinator:
+            result = coordinator.run(source_manifest_hash=manifest_hash)
+        return {
+            **result,
+            "execution_mode": "sequential_focused",
+            "source_manifest": manifest_hash,
+        }
+    if execution_profile != APPROVED_HEAVY_TUNING_PROFILE:
+        raise ValueError(
+            "distributed window preparation requires execution profile "
+            f"{APPROVED_HEAVY_TUNING_PROFILE}"
+        )
+    profile, _ = resolve_execution_profile(execution_profile)
+    from distributed import Client
+    from util.distributed_cluster import ManagedTuningCluster
+
+    cluster = ManagedTuningCluster(profile)
+    try:
+        cluster_evidence = cluster.start()
+        client = Client(cluster.scheduler_address, timeout="180s")
+        try:
+            worker_evidence = validate_tuning_cluster(
+                client,
+                expected_workers=int(profile.dask_mac_cpu_workers or 0)
+                + int(profile.dask_ubuntu_cpu_workers or 0),
+                expected_mac_workers=int(profile.dask_mac_cpu_workers or 0),
+                expected_ubuntu_workers=int(profile.dask_ubuntu_cpu_workers or 0),
+                expected_tuning_workers=int(profile.dask_mac_tuning_workers or 0)
+                + int(profile.dask_ubuntu_tuning_workers or 0),
+                timeout=180,
+                expected_manifest=manifest,
+            )
+            dependency_versions = client.run(package_version_probe, "tsai")
+            if set(dependency_versions.values()) != {"1.0.1"}:
+                raise RuntimeError(
+                    f"window workers do not share pinned tsai 1.0.1: {dependency_versions}"
+                )
+            memory_safety = {
+                "mac_hostname": platform.node(),
+                "mac_minimum_available_gib": profile.dask_mac_memory_min_available_gib,
+                "ubuntu_minimum_available_gib": profile.dask_ubuntu_memory_min_available_gib,
+                # Window cleaning is lighter than an ETS fit; retaining the
+                # approved ETS budget is a conservative profile-owned bound.
+                "fit_budget_gib": profile.dask_ets_fit_budget_gib,
+                "admission_timeout_seconds": profile.dask_memory_admission_timeout_seconds,
+                "poll_interval_seconds": profile.dask_memory_poll_interval_seconds,
+                "breach_grace_seconds": profile.dask_memory_breach_grace_seconds,
+                "swap_growth_limit_gib": profile.dask_swap_growth_limit_gib,
+            }
+            if any(value is None for value in memory_safety.values()):
+                raise RuntimeError("approved profile lacks window memory-safety controls")
+            with WindowPreparationCoordinator(database, windows_database) as coordinator:
+                result = coordinator.run(
+                    dask_client=client,
+                    source_manifest_hash=manifest_hash,
+                    memory_safety=memory_safety,
+                )
+        finally:
+            client.close()
+    finally:
+        cluster.stop()
+    return {
+        **result,
+        "execution_mode": "distributed",
+        "execution_profile": profile.to_dict(),
+        "cluster": cluster_evidence,
+        "worker_preflight": worker_evidence,
+        "dependency_versions": dependency_versions,
+        "source_manifest": manifest_hash,
+    }
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Purpose: Parse and dispatch one researcher CLI action.
 
@@ -505,6 +614,40 @@ def main(argv: Sequence[str] | None = None) -> int:
     invocation = invocation_record(args.action, args, database)
     try:
         if args.action == "results":
+            window_selectors = (
+                args.windows_database,
+                args.dataset_id,
+                args.series_id,
+                args.window_ordinal,
+            )
+            window_route_requested = any(
+                value is not None
+                for value in (
+                    args.windows_database,
+                    args.dataset_id,
+                    args.window_ordinal,
+                )
+            )
+            if window_route_requested:
+                if not all(value is not None for value in window_selectors):
+                    raise ValueError(
+                        "--windows-database, --dataset-id, --series-id, and "
+                        "--window-ordinal must be supplied together"
+                    )
+                output = {
+                    "invocation": invocation,
+                    "prepared_window": asdict(
+                        get_prepared_window(
+                            database,
+                            args.windows_database,
+                            dataset_id=args.dataset_id,
+                            series_id=args.series_id,
+                            window_ordinal=args.window_ordinal,
+                        )
+                    ),
+                }
+                print(json.dumps(output, indent=2, sort_keys=True, default=str))
+                return 0
             forecast_selectors = (args.variant_id, args.series_id, args.candidate)
             if any(forecast_selectors) and not all(forecast_selectors):
                 raise ValueError(
@@ -555,6 +698,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                     args.processes,
                     args.execution_profile,
                     args.local_heavy_exception,
+                ),
+            }
+        elif args.action == "prepare-windows":
+            if not database.is_file():
+                raise FileNotFoundError(f"database does not exist: {database}")
+            output = {
+                "invocation": invocation,
+                "window_preparation": run_window_preparation(
+                    database,
+                    args.windows_database.resolve(),
+                    args.execution_profile,
                 ),
             }
         elif args.action == "status":

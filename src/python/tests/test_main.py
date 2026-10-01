@@ -46,6 +46,16 @@ class StoredForecast:
     mean: tuple[float, ...]
 
 
+@dataclass(frozen=True)
+class StoredPreparedWindow:
+    """Supply the fields serialized by the prepared-window results route."""
+
+    window_id: str
+    dataset_id: str
+    series_id: str
+    window_ordinal: int
+
+
 class MainResultsTests(unittest.TestCase):
     """Exercise CLI result selection, JSON rendering, and read-only failures.
 
@@ -215,6 +225,71 @@ class MainResultsTests(unittest.TestCase):
             )
             official.assert_not_called()
             coordinator.assert_not_called()
+
+    def test_complete_window_selectors_return_prepared_window(self):
+        """The results action exposes the read-only prepared-window contract."""
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory) / "parent.duckdb"
+            child = Path(directory) / "windows.duckdb"
+            selected = StoredPreparedWindow("window/1", "dataset/1", "7", 2)
+            with patch.object(
+                MAIN, "get_prepared_window", return_value=selected
+            ) as retrieve:
+                status, stdout, stderr = self.run_main(
+                    [
+                        "results",
+                        "--database",
+                        str(parent),
+                        "--windows-database",
+                        str(child),
+                        "--dataset-id",
+                        "dataset/1",
+                        "--series-id",
+                        "7",
+                        "--window-ordinal",
+                        "2",
+                    ]
+                )
+            self.assertEqual(status, 0, stderr)
+            self.assertEqual(json.loads(stdout)["prepared_window"]["window_id"], "window/1")
+            retrieve.assert_called_once_with(
+                parent.resolve(),
+                child,
+                dataset_id="dataset/1",
+                series_id="7",
+                window_ordinal=2,
+            )
+
+    def test_prepare_windows_action_dispatches_explicitly(self):
+        """Preparation is opt-in and forwards parent, child, and profile exactly."""
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory) / "parent.duckdb"
+            child = Path(directory) / "windows.duckdb"
+            parent.touch()
+            with patch.object(
+                MAIN,
+                "run_window_preparation",
+                return_value={"preparation_id": "preparation/1"},
+            ) as prepare:
+                status, stdout, stderr = self.run_main(
+                    [
+                        "prepare-windows",
+                        "--database",
+                        str(parent),
+                        "--windows-database",
+                        str(child),
+                        "--execution-profile",
+                        "poc2_seasonal_recovery",
+                    ]
+                )
+            self.assertEqual(status, 0, stderr)
+            self.assertEqual(
+                json.loads(stdout)["window_preparation"]["preparation_id"],
+                "preparation/1",
+            )
+            prepare.assert_called_once_with(
+                parent.resolve(), child.resolve(), "poc2_seasonal_recovery"
+            )
 
     def test_incomplete_forecast_selectors_fail_before_database_access(self):
         """Partial forecast selectors fail before querying or creating a database."""

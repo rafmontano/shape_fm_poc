@@ -9,7 +9,7 @@ researcher-facing experiment entry point is:
 
 `--no-sync` is required when using the already prepared locked environments;
 the command does not install or update dependencies. The public actions are
-`plan`, `run`, `status`, `results`, and `test`.
+`plan`, `run`, `prepare-windows`, `status`, `results`, and `test`.
 
 Heavy testing must follow the [approved execution policy](docs/execution-policy.md).
 The [execution safeguard instructions](docs/amp-poc2-execution-safeguards-instructions.md)
@@ -68,6 +68,11 @@ Import missingness and the two preprocessing modes are documented in
 New standardised experiments use configuration v4 and keep v1–v3 interpretation
 unchanged. The committed v4 acceptance configuration is
 `config/experiments/poc2_m4_daily_100_standardised.json`.
+Configuration v5 adds an explicit, optional rolling-window preparation outside
+Processes 01–06. It persists one deterministic S1 train/test membership by
+original series and complete transformed input windows in a separate child
+DuckDB; raw inputs and futures remain only in the parent. The committed v5
+configuration is `config/experiments/poc2_m4_daily_100_rolling_windows.json`.
 Completed task state and scientific provenance are stored transactionally, so
 rerunning the same experiment skips completed work without changing experiment,
 task, forecast, or evaluation identity.
@@ -125,6 +130,26 @@ Read one stored forecast by supplying all three selectors:
   --variant-id VARIANT_ID --series-id SERIES_ID --candidate CANDIDATE
 ```
 
+After completing Process 01 for the v5 experiment, create or resume its window
+database explicitly. Heavy acceptance uses the approved named 8-Mac/15-Ubuntu
+CPU profile; omit the profile only for bounded local checks:
+
+```sh
+.tools/uv/uv run --locked --no-sync python src/python/00_main.py prepare-windows \
+  --database results/poc2_m4_daily_100_rolling_windows.duckdb \
+  --windows-database results/poc2_m4_daily_100_rolling_windows.windows.duckdb \
+  --execution-profile poc2_seasonal_recovery
+```
+
+Read one prepared window without writing either database:
+
+```sh
+.tools/uv/uv run --locked --no-sync python src/python/00_main.py results \
+  --database results/poc2_m4_daily_100_rolling_windows.duckdb \
+  --windows-database results/poc2_m4_daily_100_rolling_windows.windows.duckdb \
+  --dataset-id DATASET_ID --series-id SERIES_ID --window-ordinal 0
+```
+
 The optional 100-series AutoARIMA/ETS period-tuning test completed all 800
 forecasts; see the [acceptance record](docs/poc2-seasonal-period-tuning-results.md).
 Preserve that completed database. The
@@ -145,6 +170,13 @@ histories, the fitted/stored state, and validation checks available for manual
 inspection. The script opens DuckDB read-only and uses future actuals for QA
 display only, never fitting.
 
+For rolling-window QA, set `ROLLING_QA_PARENT_DATABASE`,
+`ROLLING_QA_WINDOWS_DATABASE`, and `ROLLING_QA_DATASET_ID`, optionally set
+`ROLLING_QA_SERIES_ID` and `ROLLING_QA_WINDOW_ORDINAL`, then source
+`src/r/qa/inspect_rolling_window.R`. It leaves `selected_rolling_window`, raw
+input/future, transformed input, fitted state, and inverse-restored cleaned
+input in the R workspace. Both DuckDB files are opened read-only.
+
 Generated databases and reports remain ignored; `test` refuses to overwrite
 `data/shapefm.duckdb`.
 
@@ -161,6 +193,7 @@ src/python/05_combine.py                 Process 05 wrapper
 src/python/06_evaluate.py                Process 06 wrapper
 src/python/06_01_evaluate_gift_eval.py   official evaluation substep
 src/python/util/                         shared Python implementation
+src/python/util/window_preparation.py    rolling-window/S1 coordinator and retrieval
 src/python/tests/                        unit, integration, and acceptance tests
 src/r/02_01_preprocess_series.R          R preprocessing substep
 src/r/04_01_forecast_auto_arima.R        R AutoARIMA substep
@@ -171,6 +204,7 @@ src/r/util/window_preparation.R            explicit trailing-context preparation
 src/r/util/labels.R                        strict direction-label utility
 src/r/util/seasonal_period.R              shared period diagnostics
 src/r/util/time_series_input.R           shared R time-series input contract
+src/r/qa/inspect_rolling_window.R         read-only interactive window inspection
 src/r/tests/                              focused R contract tests
 ```
 

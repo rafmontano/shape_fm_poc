@@ -1,0 +1,193 @@
+{
+  "configuration_version": 5,
+  "experiment": {
+    "name": "poc2_m4_daily_100_rolling_windows",
+    "date": "2026-10-01",
+    "description": "Validate the approved S1 series split and leakage-safe rolling-window preparation on 100 M4 Daily series."
+  },
+  "reproducibility": {
+    "seed": 1234
+  },
+  "data": {
+    "dataset_name": "m4_daily",
+    "source": {
+      "system": "Salesforce/GiftEval",
+      "revision": "30841734ac5cfddbd0c3bad6d09d2b6b32becbb0",
+      "directory": "data/source/gift_eval",
+      "files": {
+        "data-00000-of-00001.arrow": "bb82fc356772441f3354ba9d74aaa7288db2d7e589d5e62b43b8a87736bc47e2",
+        "dataset_info.json": "ea92f9b9238f54ada08d0d52123e1f07ee5e08a08fdfc0b8658789f312596dbf",
+        "state.json": "cbf09993d018ff75ea8a31fcf9b26a80c4a8499f16aca675c91a0de4d3ec6d2d"
+      }
+    },
+    "benchmark": {
+      "configuration": "m4_daily/D/short",
+      "frequency": "D",
+      "term": "short",
+      "domain": "Econ/Fin",
+      "num_variates": 1,
+      "prediction_length": 14,
+      "evaluation_windows": 1,
+      "boundary_convention": "zero-based, end-exclusive"
+    },
+    "selection": {"method": "first_official", "count": 100}
+  },
+  "pipeline": {
+    "processes": [
+      {"id": 1, "name": "import"},
+      {"id": 2, "name": "preprocess"},
+      {"id": 3, "name": "transform"},
+      {"id": 4, "name": "forecast"},
+      {"id": 5, "name": "combine"},
+      {"id": 6, "name": "evaluate"}
+    ],
+    "r_period_override": null,
+    "preprocessing": {"default": "robust", "modes": ["standard", "robust"]},
+    "transformations": {"methods": ["identity", "standardise_sample_v1"]},
+    "window_preparation": {
+      "selected_frequencies": ["D"],
+      "frequencies": {
+        "10S": {"input_length": 512, "future_horizon": 60},
+        "5T": {"input_length": 512, "future_horizon": 48},
+        "10T": {"input_length": 512, "future_horizon": 48},
+        "15T": {"input_length": 512, "future_horizon": 48},
+        "H": {"input_length": 256, "future_horizon": 48},
+        "D": {"input_length": 64, "future_horizon": 14},
+        "W": {"input_length": 64, "future_horizon": 13},
+        "M": {"input_length": 64, "future_horizon": 18},
+        "Q": {"input_length": 32, "future_horizon": 8},
+        "Y": {"input_length": 16, "future_horizon": 6}
+      },
+      "stride_rule": "input_plus_future",
+      "block_policy": "complete_non_overlapping",
+      "boundary_policy": "official_training_only",
+      "preprocessing_mode": "robust",
+      "transformation": "standardise_sample_v1",
+      "split": {
+        "split_id": "S1",
+        "unit": "series",
+        "training_fraction": 0.8,
+        "seed": 123,
+        "generator": "tsai.TrainValidTestSplitter",
+        "membership_source": "generate"
+      }
+    },
+    "adjustment": "identity",
+    "combination": {"method": "equal_weight", "weights": {"auto_arima": 0.5, "chronos_2": 0.5}}
+  },
+  "models": {
+    "auto_arima": {
+      "package": "forecast",
+      "settings": {
+        "stepwise": true,
+        "approximation": false,
+        "allowdrift": true,
+        "allowmean": true,
+        "interval_levels": [20, 40, 60, 80]
+      }
+    },
+    "chronos_2": {
+      "repository": "amazon/chronos-2",
+      "revision": "29ec3766d36d6f73f0696f85560a422f50e8498c",
+      "chronos_forecasting": "2.2.2",
+      "dtype": "float32",
+      "quantile_levels": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
+      "predict_batches_jointly": false,
+      "cross_learning": false
+    }
+  },
+  "archived_forecasts": {
+    "providers": {
+      "m4_smyl": {"submission_id": 118},
+      "m4_fforma": {"submission_id": 245}
+    },
+    "enabled": ["m4_smyl"],
+    "forecast_capability": "mean_only",
+    "reference_designation": "official_reference"
+  },
+  "evaluation": {
+    "method": "gift_eval",
+    "gift_eval": {
+      "code_revision": "4d5ab3fa0fe7451bbf59bb1ff6dd76e6e414d64a",
+      "environment": "environments/gift-eval/.venv",
+      "source_directory": "external/gift-eval"
+    },
+    "options": {
+      "axis": null,
+      "mask_invalid_label": true,
+      "allow_nan_forecast": false,
+      "seasonality": "pinned GluonTS benchmark seasonality"
+    },
+    "provisional_candidate": {
+      "preprocessing": "robust",
+      "transformation": "standardise_sample_v1",
+      "candidate": "equal_weight",
+      "label": "provisional"
+    },
+    "submission_metadata": {
+      "status": "draft",
+      "submission_approved": false,
+      "model_name": null,
+      "model_type": null,
+      "model_dtype": "float64-and-float32",
+      "model_link": null,
+      "code_link": null,
+      "org": null,
+      "testdata_leakage": null,
+      "replication_code_available": "No"
+    }
+  },
+  "execution": {
+    "default": {
+      "mode": "sequential",
+      "import_workers": 1,
+      "process_workers": {"2": 1, "3": 1, "4": 1, "5": 1, "6": 1},
+      "batch_sizes": {
+        "import": 64,
+        "plan": 100,
+        "preprocess": 8,
+        "transform": 32,
+        "window_preparation": 16,
+        "auto_arima": 1,
+        "chronos": 8,
+        "combine": 32,
+        "gift_eval": 1024
+      },
+      "dask_max_in_flight": 23,
+      "dask_retries": 1,
+      "dask_timeout_seconds": 180,
+      "worker_timeouts_seconds": {
+        "r": 1800,
+        "chronos_startup": 300,
+        "chronos_request": 1800,
+        "gift_eval": 600
+      },
+      "thread_limits": {"r": 1, "chronos": 1, "dask_worker": 1},
+      "cpu_gpu_overlap": false,
+      "system_memory_min_available_gib": 2.0,
+      "accelerator_memory_min_available_gib": 0.5,
+      "database_writers": 1
+    },
+    "final_acceptance": {
+      "mode": "dask",
+      "workflow": "window_preparation",
+      "execution_profile": "poc2_seasonal_recovery",
+      "profile_version": 2,
+      "workers": {"mac_cpu": 8, "ubuntu_cpu": 15, "total": 23},
+      "system_memory_min_available_gib": {"mac": 3, "ubuntu": 16}
+    },
+    "paths": {
+      "project_environment": ".venv",
+      "chronos_environment": "environments/chronos-2/.venv",
+      "chronos_worker": "src/python/04_02_forecast_chronos.py",
+      "r_preprocess_worker": "src/r/02_01_preprocess_series.R",
+      "r_auto_arima_worker": "src/r/04_01_forecast_auto_arima.R",
+      "r_m4comp2018_worker": "src/r/01_02_import_m4comp2018.R"
+    },
+    "restart": {
+      "completed_tasks": "skip",
+      "failed_tasks": "retry",
+      "interrupted_tasks": "retry"
+    }
+  }
+}

@@ -20,6 +20,15 @@ acceptance is deliberately restricted to 100 M4 Daily series, AutoARIMA and ETS.
 
 ## Research architecture
 
+The [combined rolling-window and split decision](poc2-window-training-architecture.md)
+joins IDs 011 and 016: parent/child storage, central experiment settings,
+stride equal to input window plus future horizon, and one S1 train/test split
+by original series. The researcher approved the combined scope on 1 October 2026.
+The version-5 implementation and focused Mac checks are complete; the required
+100-series two-host distributed acceptance remains outstanding because Ubuntu
+was unavailable. Features, labels, Mantis training and prediction remain outside
+this increment. See the [acceptance record](poc2-rolling-windows-acceptance.md).
+
 ![ShapeFM research architecture](images/shapefm_research_architecture.png)
 
 The research view has seven layers: Research Interface, Experiment Management,
@@ -289,6 +298,29 @@ portable state, and restart. It is not a forecasting, full-pipeline, or accuracy
 acceptance and does not alter accepted historical databases. Its configuration
 records one sequential Mac worker and Processes 1–3; computationally heavy work
 continues to require the approved named 8-Mac/15-Ubuntu execution profile.
+
+### Configuration v5 rolling-window preparation
+
+Configuration version 5 preserves all version-4 processing semantics and adds
+one explicit `prepare-windows` capability. Ten frequency definitions store an
+input length and future horizon; resolution derives and persists stride as
+`input_length + future_horizon`. The production document selects only M4 Daily.
+It does not claim full multi-dataset GIFT-Eval support.
+
+The coordinator protects the official training boundary, finds complete blocks,
+and allocates eligible original series—not window rows—to S1 train/test using
+the pinned tsai 1.0.1 splitter, fraction 0.80 and seed 123. Membership and its
+fingerprint are persisted before work. Each input is robust-cleaned with the
+officially resolved R period and independently fitted with
+`standardise_sample_v1`; future observations never enter cleaning or fitting.
+
+The parent database owns canonical raw observations, official boundaries,
+stable numeric lookup aliases and run status. One child database stores the
+preparation/split definitions, series membership, restartable tasks, transformed
+inputs, fitted state, source positions and provenance. It does not duplicate raw
+input or future arrays. Python remains the sole writer. Resume checks parent,
+definition, cohort, membership and tested-source fingerprints and reconciles a
+completed child with an interrupted parent run record without recomputation.
 
 The complete field contract and evolution procedure are documented in
 [`experiment-configuration.md`](experiment-configuration.md). The exhaustive

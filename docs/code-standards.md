@@ -45,6 +45,7 @@ The entry point exposes only the actions with demonstrated researcher workflows:
 ```text
 python src/python/00_main.py plan
 python src/python/00_main.py run
+python src/python/00_main.py prepare-windows
 python src/python/00_main.py status
 python src/python/00_main.py results
 python src/python/00_main.py test
@@ -252,6 +253,7 @@ GIFT-Eval integration
 provenance
 restart and task orchestration
 transformations
+rolling-window preparation and read-only retrieval
 ```
 
 Each utility file has one cohesive responsibility and a specific name. Avoid

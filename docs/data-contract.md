@@ -39,3 +39,24 @@ test_end         N
 For first series `0`, `N = 1020`: training is `[0, 992)`, validation is
 `[992, 1006)`, and test is `[1006, 1020)`. These reproduce the official
 GIFT-Eval short-term M4 semantics.
+
+## Version-5 prepared windows
+
+The version-5 parent adds deterministic integer lookup aliases for frequency,
+dataset and series identities; canonical string primary keys remain unchanged.
+`window_preparation_runs` links one immutable preparation identity to one child
+DuckDB and records parent/configuration/membership fingerprints and run status.
+
+The child stores its schema/preparation metadata, one frequency-definition row
+per selected frequency, one S1 split definition, one membership row per eligible
+source series, restartable per-series tasks, and prepared input windows. A window
+stores zero-based end-exclusive source positions, transformed input, fitted
+`standardise_sample_v1` state, preprocessing/package/worker provenance and
+content hashes. It does not store raw input or future arrays. Read-only retrieval
+joins the numeric series key to the parent and resolves unchanged future values
+from the canonical target.
+
+Membership is assigned to original series, so every window of a series inherits
+one partition. Complete blocks begin at the official training segment start and
+advance W+H. Validation/test labels are protected; no block crosses the training
+end, and no partial block is padded or retained.

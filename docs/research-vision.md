@@ -142,6 +142,12 @@ The intended progression is:
 This sequence describes research dependency, not a requirement to implement
 the entire future design before validating an earlier gate.
 
+The approved [rolling-window and S1 decision](poc2-window-training-architecture.md)
+implements a storage-efficient preparation boundary for later training: split
+original series before generating windows, protect evaluation holdouts, store
+one membership, and keep raw arrays in the canonical parent. It does not yet
+implement features, labels, Mantis training or prediction.
+
 ## Stable contracts
 
 The following principles should remain stable while internal methods evolve:

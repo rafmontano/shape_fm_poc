@@ -36,8 +36,9 @@ class ExperimentConfigurationError(ValueError):
 
 
 # Code constant: v1 preserves coupled period-7, v2 resolves the R period,
-# v3 opts into period tuning, and v4 selects portable sample standardisation.
-SUPPORTED_CONFIGURATION_VERSIONS = {1, 2, 3, 4}
+# v3 opts into period tuning, v4 selects portable sample standardisation, and
+# v5 defines the opt-in rolling-window/S1 preparation contract.
+SUPPORTED_CONFIGURATION_VERSIONS = {1, 2, 3, 4, 5}
 # Code constant: repository protocol mapping shared by JSON, DuckDB, CLI, and status output.
 PROCESS_NAMES = {
     1: "import",
@@ -300,9 +301,9 @@ class ExperimentConfiguration:
             "provisional_candidate": deepcopy(evaluation["provisional_candidate"]),
             "submission_metadata": deepcopy(evaluation["submission_metadata"]),
         }
-        if self.version == 4:
-            # This capability is declared for selected future window consumers;
-            # current forecast adapters continue to receive their full histories.
+        if self.version >= 4:
+            # Version 4 retains its legacy single-context capability. Version 5
+            # carries the separate, opt-in rolling-window preparation definition.
             workflow["window_preparation"] = deepcopy(pipeline["window_preparation"])
         return workflow
 
@@ -439,7 +440,7 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
     expected_transformations = {
         "methods": [
             "identity",
-            "standardise_sample_v1" if version == 4 else "minmax_then_standardize",
+            "standardise_sample_v1" if version >= 4 else "minmax_then_standardize",
         ]
     }
     if pipeline["transformations"] != expected_transformations:
@@ -459,9 +460,47 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
             raise ExperimentConfigurationError(
                 "pipeline.window_preparation.context_length must be a positive integer"
             )
+    elif version == 5:
+        _require_keys(pipeline, {"window_preparation"}, "pipeline")
+        window_preparation = _require_mapping(
+            pipeline["window_preparation"], "pipeline.window_preparation"
+        )
+        expected_windows = {
+            "10S": {"input_length": 512, "future_horizon": 60},
+            "5T": {"input_length": 512, "future_horizon": 48},
+            "10T": {"input_length": 512, "future_horizon": 48},
+            "15T": {"input_length": 512, "future_horizon": 48},
+            "H": {"input_length": 256, "future_horizon": 48},
+            "D": {"input_length": 64, "future_horizon": 14},
+            "W": {"input_length": 64, "future_horizon": 13},
+            "M": {"input_length": 64, "future_horizon": 18},
+            "Q": {"input_length": 32, "future_horizon": 8},
+            "Y": {"input_length": 16, "future_horizon": 6},
+        }
+        expected_split = {
+            "split_id": "S1",
+            "unit": "series",
+            "training_fraction": 0.8,
+            "seed": 123,
+            "generator": "tsai.TrainValidTestSplitter",
+            "membership_source": "generate",
+        }
+        if window_preparation != {
+            "selected_frequencies": ["D"],
+            "frequencies": expected_windows,
+            "stride_rule": "input_plus_future",
+            "block_policy": "complete_non_overlapping",
+            "boundary_policy": "official_training_only",
+            "preprocessing_mode": "robust",
+            "transformation": "standardise_sample_v1",
+            "split": expected_split,
+        }:
+            raise ExperimentConfigurationError(
+                "pipeline.window_preparation must equal the approved v5 rolling-window and S1 contract"
+            )
     elif "window_preparation" in pipeline:
         raise ExperimentConfigurationError(
-            "pipeline.window_preparation belongs to configuration version 4"
+            "pipeline.window_preparation belongs to configuration version 4 or 5"
         )
     tuning_enabled = "seasonal_period_tuning" in pipeline
     if pipeline["adjustment"] != "identity":
@@ -664,6 +703,8 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
         "import", "plan", "preprocess", "transform", "auto_arima", "chronos",
         "combine", "gift_eval",
     }
+    if version == 5:
+        expected_batch_sizes.add("window_preparation")
     if tuning_enabled:
         expected_batch_sizes.add("r_forecast")
     batch_sizes = _require_mapping(default["batch_sizes"], "execution.default.batch_sizes")
@@ -721,6 +762,18 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
             raise ExperimentConfigurationError(
                 "v4 acceptance must describe the sequential Gate 1-3 run"
             )
+    elif version == 5:
+        if acceptance != {
+            "mode": "dask",
+            "workflow": "window_preparation",
+            "execution_profile": "poc2_seasonal_recovery",
+            "profile_version": 2,
+            "workers": {"mac_cpu": 8, "ubuntu_cpu": 15, "total": 23},
+            "system_memory_min_available_gib": {"mac": 3, "ubuntu": 16},
+        }:
+            raise ExperimentConfigurationError(
+                "v5 acceptance must describe the approved two-host window-preparation profile"
+            )
     else:
         if topology != {"mac_cpu": 1, "ubuntu_cpu": 0, "ubuntu_gpu": 1, "total": 2}:
             raise ExperimentConfigurationError("final acceptance must define exactly two Dask workers")
@@ -772,6 +825,10 @@ def resolve_experiment_configuration(value: dict[str, Any]) -> ExperimentConfigu
     validate_experiment_configuration(value)
     original = deepcopy(value)
     resolved = deepcopy(value)
+    if resolved["configuration_version"] == 5:
+        frequencies = resolved["pipeline"]["window_preparation"]["frequencies"]
+        for settings in frequencies.values():
+            settings["stride"] = settings["input_length"] + settings["future_horizon"]
     series_count = int(resolved["data"]["selection"]["count"])
     cleaning_count = len(resolved["pipeline"]["preprocessing"]["modes"])
     transformation_count = len(resolved["pipeline"]["transformations"]["methods"])

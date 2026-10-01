@@ -30,7 +30,7 @@ from .configuration import (
 
 
 # Code constant: latest DuckDB migration version implemented by this source revision.
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 # Bootstrap/interface default: legacy library database path; an explicit path from the
 # coordinator overrides it, and the path does not define scientific identity.
 DEFAULT_DATABASE = Path("data/shapefm.duckdb")
@@ -125,6 +125,38 @@ CREATE TABLE IF NOT EXISTS evaluation_windows (
     boundary_convention VARCHAR NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
     PRIMARY KEY (dataset_id, series_id, window_id)
+);
+
+CREATE TABLE IF NOT EXISTS frequency_lookup (
+    frequency_key BIGINT PRIMARY KEY,
+    frequency VARCHAR NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS dataset_lookup (
+    dataset_key BIGINT PRIMARY KEY,
+    dataset_id VARCHAR NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS series_lookup (
+    series_key BIGINT PRIMARY KEY,
+    dataset_key BIGINT NOT NULL,
+    series_id VARCHAR NOT NULL,
+    frequency_key BIGINT NOT NULL,
+    UNIQUE (dataset_key, series_id)
+);
+
+CREATE TABLE IF NOT EXISTS window_preparation_runs (
+    preparation_id VARCHAR PRIMARY KEY,
+    child_database VARCHAR NOT NULL,
+    definition_hash VARCHAR NOT NULL,
+    parent_scientific_hash VARCHAR NOT NULL,
+    parent_configuration_hash VARCHAR NOT NULL,
+    membership_fingerprint VARCHAR,
+    status VARCHAR NOT NULL CHECK (status IN ('running', 'completed', 'failed')),
+    summary JSON,
+    error VARCHAR,
+    started_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
+    completed_at TIMESTAMPTZ
 );
 
 CREATE TABLE IF NOT EXISTS runs (
@@ -669,7 +701,12 @@ def migrate_database(path: Path = DEFAULT_DATABASE) -> Path:
         connection.execute(
             "INSERT INTO schema_versions (version, description) VALUES (?, ?) "
             "ON CONFLICT (version) DO NOTHING",
-            [SCHEMA_VERSION, "Gate 4 seasonal-period tuning evidence"],
+            [8, "Gate 4 seasonal-period tuning evidence"],
+        )
+        connection.execute(
+            "INSERT INTO schema_versions (version, description) VALUES (?, ?) "
+            "ON CONFLICT (version) DO NOTHING",
+            [SCHEMA_VERSION, "Rolling-window preparation parent identities and runs"],
         )
         connection.execute("COMMIT")
     except BaseException:
