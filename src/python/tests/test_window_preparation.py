@@ -14,14 +14,20 @@ from __future__ import annotations
 import socket
 import tempfile
 import unittest
+import json
+import shutil
 from pathlib import Path
 
 import duckdb
 
-from util.configuration import load_experiment_configuration
-from util.database import initialize_experiment_database
+from util.configuration import (
+    load_experiment_configuration,
+    resolve_experiment_configuration,
+)
+from util.database import initialize_experiment_database, load_database_configuration
 from util.window_preparation import (
     WindowPreparationCoordinator,
+    _target_content_hash,
     complete_window_count,
     get_prepared_window,
     rolling_window_inputs,
@@ -30,7 +36,8 @@ from util.window_preparation import (
 
 
 ROOT = Path(__file__).resolve().parents[3]
-CONFIGURATION = ROOT / "config/experiments/poc2_m4_daily_100_rolling_windows.json"
+CONFIGURATION = ROOT / "config/experiments/poc2_m4_daily_100_rolling_windows_corrected.json"
+LEGACY_CONFIGURATION = ROOT / "config/experiments/poc2_m4_daily_100_rolling_windows.json"
 
 
 class RollingWindowUnitTests(unittest.TestCase):
@@ -67,6 +74,29 @@ class RollingWindowUnitTests(unittest.TestCase):
             123,
         )
         self.assertEqual(configuration.seed, 1234)
+
+    def test_valid_changed_window_size_is_resolved_and_persisted(self) -> None:
+        """Version 6 accepts configured W/H values and reloads the derived stride."""
+        document = json.loads(CONFIGURATION.read_text())
+        document["pipeline"]["window_preparation"]["frequencies"]["D"] = {
+            "input_length": 32,
+            "future_horizon": 7,
+        }
+        configuration = resolve_experiment_configuration(document)
+        self.assertEqual(
+            configuration.resolved["pipeline"]["window_preparation"]["frequencies"]["D"],
+            {"input_length": 32, "future_horizon": 7, "stride": 39},
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "changed.json"
+            database = Path(directory) / "changed.duckdb"
+            config_path.write_text(json.dumps(document))
+            initialize_experiment_database(database, config_path)
+            stored = load_database_configuration(database)
+            self.assertEqual(
+                stored.resolved["pipeline"]["window_preparation"]["frequencies"]["D"]["stride"],
+                39,
+            )
 
     def test_daily_example_matches_independent_reference(self) -> None:
         """L=156 produces exactly the two approved complete Daily blocks."""
@@ -157,8 +187,8 @@ class RollingWindowUnitTests(unittest.TestCase):
         """Explicit rounding gives disjoint series membership independent of order."""
         identities = [("dataset-a", str(index)) for index in range(10)]
         membership, provenance = s1_partition(identities, 0.8, 123)
-        self.assertEqual(list(membership.values()).count("test"), 2)
-        self.assertEqual(list(membership.values()).count("train"), 8)
+        self.assertEqual(list(membership.values()).count("test"), 1)
+        self.assertEqual(list(membership.values()).count("train"), 9)
         repeated, _ = s1_partition(list(reversed(identities)), 0.8, 123)
         self.assertEqual(membership, repeated)
         namespaced, _ = s1_partition(
@@ -166,11 +196,16 @@ class RollingWindowUnitTests(unittest.TestCase):
         )
         self.assertEqual(len(namespaced), 2)
         self.assertEqual(provenance["generator_version"], "1.0.1")
-        for size, expected_test in ((2, 1), (5, 1), (10, 2), (11, 2)):
+        for size, expected_test in ((2, 1), (5, 1), (10, 1), (11, 2), (100, 19), (4227, 845)):
             split, _ = s1_partition(
                 [("dataset", str(index)) for index in range(size)], 0.8, 123
             )
             self.assertEqual(list(split.values()).count("test"), expected_test)
+        legacy, legacy_provenance = s1_partition(
+            identities, 0.8, 123, "decimal_floor_v1"
+        )
+        self.assertEqual(list(legacy.values()).count("test"), 2)
+        self.assertEqual(legacy_provenance["test_count_rule"], "decimal_floor_v1")
         with self.assertRaisesRegex(ValueError, "at least two"):
             s1_partition([], 0.8, 123)
         with self.assertRaisesRegex(ValueError, "at least two"):
@@ -186,7 +221,16 @@ class WindowPersistenceTests(unittest.TestCase):
         root = Path(self.temporary.name)
         self.parent = root / "parent.duckdb"
         self.child = root / "windows.duckdb"
-        initialize_experiment_database(self.parent, CONFIGURATION)
+        # Scientific settings match production. A larger local-only test batch
+        # avoids starting one R process per synthetic series; distributed
+        # production keeps one job per Dask task to expose both worker pools.
+        fixture_configuration = json.loads(CONFIGURATION.read_text())
+        fixture_configuration["execution"]["default"]["batch_sizes"][
+            "window_preparation"
+        ] = 16
+        fixture_path = root / "fixture-configuration.json"
+        fixture_path.write_text(json.dumps(fixture_configuration))
+        initialize_experiment_database(self.parent, fixture_path)
         connection = duckdb.connect(str(self.parent))
         try:
             connection.execute("BEGIN TRANSACTION")
@@ -201,7 +245,7 @@ class WindowPersistenceTests(unittest.TestCase):
                     """INSERT INTO series VALUES
                     ('dataset/test', ?, ?, ?, 'D', TIMESTAMP '2000-01-01', ?, 106,
                      ?, '{}', current_timestamp)""",
-                    [str(index), f"D{index + 1}", index, values, f"hash-{index}"],
+                    [str(index), f"D{index + 1}", index, values, _target_content_hash(values)],
                 )
                 connection.execute(
                     """INSERT INTO evaluation_windows VALUES
@@ -231,7 +275,7 @@ class WindowPersistenceTests(unittest.TestCase):
             first = coordinator.run(source_manifest_hash="fixture-manifest")
         self.assertEqual(first["eligible"], 100)
         self.assertEqual(first["zero_window"], 0)
-        self.assertEqual(first["series_by_partition"], {"train": 80, "test": 20})
+        self.assertEqual(first["series_by_partition"], {"train": 81, "test": 19})
         self.assertEqual(first["total_windows"], 100)
         self.assertEqual(first["periods"]["D"]["r_period"], 1)
 
@@ -317,6 +361,115 @@ class WindowPersistenceTests(unittest.TestCase):
         with WindowPreparationCoordinator(self.parent, self.child) as coordinator:
             with self.assertRaisesRegex(RuntimeError, "source manifest"):
                 coordinator.run(source_manifest_hash="different-source-b")
+
+    def test_explicit_local_bounds_are_enforced_before_writes(self) -> None:
+        """A declared focused limit blocks an oversized workload without child state."""
+        with WindowPreparationCoordinator(self.parent, self.child) as coordinator:
+            with self.assertRaisesRegex(RuntimeError, "before writes"):
+                coordinator.run(
+                    source_manifest_hash="fixture-manifest",
+                    local_limits={"max_series": 10, "max_windows": 10},
+                )
+        self.assertFalse(self.child.exists())
+        parent = duckdb.connect(str(self.parent), read_only=True)
+        try:
+            self.assertEqual(parent.execute("SELECT count(*) FROM series_lookup").fetchone()[0], 0)
+            self.assertEqual(
+                parent.execute("SELECT count(*) FROM window_preparation_runs").fetchone()[0], 0
+            )
+        finally:
+            parent.close()
+
+    def test_retrieval_rejects_wrong_parent_with_same_series_identifiers(self) -> None:
+        """Changed observations cannot be paired to a child by numeric aliases alone."""
+        with WindowPreparationCoordinator(self.parent, self.child) as coordinator:
+            coordinator.run(source_manifest_hash="fixture-manifest")
+        wrong_parent = self.parent.with_name("wrong-parent.duckdb")
+        shutil.copy2(self.parent, wrong_parent)
+        connection = duckdb.connect(str(wrong_parent))
+        try:
+            values = [999.0] * 106
+            connection.execute(
+                """UPDATE series SET target=?, content_hash=?
+                   WHERE dataset_id='dataset/test' AND series_id='0'""",
+                [values, _target_content_hash(values)],
+            )
+        finally:
+            connection.close()
+        with self.assertRaisesRegex(RuntimeError, "source identity"):
+            get_prepared_window(
+                wrong_parent,
+                self.child,
+                dataset_id="dataset/test",
+                series_id="0",
+                window_ordinal=0,
+            )
+
+    def test_long_series_is_chunked_and_partial_resume_is_exact(self) -> None:
+        """One long source is bounded into chunks and resumes missing chunks exactly."""
+        values = [float(step) for step in range(78 * 40 + 28)]
+        connection = duckdb.connect(str(self.parent))
+        try:
+            connection.execute(
+                """UPDATE series SET target=?, observation_count=?, content_hash=?
+                   WHERE dataset_id='dataset/test' AND series_id='0'""",
+                [values, len(values), _target_content_hash(values)],
+            )
+            connection.execute(
+                """UPDATE evaluation_windows SET train_end=?, validation_start=?,
+                   validation_end=?, test_start=?, test_end=?
+                   WHERE dataset_id='dataset/test' AND series_id='0'""",
+                [78 * 40, 78 * 40, 78 * 40 + 14, 78 * 40 + 14, len(values)],
+            )
+        finally:
+            connection.close()
+        with WindowPreparationCoordinator(self.parent, self.child) as coordinator:
+            first = coordinator.run(source_manifest_hash="fixture-manifest")
+        self.assertEqual(first["memory_bounds"]["windows_per_job"], 16)
+        self.assertEqual(first["memory_bounds"]["jobs_per_batch"], 16)
+        self.assertEqual(first["memory_bounds"]["maximum_windows_per_batch"], 256)
+        child = duckdb.connect(str(self.child))
+        try:
+            series_key = child.execute(
+                "SELECT series_key FROM series_membership ORDER BY usable_length DESC LIMIT 1"
+            ).fetchone()[0]
+            expected = child.execute(
+                """SELECT window_ordinal, transformed_hash FROM prepared_windows
+                   WHERE series_key=? ORDER BY window_ordinal""",
+                [series_key],
+            ).fetchall()
+            self.assertEqual(len(expected), 40)
+            self.assertEqual(
+                child.execute(
+                    "SELECT attempt_count FROM window_tasks WHERE series_key=?", [series_key]
+                ).fetchone()[0],
+                3,
+            )
+            child.execute(
+                "DELETE FROM prepared_windows WHERE series_key=? AND window_ordinal>=32",
+                [series_key],
+            )
+            child.execute(
+                "UPDATE window_tasks SET status='pending' WHERE series_key=?", [series_key]
+            )
+        finally:
+            child.close()
+        with WindowPreparationCoordinator(self.parent, self.child) as coordinator:
+            resumed = coordinator.run(source_manifest_hash="fixture-manifest")
+        self.assertTrue(resumed["worker_series_counts"])
+        child = duckdb.connect(str(self.child), read_only=True)
+        try:
+            observed = child.execute(
+                """SELECT window_ordinal, transformed_hash FROM prepared_windows
+                   WHERE series_key=? ORDER BY window_ordinal""",
+                [series_key],
+            ).fetchall()
+            self.assertEqual(observed, expected)
+            self.assertEqual(
+                child.execute("SELECT count(*) FROM prepared_windows").fetchone()[0], 139
+            )
+        finally:
+            child.close()
 
 
 if __name__ == "__main__":

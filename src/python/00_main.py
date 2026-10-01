@@ -218,6 +218,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--execution-profile",
         help="approved operational profile for distributed preparation",
     )
+    prepare_windows.add_argument(
+        "--local-max-series",
+        type=positive_integer,
+        help="explicit series bound required for a local focused preparation",
+    )
+    prepare_windows.add_argument(
+        "--local-max-windows",
+        type=positive_integer,
+        help="explicit window bound required for a local focused preparation",
+    )
 
     status = subparsers.add_parser("status", help="read acceptance experiment status")
     status.add_argument("--database", type=Path, default=DEFAULT_DATABASE)
@@ -508,6 +518,8 @@ def run_window_preparation(
     database: Path,
     windows_database: Path,
     execution_profile: str | None = None,
+    local_max_series: int | None = None,
+    local_max_windows: int | None = None,
 ) -> dict[str, Any]:
     """Purpose: Run the opt-in v5 preparation locally or on the approved CPU cluster.
 
@@ -523,14 +535,29 @@ def run_window_preparation(
         validate_tuning_cluster,
     )
 
+    local_bounds = (local_max_series, local_max_windows)
+    if execution_profile is None and any(value is None for value in local_bounds):
+        raise RuntimeError(
+            "local window preparation requires both --local-max-series and "
+            "--local-max-windows; heavy preparation requires --execution-profile "
+            f"{APPROVED_HEAVY_TUNING_PROFILE}"
+        )
+    if execution_profile is not None and any(value is not None for value in local_bounds):
+        raise ValueError("local preparation bounds cannot be combined with an execution profile")
     manifest = repository_source_manifest()
     manifest_hash = source_manifest_fingerprint(manifest)
     if execution_profile is None:
         with WindowPreparationCoordinator(database, windows_database) as coordinator:
-            result = coordinator.run(source_manifest_hash=manifest_hash)
+            result = coordinator.run(
+                source_manifest_hash=manifest_hash,
+                local_limits={
+                    "max_series": int(local_max_series),
+                    "max_windows": int(local_max_windows),
+                },
+            )
         return {
             **result,
-            "execution_mode": "sequential_focused",
+            "execution_mode": "bounded_local_focused",
             "source_manifest": manifest_hash,
         }
     if execution_profile != APPROVED_HEAVY_TUNING_PROFILE:
@@ -709,6 +736,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     database,
                     args.windows_database.resolve(),
                     args.execution_profile,
+                    args.local_max_series,
+                    args.local_max_windows,
                 ),
             }
         elif args.action == "status":

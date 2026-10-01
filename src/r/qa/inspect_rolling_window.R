@@ -59,10 +59,69 @@ get_rolling_window_qa <- function(
   )
   on.exit(DBI::dbDisconnect(child, shutdown = TRUE), add = TRUE)
 
+  parent_identity <- DBI::dbGetQuery(
+    parent,
+    paste(
+      "SELECT scientific_hash, configuration_integrity_hash",
+      "FROM experiment_configuration WHERE configuration_key='experiment'"
+    )
+  )
+  child_identity <- DBI::dbGetQuery(
+    child,
+    paste(
+      "SELECT preparation_id, parent_scientific_hash, parent_configuration_hash,",
+      "definition_hash FROM preparation_metadata"
+    )
+  )
+  if (nrow(parent_identity) != 1L || nrow(child_identity) != 1L ||
+      parent_identity$scientific_hash[[1L]] != child_identity$parent_scientific_hash[[1L]] ||
+      parent_identity$configuration_integrity_hash[[1L]] !=
+        child_identity$parent_configuration_hash[[1L]]) {
+    stop("Parent and child scientific/configuration identities do not match", call. = FALSE)
+  }
+  preparation_id <- child_identity$preparation_id[[1L]]
+  run <- DBI::dbGetQuery(
+    parent,
+    paste(
+      "SELECT child_database, definition_hash, parent_scientific_hash,",
+      "parent_configuration_hash, membership_fingerprint, status",
+      "FROM window_preparation_runs WHERE preparation_id=?"
+    ),
+    params = list(preparation_id)
+  )
+  split <- DBI::dbGetQuery(
+    child,
+    paste(
+      "SELECT membership_fingerprint FROM split_definitions",
+      "WHERE preparation_id=? AND split_id='S1'"
+    ),
+    params = list(preparation_id)
+  )
+  recorded_child <- if (nrow(run) == 1L) {
+    normalizePath(file.path(dirname(parent_database), run$child_database[[1L]]), mustWork = TRUE)
+  } else {
+    NA_character_
+  }
+  if (nrow(run) != 1L || nrow(split) != 1L || recorded_child != windows_database ||
+      run$definition_hash[[1L]] != child_identity$definition_hash[[1L]] ||
+      run$parent_scientific_hash[[1L]] != child_identity$parent_scientific_hash[[1L]] ||
+      run$parent_configuration_hash[[1L]] != child_identity$parent_configuration_hash[[1L]] ||
+      run$membership_fingerprint[[1L]] != split$membership_fingerprint[[1L]] ||
+      run$status[[1L]] != "completed") {
+    stop("Parent/child preparation lineage is incomplete or mismatched", call. = FALSE)
+  }
+  if (!("source_content_hash" %in% DBI::dbListFields(child, "series_membership"))) {
+    stop(
+      "This historical child lacks per-series source lineage; use a corrected v6 child",
+      call. = FALSE
+    )
+  }
+
   series <- DBI::dbGetQuery(
     parent,
     paste(
-      "SELECT l.series_key, s.frequency, s.target FROM series s",
+      "SELECT l.series_key, l.frequency_key, s.frequency, s.target,",
+      "s.content_hash, s.observation_count FROM series s",
       "JOIN dataset_lookup d USING (dataset_id)",
       "JOIN series_lookup l ON l.dataset_key=d.dataset_key",
       "AND l.series_id=s.series_id WHERE s.dataset_id=? AND s.series_id=?"
@@ -76,16 +135,42 @@ get_rolling_window_qa <- function(
       "SELECT w.window_id, m.partition, w.input_start, w.input_end,",
       "w.future_start, w.future_end, w.transformed_input,",
       "w.transformation_state, w.preprocessing_provenance,",
-      "w.package_versions, w.worker_provenance",
+      "w.package_versions, w.worker_provenance, m.source_content_hash,",
+      "m.usable_start, m.usable_end, f.input_length, f.future_horizon, f.stride",
       "FROM prepared_windows w JOIN series_membership m",
       "USING (preparation_id, series_key)",
-      "WHERE w.series_key=? AND w.window_ordinal=?"
+      "JOIN frequency_definitions f USING (preparation_id)",
+      "WHERE w.preparation_id=? AND w.series_key=? AND w.window_ordinal=?",
+      "AND f.frequency_key=?"
     ),
-    params = list(series$series_key[[1L]], window_ordinal)
+    params = list(
+      preparation_id, series$series_key[[1L]], window_ordinal,
+      series$frequency_key[[1L]]
+    )
   )
   if (nrow(prepared) != 1L) stop("Expected exactly one prepared window", call. = FALSE)
+  if (prepared$source_content_hash[[1L]] != series$content_hash[[1L]]) {
+    stop("Prepared series source identity does not match the parent", call. = FALSE)
+  }
 
   target <- as.numeric(series$target[[1L]])
+  expected_input_start <- as.integer(prepared$usable_start[[1L]]) +
+    window_ordinal * as.integer(prepared$stride[[1L]])
+  boundaries_valid <-
+    length(target) == as.integer(series$observation_count[[1L]]) &&
+    as.integer(prepared$input_start[[1L]]) == expected_input_start &&
+    as.integer(prepared$input_end[[1L]]) - as.integer(prepared$input_start[[1L]]) ==
+      as.integer(prepared$input_length[[1L]]) &&
+    as.integer(prepared$future_start[[1L]]) == as.integer(prepared$input_end[[1L]]) &&
+    as.integer(prepared$future_end[[1L]]) - as.integer(prepared$future_start[[1L]]) ==
+      as.integer(prepared$future_horizon[[1L]]) &&
+    as.integer(prepared$future_end[[1L]]) <= as.integer(prepared$usable_end[[1L]]) &&
+    as.integer(prepared$future_end[[1L]]) <= length(target) &&
+    length(as.numeric(prepared$transformed_input[[1L]])) ==
+      as.integer(prepared$input_length[[1L]])
+  if (!boundaries_valid) {
+    stop("Prepared window boundaries are inconsistent with persisted definitions", call. = FALSE)
+  }
   input_positions <- seq.int(
     as.integer(prepared$input_start[[1L]]) + 1L,
     as.integer(prepared$input_end[[1L]])

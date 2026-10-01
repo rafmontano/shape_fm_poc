@@ -68,11 +68,14 @@ Import missingness and the two preprocessing modes are documented in
 New standardised experiments use configuration v4 and keep v1–v3 interpretation
 unchanged. The committed v4 acceptance configuration is
 `config/experiments/poc2_m4_daily_100_standardised.json`.
-Configuration v5 adds an explicit, optional rolling-window preparation outside
+Configuration v5 adds the historical optional rolling-window preparation outside
 Processes 01–06. It persists one deterministic S1 train/test membership by
 original series and complete transformed input windows in a separate child
 DuckDB; raw inputs and futures remain only in the parent. The committed v5
 configuration is `config/experiments/poc2_m4_daily_100_rolling_windows.json`.
+Configuration v6 corrects R-compatible split rounding, parent/child validation,
+bounded preparation and configurable W/H validation in a fresh experiment:
+`config/experiments/poc2_m4_daily_100_rolling_windows_corrected.json`.
 Completed task state and scientific provenance are stored transactionally, so
 rerunning the same experiment skips completed work without changing experiment,
 task, forecast, or evaluation identity.
@@ -130,23 +133,33 @@ Read one stored forecast by supplying all three selectors:
   --variant-id VARIANT_ID --series-id SERIES_ID --candidate CANDIDATE
 ```
 
-After completing Process 01 for the v5 experiment, create or resume its window
+After completing Process 01 for the v6 experiment, create or resume its window
 database explicitly. Heavy acceptance uses the approved named 8-Mac/15-Ubuntu
-CPU profile; omit the profile only for bounded local checks:
+CPU profile:
 
 ```sh
 .tools/uv/uv run --locked --no-sync python src/python/00_main.py prepare-windows \
-  --database results/poc2_m4_daily_100_rolling_windows.duckdb \
-  --windows-database results/poc2_m4_daily_100_rolling_windows.windows.duckdb \
+  --database results/poc2_m4_daily_100_rolling_windows_corrected.duckdb \
+  --windows-database results/poc2_m4_daily_100_rolling_windows_corrected.windows.duckdb \
   --execution-profile poc2_seasonal_recovery
+```
+
+A local focused check must declare enforced bounds instead of silently running
+an unbounded local workload:
+
+```sh
+.tools/uv/uv run --locked --no-sync python src/python/00_main.py prepare-windows \
+  --database PATH_TO_SMALL_PARENT.duckdb \
+  --windows-database PATH_TO_SMALL_CHILD.duckdb \
+  --local-max-series 2 --local-max-windows 20
 ```
 
 Read one prepared window without writing either database:
 
 ```sh
 .tools/uv/uv run --locked --no-sync python src/python/00_main.py results \
-  --database results/poc2_m4_daily_100_rolling_windows.duckdb \
-  --windows-database results/poc2_m4_daily_100_rolling_windows.windows.duckdb \
+  --database results/poc2_m4_daily_100_rolling_windows_corrected.duckdb \
+  --windows-database results/poc2_m4_daily_100_rolling_windows_corrected.windows.duckdb \
   --dataset-id DATASET_ID --series-id SERIES_ID --window-ordinal 0
 ```
 

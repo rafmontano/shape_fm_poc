@@ -1,13 +1,13 @@
 # AMP Code implementation instructions for IDs 011 and 016
 
-Status: Approved by the researcher on 1 October 2026, including scoped GitHub
-publication and safe Ubuntu synchronisation. This supersedes the earlier
-ID 011-only instructions. Implementation and focused Mac validation are
-complete; distributed acceptance and Ubuntu synchronization remain outstanding
-because Ubuntu was unavailable. See
+Status: Original scope approved on 1 October 2026; the researcher approved the
+five review corrections and closure work on 2 October 2026. Scoped GitHub
+publication and safe Ubuntu synchronisation remain authorised. The corrections
+and two-host acceptance completed on 2 October 2026; publication and final
+Mac/GitHub/Ubuntu revision synchronisation remain before closure. See
 [`poc2-rolling-windows-acceptance.md`](poc2-rolling-windows-acceptance.md).
 
-Implement the combined
+Complete the combined
 [rolling-window and S1 split decision](poc2-window-training-architecture.md).
 Read its linked standards and the [configuration contract](experiment-configuration.md),
 [standardisation decision](poc2-standardisation.md) and
@@ -27,6 +27,45 @@ for new scientific settings; retain all existing databases, results and QA
 scripts. Commit and normal push are explicitly authorised for the reviewed
 changes required by IDs 011 and 016, including these decision/instruction
 documents. This is not permission to publish unrelated pending work.
+
+## Approved review corrections
+
+Complete these corrections before the final distributed acceptance. The
+scientific window defaults, stride W+H, S1 strategy, seed and scope are unchanged.
+
+1. **Execution safeguard.** Enforce the existing heavy-run policy through the
+   entry point and coordinator, including when no profile flag is supplied.
+   A local focused check must have explicit, enforced workload bounds; the name
+   `sequential_focused` is not a safeguard. Reject unbounded local preparation
+   without recorded researcher approval. Test the rejection before work starts.
+2. **Database pairing.** Validate parent, child, preparation and source identity
+   before returning a window or its future, in both Python retrieval and R QA.
+   Matching dataset/series keys alone is insufficient. Reuse persisted hashes
+   and lineage; reject mismatched or ambiguous pairs and invalid boundaries.
+   Test a wrong parent containing the same dataset/series identifiers but
+   different observations, as well as the correct pair.
+3. **Historical split rounding.** Restore the previous R double-arithmetic
+   expression `max(1, floor((1 - TRAIN_FRAC) * N))`, not Decimal rounding.
+   At TRAIN_FRAC=0.80, verify against R: N=10 gives 1 test series, N=100 gives
+   19, and N=4227 gives 845. Thus the corrected 100-series run uses 81 train
+   and 19 test series. Keep tsai's disjoint two-way allocation and its recorded
+   new-allocation provenance; matching counts does not reproduce R sampling.
+   Version the corrected split semantics and create a fresh isolated experiment
+   and child for acceptance. Do not rewrite old 80/20 memberships or evidence,
+   or silently reinterpret earlier version-5 experiments during resume.
+4. **Bounded preparation.** Retain the small identity/membership index, but read
+   observations and generate windows progressively in bounded batches. Do not
+   first collect every target or window in memory. Bound the inputs, returned
+   arrays and pending writes, including a single long series; reuse the existing
+   scheduler and sole writer. Demonstrate limits with synthetic fixtures and
+   prove partial-batch interruption/resume without duplicates or changed values.
+5. **Central settings.** Keep the approved defaults in their configuration
+   owner, removing the second exact-value window table from Python validation.
+   Validate supported keys, numeric types, positive lengths and consistent
+   policies; derive stride once and persist it. Test that a valid changed window
+   length works in a fresh experiment and resumes from stored settings without
+   a code edit. Keep live acceptance at the approved M4 Daily defaults; do not
+   add other dataset importers or new split strategies.
 
 ## Implementation
 
@@ -103,6 +142,9 @@ documents. This is not permission to publish unrelated pending work.
    changes, unpublished commits and active jobs. Fetch before deciding how to
    synchronise. Preserve unrelated work; stop for guidance on conflicts or
    unreviewed outgoing commits rather than publishing them implicitly.
+   If the reported clean bc50945 Ubuntu checkout is still an ancestor of
+   published 9728fce, fast-forward it safely first. This restores the baseline,
+   not readiness to test the subsequent corrections.
 2. Before distributed tests, synchronise the reviewed task source and required
    locks to Ubuntu safely. Verify the actual tested file manifest on both
    machines, including relevant uncommitted files and submodules; matching HEAD
@@ -149,6 +191,34 @@ Heavy checks require matching tested source on Mac and Ubuntu and the approved
 8-Mac/15-Ubuntu CPU profile/safety limits. Show completed tasks on both hosts,
 overlap and agreement with a small sequential reference. No GPU work is needed.
 If Ubuntu is unavailable, leave distributed acceptance outstanding.
+
+## Closure acceptance
+
+Run affected lightweight Python and R checks on both machines after the five
+corrections. Run the previously uncollected GIFT-Eval semantics test in its
+designated pinned environment; report its actual outcome without changing
+general dependencies to mask an environment error.
+
+Then execute and persist the full first-100-series M4 Daily preparation in the
+fresh corrected experiment using the approved 8-Mac/15-Ubuntu CPU profile.
+Verify the corrected source manifest and dependencies on both hosts immediately
+before execution. Record real task contributions and overlap, available and
+active worker counts, resource limits and throttling. Use sufficient bounded
+work units to expose useful parallelism without artificial participation quotas
+or unsafe simultaneous workloads. No GPU or model training is required.
+
+Independently reconcile the number of planned and stored windows, boundaries,
+tails and partitions. The earlier 632-window count is a comparison, not proof
+of persistence; investigate unexplained changes without adjusting settings to
+force a total. Verify disjoint series membership, actual Python/R retrieval,
+per-window standardisation, a small sequential reference and duplicate-free
+resume that skips completed work. Supply exact manual QA commands with real
+stored identifiers, not placeholders.
+
+Preserve the earlier Mac evidence as historical. Update documentation with the
+five fixes, tests, complete persisted counts, scientific/source identities and
+final GitHub/Mac/Ubuntu revisions. Recommend closure only when these checks and
+publication/synchronisation succeed; otherwise list the precise remaining gap.
 
 Report changed files, resolved settings, source/dependency identities, checks
 passed/skipped, and usable-length, series and window counts by frequency and

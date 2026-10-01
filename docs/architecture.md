@@ -24,10 +24,12 @@ The [combined rolling-window and split decision](poc2-window-training-architectu
 joins IDs 011 and 016: parent/child storage, central experiment settings,
 stride equal to input window plus future horizon, and one S1 train/test split
 by original series. The researcher approved the combined scope on 1 October 2026.
-The version-5 implementation and focused Mac checks are complete; the required
-100-series two-host distributed acceptance remains outstanding because Ubuntu
-was unavailable. Features, labels, Mantis training and prediction remain outside
-this increment. See the [acceptance record](poc2-rolling-windows-acceptance.md).
+Version 5 is published at 9728fce. Configuration v6 preserves v5 while correcting
+execution safeguards, retrieval identity validation, R-compatible split
+rounding, bounded memory and central settings. Focused checks and the corrected
+100-series 8-Mac/15-Ubuntu acceptance passed on 2 October 2026. Features, labels,
+Mantis training and prediction remain outside this increment. See the
+[acceptance record](poc2-rolling-windows-acceptance.md).
 
 ![ShapeFM research architecture](images/shapefm_research_architecture.png)
 

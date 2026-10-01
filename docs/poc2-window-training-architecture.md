@@ -3,10 +3,11 @@
 Status: Combined IDs 011 and 016 approved by the researcher on 1 October 2026.
 The previously confirmed window sizes and stride rule remain unchanged.
 AMP-Code is authorised to implement this scope and publish its reviewed changes
-to GitHub, with safe Ubuntu synchronisation. The version-5 implementation and
-focused Mac validation are complete. The required 100-series distributed
-acceptance and Ubuntu synchronization remain outstanding because that host was
-unavailable; see the [acceptance record](poc2-rolling-windows-acceptance.md).
+to GitHub, with safe Ubuntu synchronisation. Version 5 was published at 9728fce.
+On 2 October 2026 the researcher approved five review corrections. They are
+implemented as configuration v6 and passed the full 100-series, two-host
+acceptance; closure is recommended after publication and final host
+synchronisation. See the [acceptance record](poc2-rolling-windows-acceptance.md).
 
 ## Scope
 
@@ -45,6 +46,11 @@ previous S1 rolling mechanism; these defaults are not claimed accuracy optima.
 Use S1, as selected in the previous project's saved configuration:
 
 - Approximately 80% training and 20% test, with split seed 123.
+- Preserve the previous R double-arithmetic test-count rule, including its
+  rounding: with proportion 0.80 and 100 eligible series, use 81 train/19 test.
+  The initial version-5 Decimal implementation produced 80/20 instead. The
+  approved correction must use a fresh experiment and versioned semantics,
+  leaving that earlier membership and its evidence unchanged.
 - Split eligible original series within each frequency pool, not window rows.
   Every window from a series inherits the same partition.
 - No label stratification, class balancing, training caps or alternative
@@ -113,8 +119,12 @@ series membership, persisted settings, retrieval and restart. Heavy tests follow
 the [execution policy](execution-policy.md), including Mac/Ubuntu source
 synchronisation. No Mantis training or full-dataset acceptance is included.
 
-The implementation completed these focused checks on Mac. It did not substitute
-a heavy local run for unavailable Ubuntu; the two-host acceptance remains open.
+The initial implementation passed focused Mac checks, but review found five
+remaining corrections: enforce the heavy-run guard, validate database pairing
+on retrieval, preserve historical split rounding, bound preparation memory and
+keep scientific settings centrally configurable. Configuration v6 implements
+these corrections without reinterpreting v5. Focused Mac/Ubuntu checks and the
+fresh 100-series 8-Mac/15-Ubuntu acceptance passed on 2 October 2026.
 
 ## Approval and evidence
 

@@ -202,6 +202,7 @@ def repository_source_manifest() -> dict[str, str]:
         "config/execution_profiles.json",
         "config/experiments/poc2_m4_daily_100_period_tuning.json",
         "config/experiments/poc2_m4_daily_100_rolling_windows.json",
+        "config/experiments/poc2_m4_daily_100_rolling_windows_corrected.json",
         "pyproject.toml",
         "uv.lock",
         "renv.lock",
@@ -751,7 +752,12 @@ def window_preparation_batch(
         worker["memory_safety"] = memory_monitor.evidence()
     return {
         "results": [
-            {"id": job["id"], "windows": by_series[job["id"]]}
+            {
+                "id": job["id"],
+                # Historical focused callers used the numeric ID directly.
+                "series_key": job.get("series_key", job["id"]),
+                "windows": by_series[job["id"]],
+            }
             for job in batch
         ],
         "packages": response["packages"],

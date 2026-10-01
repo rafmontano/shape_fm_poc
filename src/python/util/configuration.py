@@ -37,8 +37,9 @@ class ExperimentConfigurationError(ValueError):
 
 # Code constant: v1 preserves coupled period-7, v2 resolves the R period,
 # v3 opts into period tuning, v4 selects portable sample standardisation, and
-# v5 defines the opt-in rolling-window/S1 preparation contract.
-SUPPORTED_CONFIGURATION_VERSIONS = {1, 2, 3, 4, 5}
+# v5 defines the original rolling-window/S1 contract; v6 corrects split
+# arithmetic and makes its supported window sizes researcher-configurable.
+SUPPORTED_CONFIGURATION_VERSIONS = {1, 2, 3, 4, 5, 6}
 # Code constant: repository protocol mapping shared by JSON, DuckDB, CLI, and status output.
 PROCESS_NAMES = {
     1: "import",
@@ -460,47 +461,119 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
             raise ExperimentConfigurationError(
                 "pipeline.window_preparation.context_length must be a positive integer"
             )
-    elif version == 5:
+    elif version in {5, 6}:
         _require_keys(pipeline, {"window_preparation"}, "pipeline")
         window_preparation = _require_mapping(
             pipeline["window_preparation"], "pipeline.window_preparation"
         )
-        expected_windows = {
-            "10S": {"input_length": 512, "future_horizon": 60},
-            "5T": {"input_length": 512, "future_horizon": 48},
-            "10T": {"input_length": 512, "future_horizon": 48},
-            "15T": {"input_length": 512, "future_horizon": 48},
-            "H": {"input_length": 256, "future_horizon": 48},
-            "D": {"input_length": 64, "future_horizon": 14},
-            "W": {"input_length": 64, "future_horizon": 13},
-            "M": {"input_length": 64, "future_horizon": 18},
-            "Q": {"input_length": 32, "future_horizon": 8},
-            "Y": {"input_length": 16, "future_horizon": 6},
-        }
-        expected_split = {
-            "split_id": "S1",
-            "unit": "series",
-            "training_fraction": 0.8,
-            "seed": 123,
-            "generator": "tsai.TrainValidTestSplitter",
-            "membership_source": "generate",
-        }
-        if window_preparation != {
-            "selected_frequencies": ["D"],
-            "frequencies": expected_windows,
-            "stride_rule": "input_plus_future",
-            "block_policy": "complete_non_overlapping",
-            "boundary_policy": "official_training_only",
-            "preprocessing_mode": "robust",
-            "transformation": "standardise_sample_v1",
-            "split": expected_split,
-        }:
-            raise ExperimentConfigurationError(
-                "pipeline.window_preparation must equal the approved v5 rolling-window and S1 contract"
+        if version == 6:
+            supported_frequencies = {"10S", "5T", "10T", "15T", "H", "D", "W", "M", "Q", "Y"}
+            required_fields = {
+                "selected_frequencies", "frequencies", "stride_rule", "block_policy",
+                "boundary_policy", "preprocessing_mode", "transformation", "split",
+            }
+            if set(window_preparation) != required_fields:
+                raise ExperimentConfigurationError(
+                    "pipeline.window_preparation must define the complete v6 contract"
+                )
+            frequencies = _require_mapping(
+                window_preparation["frequencies"], "pipeline.window_preparation.frequencies"
             )
+            if not frequencies or not set(frequencies).issubset(supported_frequencies):
+                raise ExperimentConfigurationError(
+                    "window frequencies must be nonempty supported frequency keys"
+                )
+            for frequency, settings_value in frequencies.items():
+                settings = _require_mapping(
+                    settings_value, f"pipeline.window_preparation.frequencies.{frequency}"
+                )
+                if set(settings) != {"input_length", "future_horizon"} or any(
+                    isinstance(settings.get(field), bool)
+                    or not isinstance(settings.get(field), int)
+                    or settings[field] < 1
+                    for field in ("input_length", "future_horizon")
+                ):
+                    raise ExperimentConfigurationError(
+                        f"window frequency {frequency} requires positive integer input_length and future_horizon"
+                    )
+            selected = window_preparation["selected_frequencies"]
+            if (
+                not isinstance(selected, list)
+                or not selected
+                or len(selected) != len(set(selected))
+                or not set(selected).issubset(frequencies)
+            ):
+                raise ExperimentConfigurationError(
+                    "selected_frequencies must be a nonempty unique subset of configured frequencies"
+                )
+            if (
+                window_preparation["stride_rule"] != "input_plus_future"
+                or window_preparation["block_policy"] != "complete_non_overlapping"
+                or window_preparation["boundary_policy"] != "official_training_only"
+                or window_preparation["preprocessing_mode"] != "robust"
+                or window_preparation["transformation"] != "standardise_sample_v1"
+            ):
+                raise ExperimentConfigurationError("unsupported v6 window-preparation policy")
+            split = _require_mapping(
+                window_preparation["split"], "pipeline.window_preparation.split"
+            )
+            if (
+                set(split) != {
+                    "split_id", "unit", "training_fraction", "seed", "generator",
+                    "membership_source", "test_count_rule",
+                }
+                or split["split_id"] != "S1"
+                or split["unit"] != "series"
+                or isinstance(split["training_fraction"], bool)
+                or not isinstance(split["training_fraction"], (int, float))
+                or not 0 < split["training_fraction"] < 1
+                or isinstance(split["seed"], bool)
+                or not isinstance(split["seed"], int)
+                or split["seed"] < 0
+                or split["generator"] != "tsai.TrainValidTestSplitter"
+                or split["membership_source"] != "generate"
+                or split["test_count_rule"] != "r_double_floor_v1"
+            ):
+                raise ExperimentConfigurationError("unsupported v6 S1 split contract")
+        else:
+            # Keep the exact v5 document and its original Decimal split semantics
+            # valid for historical databases and resumes.
+            expected_windows = {
+                "10S": {"input_length": 512, "future_horizon": 60},
+                "5T": {"input_length": 512, "future_horizon": 48},
+                "10T": {"input_length": 512, "future_horizon": 48},
+                "15T": {"input_length": 512, "future_horizon": 48},
+                "H": {"input_length": 256, "future_horizon": 48},
+                "D": {"input_length": 64, "future_horizon": 14},
+                "W": {"input_length": 64, "future_horizon": 13},
+                "M": {"input_length": 64, "future_horizon": 18},
+                "Q": {"input_length": 32, "future_horizon": 8},
+                "Y": {"input_length": 16, "future_horizon": 6},
+            }
+            expected_split = {
+                "split_id": "S1",
+                "unit": "series",
+                "training_fraction": 0.8,
+                "seed": 123,
+                "generator": "tsai.TrainValidTestSplitter",
+                "membership_source": "generate",
+            }
+            if window_preparation != {
+                "selected_frequencies": ["D"],
+                "frequencies": expected_windows,
+                "stride_rule": "input_plus_future",
+                "block_policy": "complete_non_overlapping",
+                "boundary_policy": "official_training_only",
+                "preprocessing_mode": "robust",
+                "transformation": "standardise_sample_v1",
+                "split": expected_split,
+            }:
+                raise ExperimentConfigurationError(
+                    "pipeline.window_preparation must equal the approved v5 rolling-window and S1 contract"
+                )
     elif "window_preparation" in pipeline:
         raise ExperimentConfigurationError(
-            "pipeline.window_preparation belongs to configuration version 4 or 5"
+            "pipeline.window_preparation belongs to configuration version 4, 5, or 6"
         )
     tuning_enabled = "seasonal_period_tuning" in pipeline
     if pipeline["adjustment"] != "identity":
@@ -699,11 +772,19 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
             raise ExperimentConfigurationError(f"execution.default.{field} must be positive")
     if not isinstance(default["dask_retries"], int) or default["dask_retries"] < 0:
         raise ExperimentConfigurationError("execution.default.dask_retries cannot be negative")
+    if version == 6 and (
+        isinstance(default.get("window_preparation_windows_per_job"), bool)
+        or not isinstance(default.get("window_preparation_windows_per_job"), int)
+        or default["window_preparation_windows_per_job"] < 1
+    ):
+        raise ExperimentConfigurationError(
+            "execution.default.window_preparation_windows_per_job must be a positive integer"
+        )
     expected_batch_sizes = {
         "import", "plan", "preprocess", "transform", "auto_arima", "chronos",
         "combine", "gift_eval",
     }
-    if version == 5:
+    if version in {5, 6}:
         expected_batch_sizes.add("window_preparation")
     if tuning_enabled:
         expected_batch_sizes.add("r_forecast")
@@ -762,7 +843,7 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
             raise ExperimentConfigurationError(
                 "v4 acceptance must describe the sequential Gate 1-3 run"
             )
-    elif version == 5:
+    elif version in {5, 6}:
         if acceptance != {
             "mode": "dask",
             "workflow": "window_preparation",
@@ -772,7 +853,7 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
             "system_memory_min_available_gib": {"mac": 3, "ubuntu": 16},
         }:
             raise ExperimentConfigurationError(
-                "v5 acceptance must describe the approved two-host window-preparation profile"
+                f"v{version} acceptance must describe the approved two-host window-preparation profile"
             )
     else:
         if topology != {"mac_cpu": 1, "ubuntu_cpu": 0, "ubuntu_gpu": 1, "total": 2}:
@@ -825,7 +906,7 @@ def resolve_experiment_configuration(value: dict[str, Any]) -> ExperimentConfigu
     validate_experiment_configuration(value)
     original = deepcopy(value)
     resolved = deepcopy(value)
-    if resolved["configuration_version"] == 5:
+    if resolved["configuration_version"] in {5, 6}:
         frequencies = resolved["pipeline"]["window_preparation"]["frequencies"]
         for settings in frequencies.values():
             settings["stride"] = settings["input_length"] + settings["future_horizon"]

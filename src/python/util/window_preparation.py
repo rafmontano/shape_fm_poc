@@ -14,7 +14,9 @@ from __future__ import annotations
 import hashlib
 import importlib.metadata
 import json
+import math
 import os
+import struct
 import subprocess
 import time
 import uuid
@@ -33,7 +35,7 @@ from .import_execution import repository_root
 
 
 # Code constant: child schema is independent of the parent DuckDB migration number.
-WINDOW_DATABASE_SCHEMA_VERSION = 1
+WINDOW_DATABASE_SCHEMA_VERSION = 2
 
 
 # Code constant: normalized child schema stores definitions and membership once;
@@ -79,6 +81,7 @@ CREATE TABLE IF NOT EXISTS series_membership (
     preparation_id VARCHAR NOT NULL,
     split_id VARCHAR NOT NULL,
     series_key BIGINT NOT NULL,
+    source_content_hash VARCHAR NOT NULL,
     partition VARCHAR NOT NULL CHECK (partition IN ('train', 'test')),
     usable_start INTEGER NOT NULL,
     usable_end INTEGER NOT NULL,
@@ -235,7 +238,10 @@ def rolling_window_inputs(
 
 
 def s1_partition(
-    identities: list[tuple[str, str]], training_fraction: float, seed: int
+    identities: list[tuple[str, str]],
+    training_fraction: float,
+    seed: int,
+    test_count_rule: str = "r_double_floor_v1",
 ) -> tuple[dict[tuple[str, str], str], dict[str, Any]]:
     """Allocate eligible namespaced series with tsai's explicit-count splitter.
 
@@ -249,16 +255,23 @@ def s1_partition(
     ordered = sorted(identities)
     if len(ordered) < 2:
         raise ValueError("S1 requires at least two eligible series per frequency")
-    # Decimal preserves the approved mathematical 0.20 proportion at exact
-    # boundaries (for example N=10 gives two, not a binary-float underflow to one).
-    test_count = max(
-        1,
-        int(
-            ((Decimal("1") - Decimal(str(training_fraction))) * len(ordered)).to_integral_value(
-                rounding=ROUND_FLOOR
-            )
-        ),
-    )
+    if test_count_rule == "r_double_floor_v1":
+        # Python's float is the same IEEE-754 binary64 arithmetic used by R's
+        # numeric type. Preserve the historical R expression literally.
+        test_count = max(1, floor((1.0 - float(training_fraction)) * len(ordered)))
+    elif test_count_rule == "decimal_floor_v1":
+        # Configuration v5 used this exact-decimal interpretation. It remains
+        # available only so existing v5 databases resume without reinterpretation.
+        test_count = max(
+            1,
+            int(
+                ((Decimal("1") - Decimal(str(training_fraction))) * len(ordered)).to_integral_value(
+                    rounding=ROUND_FLOOR
+                )
+            ),
+        )
+    else:
+        raise ValueError(f"unsupported S1 test-count rule: {test_count_rule}")
     if test_count >= len(ordered):
         raise ValueError("S1 must retain at least one training series")
     train, test = TrainValidTestSplitter(
@@ -284,7 +297,26 @@ def s1_partition(
         "generator": "tsai.TrainValidTestSplitter",
         "generator_version": importlib.metadata.version("tsai"),
         "source_ordering": "lexicographic(dataset_id, series_id)",
+        "test_count_rule": test_count_rule,
     }
+
+
+def _target_content_hash(values: Iterable[float | None]) -> str:
+    """Recompute the canonical Gate 1 content hash for lineage validation."""
+    target = list(values)
+    if all(value is not None and not math.isnan(float(value)) for value in target):
+        packed = struct.pack(f"<{len(target)}f", *(float(value) for value in target))
+    else:
+        parts = []
+        for value in target:
+            if value is None:
+                parts.append(b"N")
+            elif math.isnan(float(value)):
+                parts.append(b"A")
+            else:
+                parts.append(b"V" + struct.pack("<f", float(value)))
+        packed = b"".join(parts)
+    return hashlib.sha256(packed).hexdigest()
 
 
 def _initialize_child_database(
@@ -338,8 +370,8 @@ class WindowPreparationCoordinator:
             raise ValueError("windows database must differ from the parent database")
         self.parent = duckdb.connect(str(self.parent_path))
         self.configuration = load_database_configuration(self.parent_path, self.parent)
-        if self.configuration.version != 5:
-            raise ValueError("rolling-window preparation requires configuration version 5")
+        if self.configuration.version not in {5, 6}:
+            raise ValueError("rolling-window preparation requires configuration version 5 or 6")
         self.definition = self.configuration.resolved["pipeline"]["window_preparation"]
         self.preparation_id = "window-preparation/" + json_fingerprint(
             {
@@ -393,7 +425,7 @@ class WindowPreparationCoordinator:
         if state is None or state[0] != "completed":
             raise RuntimeError("window preparation requires completed Process 01")
         rows = self.parent.execute(
-            """SELECT s.dataset_id, s.series_id, s.source_row, s.frequency, s.target,
+            """SELECT s.dataset_id, s.series_id, s.source_row, s.frequency,
                       s.content_hash, w.train_start, w.train_end
                FROM series s JOIN evaluation_windows w USING (dataset_id, series_id)
                WHERE s.frequency IN (SELECT unnest(?))
@@ -413,10 +445,9 @@ class WindowPreparationCoordinator:
                 "series_id": row[1],
                 "source_row": int(row[2]),
                 "frequency": row[3],
-                "target": list(row[4]),
-                "content_hash": row[5],
-                "usable_start": int(row[6]),
-                "usable_end": int(row[7]),
+                "content_hash": row[4],
+                "usable_start": int(row[5]),
+                "usable_end": int(row[6]),
             }
             for row in rows
         ]
@@ -490,14 +521,7 @@ class WindowPreparationCoordinator:
         ).fetchone()
         eligible = []
         for item in series:
-            settings = self.definition["frequencies"][item["frequency"]]
-            length = item["usable_end"] - item["usable_start"]
-            count = complete_window_count(
-                length, settings["input_length"], settings["future_horizon"]
-            )
-            item["window_count"] = count
-            item["unused_tail"] = length - count * settings["stride"]
-            if count:
+            if item["window_count"]:
                 eligible.append(item)
         cohort = [
             [item["dataset_id"], item["series_id"], item["content_hash"]]
@@ -535,6 +559,7 @@ class WindowPreparationCoordinator:
                 identities,
                 self.definition["split"]["training_fraction"],
                 self.definition["split"]["seed"],
+                self.definition["split"].get("test_count_rule", "decimal_floor_v1"),
             )
             memberships.update(allocated)
             split_provenance = provenance
@@ -566,7 +591,7 @@ class WindowPreparationCoordinator:
                 [
                     self.preparation_id,
                     self.definition["split"]["training_fraction"],
-                    "max(1, floor((1 - training_fraction) * N))",
+                    split_provenance["test_count_rule"],
                     self.definition["split"]["seed"],
                     split_provenance["generator"],
                     split_provenance["generator_version"],
@@ -578,10 +603,11 @@ class WindowPreparationCoordinator:
             )
             for item in eligible:
                 self.child.execute(
-                    "INSERT INTO series_membership VALUES (?, 'S1', ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO series_membership VALUES (?, 'S1', ?, ?, ?, ?, ?, ?, ?, ?)",
                     [
                         self.preparation_id,
                         item["series_key"],
+                        item["content_hash"],
                         memberships[(item["dataset_id"], item["series_id"])],
                         item["usable_start"],
                         item["usable_end"],
@@ -605,8 +631,13 @@ class WindowPreparationCoordinator:
             "generator_version": split_provenance["generator_version"],
         }
 
-    def _jobs(self, series: list[dict[str, Any]], periods: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
-        """Build bounded serializable jobs only for incomplete eligible series."""
+    def _jobs(
+        self,
+        series: list[dict[str, Any]],
+        periods: dict[str, dict[str, Any]],
+        windows_per_job: int,
+    ) -> Iterable[dict[str, Any]]:
+        """Yield bounded chunks, loading only one limited target slice at a time."""
         pending = {
             int(row[0])
             for row in self.child.execute(
@@ -615,49 +646,94 @@ class WindowPreparationCoordinator:
                 [self.preparation_id],
             ).fetchall()
         }
-        jobs = []
         for item in series:
             if item.get("series_key") not in pending:
                 continue
             settings = self.definition["frequencies"][item["frequency"]]
-            raw = item["target"][item["usable_start"] : item["usable_end"]]
-            windows = []
-            for window in rolling_window_inputs(
-                raw,
-                settings["input_length"],
-                settings["future_horizon"],
-                offset=item["usable_start"],
-            ):
-                identity = {
-                    "preparation": self.preparation_id,
-                    "series_key": item["series_key"],
-                    "input_start": window["input_start"],
-                    "input_end": window["input_end"],
-                    "future_start": window["future_start"],
-                    "future_end": window["future_end"],
-                }
-                windows.append(
-                    {
-                        **window,
-                        "window_id": "prepared-window/" + json_fingerprint(identity)[:32],
-                    }
-                )
-            if windows:
-                jobs.append(
-                    {
-                        "id": str(item["series_key"]),
+            existing = {
+                int(row[0])
+                for row in self.child.execute(
+                    """SELECT window_ordinal FROM prepared_windows
+                       WHERE preparation_id=? AND series_key=?""",
+                    [self.preparation_id, item["series_key"]],
+                ).fetchall()
+            }
+            for first_ordinal in range(0, item["window_count"], windows_per_job):
+                ordinals = [
+                    ordinal
+                    for ordinal in range(
+                        first_ordinal,
+                        min(first_ordinal + windows_per_job, item["window_count"]),
+                    )
+                    if ordinal not in existing
+                ]
+                if not ordinals:
+                    continue
+                # Missing ordinals can only arise at a restart boundary because
+                # chunks commit atomically. Fetch each retained input directly,
+                # keeping even one exceptionally long source series bounded.
+                windows = []
+                for ordinal in ordinals:
+                    input_start = item["usable_start"] + ordinal * settings["stride"]
+                    input_end = input_start + settings["input_length"]
+                    raw_row = self.parent.execute(
+                        """SELECT list_slice(target, ?, ?) FROM series
+                           WHERE dataset_id=? AND series_id=?""",
+                        [input_start + 1, input_end, item["dataset_id"], item["series_id"]],
+                    ).fetchone()
+                    if raw_row is None or len(raw_row[0]) != settings["input_length"]:
+                        raise RuntimeError("bounded target slice does not match configured input length")
+                    input_values = []
+                    for value in raw_row[0]:
+                        if value is None or math.isnan(float(value)):
+                            input_values.append(None)
+                        elif not isfinite(float(value)):
+                            raise ValueError("rolling-window source cannot contain infinity")
+                        else:
+                            input_values.append(float(value))
+                    future_start = input_end
+                    future_end = future_start + settings["future_horizon"]
+                    identity = {
+                        "preparation": self.preparation_id,
                         "series_key": item["series_key"],
-                        "preprocessing_mode": self.definition["preprocessing_mode"],
-                        "transformation": self.definition["transformation"],
-                        "seasonality": periods[item["frequency"]]["r_period"],
-                        "windows": windows,
+                        "input_start": input_start,
+                        "input_end": input_end,
+                        "future_start": future_start,
+                        "future_end": future_end,
                     }
-                )
-        return jobs
+                    windows.append({
+                        "window_ordinal": ordinal,
+                        "input_start": input_start,
+                        "input_end": input_end,
+                        "future_start": future_start,
+                        "future_end": future_end,
+                        "input": input_values,
+                        "window_id": "prepared-window/" + json_fingerprint(identity)[:32],
+                    })
+                yield {
+                    "id": f"{item['series_key']}/{first_ordinal}",
+                    "series_key": item["series_key"],
+                    "preprocessing_mode": self.definition["preprocessing_mode"],
+                    "transformation": self.definition["transformation"],
+                    "seasonality": periods[item["frequency"]]["r_period"],
+                    "windows": windows,
+                }
+
+    @staticmethod
+    def _batches(jobs: Iterable[dict[str, Any]], jobs_per_batch: int) -> Iterable[list[dict[str, Any]]]:
+        """Group a lazy job stream without materializing the remaining workload."""
+        batch: list[dict[str, Any]] = []
+        for job in jobs:
+            batch.append(job)
+            if len(batch) == jobs_per_batch:
+                yield batch
+                batch = []
+        if batch:
+            yield batch
 
     def _commit_series_result(self, result: dict[str, Any], response: dict[str, Any]) -> None:
         """Idempotently write one series' windows and mark its child task complete."""
-        series_key = int(result["id"])
+        series_key = int(result["series_key"])
         self.child.execute("BEGIN TRANSACTION")
         try:
             for window in result["windows"]:
@@ -684,11 +760,17 @@ class WindowPreparationCoordinator:
                         window["transformed_hash"],
                     ],
                 )
+            completed, expected = self.child.execute(
+                """SELECT count(*), max(m.window_count) FROM prepared_windows w
+                   JOIN series_membership m USING (preparation_id, series_key)
+                   WHERE w.preparation_id=? AND w.series_key=?""",
+                [self.preparation_id, series_key],
+            ).fetchone()
             self.child.execute(
-                """UPDATE window_tasks SET status='completed', attempt_count=attempt_count+1,
+                """UPDATE window_tasks SET status=?, attempt_count=attempt_count+1,
                    last_error=NULL, updated_at=current_timestamp
                    WHERE preparation_id=? AND series_key=?""",
-                [self.preparation_id, series_key],
+                ["completed" if completed == expected else "pending", self.preparation_id, series_key],
             )
             self.child.execute("COMMIT")
         except BaseException:
@@ -701,10 +783,28 @@ class WindowPreparationCoordinator:
         dask_client: Any = None,
         source_manifest_hash: str | None = None,
         memory_safety: dict[str, Any] | None = None,
+        local_limits: dict[str, int] | None = None,
     ) -> dict[str, Any]:
         """Create/resume membership and prepare all incomplete selected series."""
         started = time.monotonic()
         series = self._selected_series()
+        for item in series:
+            settings = self.definition["frequencies"][item["frequency"]]
+            length = item["usable_end"] - item["usable_start"]
+            item["window_count"] = complete_window_count(
+                length, settings["input_length"], settings["future_horizon"]
+            )
+            item["unused_tail"] = length - item["window_count"] * settings["stride"]
+        total_planned_windows = sum(int(item["window_count"]) for item in series)
+        if local_limits is not None and (
+            len(series) > local_limits["max_series"]
+            or total_planned_windows > local_limits["max_windows"]
+        ):
+            raise RuntimeError(
+                "local window preparation exceeds its explicit bounds before writes: "
+                f"series={len(series)}/{local_limits['max_series']}, "
+                f"windows={total_planned_windows}/{local_limits['max_windows']}"
+            )
         self._register_parent_lookups(series)
         self._open_child(source_manifest_hash)
         membership_fingerprint, membership_summary = self._create_or_validate_membership(series)
@@ -729,11 +829,13 @@ class WindowPreparationCoordinator:
             frequency: self._resolve_period(frequency)
             for frequency in self.definition["selected_frequencies"]
         }
-        jobs = self._jobs(series, periods)
-        batches = [
-            jobs[offset : offset + int(self.configuration.execution["batch_sizes"]["window_preparation"])]
-            for offset in range(0, len(jobs), int(self.configuration.execution["batch_sizes"]["window_preparation"]))
-        ]
+        jobs_per_batch = int(self.configuration.execution["batch_sizes"]["window_preparation"])
+        windows_per_job = int(
+            self.configuration.execution.get("window_preparation_windows_per_job", jobs_per_batch)
+        )
+        batches = self._batches(
+            self._jobs(series, periods, windows_per_job), jobs_per_batch
+        )
         script = self.configuration.execution_paths["r_preprocess_worker"]
         timeout = float(self.configuration.execution["worker_timeouts_seconds"]["r"])
         threads = int(self.configuration.execution["thread_limits"]["r"])
@@ -793,6 +895,12 @@ class WindowPreparationCoordinator:
             "periods": periods,
             "worker_series_counts": worker_counts,
             "runtime_seconds": time.monotonic() - started,
+            "memory_bounds": {
+                "windows_per_job": windows_per_job,
+                "jobs_per_batch": jobs_per_batch,
+                "maximum_windows_per_batch": windows_per_job * jobs_per_batch,
+            },
+            "local_limits": local_limits,
         }
         self.parent.execute(
             """UPDATE window_preparation_runs SET status='completed', summary=?,
@@ -810,12 +918,56 @@ def get_prepared_window(
     series_id: str,
     window_ordinal: int,
 ) -> PreparedWindow:
-    """Retrieve one transformed input and resolve its unchanged future from parent."""
-    parent = duckdb.connect(str(parent_database.resolve()), read_only=True)
-    child = duckdb.connect(str(windows_database.resolve()), read_only=True)
+    """Validate parent/child lineage, then resolve one unchanged raw future."""
+    parent_path = parent_database.resolve()
+    child_path = windows_database.resolve()
+    parent = duckdb.connect(str(parent_path), read_only=True)
+    child = duckdb.connect(str(child_path), read_only=True)
     try:
+        configuration = load_database_configuration(parent_path, parent)
+        metadata_rows = child.execute(
+            """SELECT preparation_id, parent_scientific_hash,
+                      parent_configuration_hash, definition_hash, definition
+               FROM preparation_metadata"""
+        ).fetchall()
+        if len(metadata_rows) != 1:
+            raise RuntimeError("windows database must contain exactly one preparation identity")
+        preparation_id, scientific_hash, configuration_hash, definition_hash, definition_json = metadata_rows[0]
+        definition = json.loads(definition_json)
+        if (
+            scientific_hash != configuration.scientific_hash
+            or configuration_hash != configuration.configuration_integrity_hash
+            or definition_hash != json_fingerprint(definition)
+            or definition != configuration.resolved["pipeline"]["window_preparation"]
+        ):
+            raise RuntimeError("windows database does not match the parent scientific configuration")
+        run_rows = parent.execute(
+            """SELECT child_database, definition_hash, parent_scientific_hash,
+                      parent_configuration_hash, membership_fingerprint, status
+               FROM window_preparation_runs WHERE preparation_id=?""",
+            [preparation_id],
+        ).fetchall()
+        if len(run_rows) != 1:
+            raise RuntimeError("parent database has no unique preparation-run linkage")
+        run = run_rows[0]
+        recorded_child = (parent_path.parent / run[0]).resolve()
+        if (
+            recorded_child != child_path
+            or run[1] != definition_hash
+            or run[2] != scientific_hash
+            or run[3] != configuration_hash
+            or run[5] != "completed"
+        ):
+            raise RuntimeError("parent preparation-run linkage is incomplete or mismatched")
+        split_row = child.execute(
+            """SELECT cohort_fingerprint, membership_fingerprint
+               FROM split_definitions WHERE preparation_id=? AND split_id='S1'""",
+            [preparation_id],
+        ).fetchone()
+        if split_row is None or split_row[1] != run[4]:
+            raise RuntimeError("parent and child membership identities do not match")
         parent_row = parent.execute(
-            """SELECT l.series_key, s.frequency, s.target
+            """SELECT l.series_key, s.frequency, s.target, s.content_hash
                FROM series s JOIN dataset_lookup d USING (dataset_id)
                JOIN series_lookup l ON l.dataset_key=d.dataset_key AND l.series_id=s.series_id
                WHERE s.dataset_id=? AND s.series_id=?""",
@@ -823,17 +975,65 @@ def get_prepared_window(
         ).fetchone()
         if parent_row is None:
             raise KeyError(f"series {dataset_id}/{series_id} was not found")
+        if _target_content_hash(parent_row[2]) != parent_row[3]:
+            raise RuntimeError("parent series observations do not match their canonical content hash")
+        membership_columns = {
+            row[1] for row in child.execute("PRAGMA table_info('series_membership')").fetchall()
+        }
+        if "source_content_hash" in membership_columns:
+            membership_source = child.execute(
+                """SELECT source_content_hash FROM series_membership
+                   WHERE preparation_id=? AND series_key=?""",
+                [preparation_id, parent_row[0]],
+            ).fetchone()
+            if membership_source is None or membership_source[0] != parent_row[3]:
+                raise RuntimeError("prepared series source identity does not match the parent")
+        else:
+            # Historical v5 children predate the per-series lineage column.
+            cohort = parent.execute(
+                """SELECT s.dataset_id, s.series_id, s.content_hash
+                   FROM series s JOIN dataset_lookup d USING (dataset_id)
+                   JOIN series_lookup l ON l.dataset_key=d.dataset_key AND l.series_id=s.series_id
+                   WHERE l.series_key IN (SELECT unnest(?))
+                   ORDER BY s.dataset_id, s.series_id""",
+                [[int(row[0]) for row in child.execute(
+                    "SELECT series_key FROM series_membership WHERE preparation_id=?",
+                    [preparation_id],
+                ).fetchall()]],
+            ).fetchall()
+            if json_fingerprint([list(row) for row in cohort]) != split_row[0]:
+                raise RuntimeError("historical child cohort does not match the parent source lineage")
         row = child.execute(
             """SELECT w.window_id, m.partition, w.input_start, w.input_end,
                       w.future_start, w.future_end, w.transformed_input,
-                      w.transformation_state
+                      w.transformation_state, m.usable_start, m.usable_end,
+                      f.input_length, f.future_horizon, f.stride
                FROM prepared_windows w JOIN series_membership m
                  USING (preparation_id, series_key)
-               WHERE w.series_key=? AND w.window_ordinal=?""",
-            [parent_row[0], window_ordinal],
-        ).fetchone()
-        if row is None:
+               JOIN frequency_definitions f USING (preparation_id)
+               WHERE w.preparation_id=? AND w.series_key=? AND w.window_ordinal=?
+                 AND f.frequency_key=?""",
+            [
+                preparation_id,
+                parent_row[0],
+                window_ordinal,
+                stable_lookup_key("frequency", parent_row[1]),
+            ],
+        ).fetchall()
+        if len(row) != 1:
             raise KeyError(f"prepared window {dataset_id}/{series_id}/{window_ordinal} was not found")
+        row = row[0]
+        expected_input_start = int(row[8]) + window_ordinal * int(row[12])
+        if (
+            int(row[2]) != expected_input_start
+            or int(row[3]) - int(row[2]) != int(row[10])
+            or int(row[4]) != int(row[3])
+            or int(row[5]) - int(row[4]) != int(row[11])
+            or int(row[5]) > int(row[9])
+            or len(row[6]) != int(row[10])
+            or int(row[5]) > len(parent_row[2])
+        ):
+            raise RuntimeError("prepared window boundaries are inconsistent with persisted definitions")
         future = tuple(parent_row[2][row[4] : row[5]])
         return PreparedWindow(
             window_id=row[0],

@@ -1,11 +1,19 @@
 # POC2 rolling-window and S1 acceptance record
 
-Date: 1 October 2026
+Initial evidence: 1 October 2026. Corrected acceptance: 2 October 2026.
 Scope: approved IDs 011 and 016 only
+
+## Current closure status
+
+The five approved review corrections passed focused and full 100-series
+acceptance. IDs 011 and 016 are recommended for closure after this reviewed
+revision is published and both checkouts are advanced to it. Configuration v6
+owns the corrected semantics; version 5 and its historical 80/20 evidence remain
+unchanged and resumable.
 
 ## Implementation status
 
-Configuration version 5 implements the approved combined preparation workflow:
+The initial configuration-version-5 implementation at 9728fce includes:
 ten centrally validated frequency definitions, derived W+H strides, official
 training-boundary protection, complete tsai windows, one persisted S1 allocation
 by namespaced original-series identity, robust Gate 2 cleaning, independent
@@ -49,17 +57,58 @@ explicit test count 20 and seed 123. It is not claimed bit-identical to R's
 `sample()` allocation. ShapeFM maps tsai's two-way held-out output to S1 test;
 no validation partition is persisted.
 
-The local calculation proves the scientific boundary and worker contracts; it
-is not the required distributed 100-series persistence acceptance.
+These are historical observations for the initial implementation, not acceptance
+of the reviewed gaps. Direct review checks of the legacy R expression gave test
+counts 1, 19 and 845 for eligible cohort sizes 10, 100 and 4227; the Decimal
+implementation gave 2, 20 and 845. Preserve the reported 80/20 allocation above
+as historical and use a fresh experiment for the approved rounding correction.
+The count of 632 windows is not the required distributed 100-series persistence
+acceptance; the live stored integration covered only the 12 windows of series 0.
 
-## Outstanding distributed acceptance
+## Corrected implementation and distributed acceptance
 
-Ubuntu hostname `WSUbuntu1.local` did not resolve during implementation. Under
-the execution policy, no heavy Mac-only substitute was run. Ubuntu dependency
-synchronization, matching two-host source manifest, actual 8-Mac/15-Ubuntu task
-contribution, overlap/resource evidence, full child persistence/retrieval on the
-100 official series and published-revision Ubuntu synchronization therefore
-remain outstanding. GPU workers are not needed for this CPU-only workflow.
+Configuration v6 uses `r_double_floor_v1`, validates supported/configured
+frequency keys and positive W/H values, derives stride once, and accepts valid
+changed W/H settings in a fresh experiment. The coordinator reads only a small
+series index, retrieves bounded target slices, emits at most 16 windows per job,
+and keeps one job per distributed task. Local execution requires explicit
+`--local-max-series` and `--local-max-windows`; omission and exceeded bounds fail
+before child or parent preparation writes. Retrieval and R QA validate parent
+configuration, preparation/run linkage, membership, per-series source hash and
+window boundaries.
+
+Mac and Ubuntu tested identical runtime/lock fingerprints at source-manifest
+`f39d4c9c8e832758c01dfc75a78fac6a0709deffb50e543b14f83e2868a7d221`,
+GIFT-Eval submodule `4d5ab3fa0fe7451bbf59bb1ff6dd76e6e414d64a`, and tsai 1.0.1. The same 49
+focused Python tests and R parse/rounding checks passed on each host. The pinned
+GIFT-Eval semantics suite passed 2 tests on each host. The recorded renv
+out-of-sync warning remains unchanged; required R versions were R 4.6.1,
+forecast 8.24.0, jsonlite 2.0.0 and tsfeatures 1.1.1.
+
+The fresh v6 parent imported 100 series and 57,235 observations. Independent
+parent reconciliation and child persistence both produced 632 windows and 5,139
+unused trailing observations, with zero short series. Membership is disjoint:
+81 train series/495 windows/4,137 unused observations and 19 test series/137
+windows/1,002 unused observations. All 632 window IDs and
+`(series_key, window_ordinal)` pairs are unique; all 100 tasks completed once;
+boundary reconciliation found zero violations.
+
+The approved profile supplied 8 Mac and 15 Ubuntu CPU workers (23 active tuning
+slots); no GPU worker was launched. Mac completed 21 jobs/148 windows and Ubuntu
+79 jobs/484 windows. Their persisted completion ranges overlapped from
+09:47:04 to 09:47:25 local time. Continuous memory evidence recorded no safety
+response or swap growth; minimum available memory during work was 3.64 GiB on
+Mac and 118.36 GiB on Ubuntu. A sequential rerun of one window from each host
+matched the persisted transformed hashes exactly. A full resume reused the
+membership, submitted no jobs, retained 632 windows and did not increment any
+task attempt.
+
+Python retrieval and the R QA script both read official series 0, window 0:
+64 transformed inputs, 14 unchanged future values and test membership. Focused
+tests also reject a different parent containing the same dataset/series keys but
+changed observations, enforce local limits before writes, preserve configurable
+settings on database-only resume, and restore an interrupted long-series chunk
+without duplicate or changed transformed hashes.
 
 The new direct dependency is pinned as `tsai==1.0.1`. Its required fastai,
 PyTorch, NumPy and scikit-learn stack materially enlarges the general Python
@@ -69,13 +118,13 @@ previously locked package version.
 
 ## Manual QA
 
-After the distributed child database exists, run from a repository-root R
+For the retained local acceptance artifacts, run from a repository-root R
 session:
 
 ```r
-ROLLING_QA_PARENT_DATABASE <- "results/poc2_m4_daily_100_rolling_windows.duckdb"
-ROLLING_QA_WINDOWS_DATABASE <- "results/poc2_m4_daily_100_rolling_windows.windows.duckdb"
-ROLLING_QA_DATASET_ID <- "gift_eval/m4_daily/REPLACE_WITH_STORED_ID"
+ROLLING_QA_PARENT_DATABASE <- ".amp/in/id011016-corrected-parent.duckdb"
+ROLLING_QA_WINDOWS_DATABASE <- ".amp/in/id011016-corrected-windows.duckdb"
+ROLLING_QA_DATASET_ID <- "gift_eval/m4_daily/2919659809a2c1c5e5ccb2eb"
 ROLLING_QA_SERIES_ID <- "0"
 ROLLING_QA_WINDOW_ORDINAL <- 0L
 source("src/r/qa/inspect_rolling_window.R")
@@ -85,3 +134,15 @@ Inspect `selected_rolling_window`, `rolling_raw_input`, `rolling_raw_future`,
 `rolling_transformed_input`, `rolling_transformation_state` and
 `rolling_restored_cleaned_input`. The script opens both databases read-only and
 leaves these objects in the interactive workspace.
+
+Equivalent command-line QA is:
+
+```sh
+Rscript src/r/qa/inspect_rolling_window.R \
+  .amp/in/id011016-corrected-parent.duckdb \
+  .amp/in/id011016-corrected-windows.duckdb \
+  gift_eval/m4_daily/2919659809a2c1c5e5ccb2eb 0 0
+```
+
+The `.amp/in` databases and JSON evidence are deliberately ignored review
+artifacts, not published experiment databases.

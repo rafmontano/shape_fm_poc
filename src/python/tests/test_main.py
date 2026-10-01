@@ -288,8 +288,16 @@ class MainResultsTests(unittest.TestCase):
                 "preparation/1",
             )
             prepare.assert_called_once_with(
-                parent.resolve(), child.resolve(), "poc2_seasonal_recovery"
+                parent.resolve(), child.resolve(), "poc2_seasonal_recovery", None, None
             )
+
+    def test_unbounded_local_window_preparation_is_rejected_before_io(self):
+        """Omitting both approved profile and local bounds fails before database access."""
+        with self.assertRaisesRegex(RuntimeError, "local window preparation requires"):
+            MAIN.run_window_preparation(
+                Path("does-not-exist.duckdb"), Path("not-created.duckdb")
+            )
+        self.assertFalse(Path("not-created.duckdb").exists())
 
     def test_incomplete_forecast_selectors_fail_before_database_access(self):
         """Partial forecast selectors fail before querying or creating a database."""
