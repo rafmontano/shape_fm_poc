@@ -1,10 +1,11 @@
 # AMP Code implementation instructions for IDs 011 and 016
 
 Status: Original scope approved on 1 October 2026; the researcher approved the
-five review corrections and closure work on 2 October 2026. Scoped GitHub
-publication and safe Ubuntu synchronisation remain authorised. The corrections
-and two-host acceptance completed on 2 October 2026; publication and final
-Mac/GitHub/Ubuntu revision synchronisation remain before closure. See
+review corrections and closure work on 2 October 2026. Scoped GitHub publication
+and safe Ubuntu synchronisation remain authorised. The final coordinator guard,
+actual tsai workflow, focused checks and fresh two-host acceptance are complete;
+publication and final revision synchronisation remain. The work continued from
+22e41bb without changing the approved architecture or scientific settings. See
 [`poc2-rolling-windows-acceptance.md`](poc2-rolling-windows-acceptance.md).
 
 Complete the combined
@@ -13,6 +14,69 @@ Read its linked standards and the [configuration contract](experiment-configurat
 [standardisation decision](poc2-standardisation.md) and
 [execution policy](execution-policy.md). The decision owns the exact settings;
 do not maintain another independently editable table here.
+
+## Final closure work
+
+This section identifies the remaining work after 22e41bb. The later sections
+remain the governing contracts, not instructions to redo completed work.
+
+Implementation and acceptance completed on 2 October 2026. The requirements
+below are retained as the review record; see the acceptance document for actual
+counts, host contributions, numerical comparison and QA commands.
+
+1. **Enforce the coordinator safeguard.** A direct local call to
+   `WindowPreparationCoordinator.run()` must reject absent or invalid explicit
+   limits before preparation writes or worker launches, just as the entry point
+   does. Enforce the workload bounds and existing heavy-run approval policy;
+   supplying arbitrary large limits is not approval for heavy local testing.
+   Update focused fixtures to declare their bounds rather than bypass the guard.
+   Add direct-coordinator and command-line regression tests for missing,
+   invalid and exceeded limits, plus a permitted small run. Preserve the
+   approved distributed route and its memory safeguards.
+2. **Use tsai in the actual experiment workflow.** Retain bounded DuckDB reads
+   and batches, but pass each bounded source block through the pinned
+   `SlidingWindow` helper. Do not keep a separate custom window generator for
+   the actual workflow while testing tsai elsewhere. Align batches to complete
+   W+H blocks, preserve absolute offsets and stable global window ordinals,
+   and retain no-padding, protected-boundary and partial-resume behaviour.
+   Future values may be read transiently for window generation; they must not
+   enter cleaning/standardisation or be copied into the child database.
+
+Test the real coordinator-to-window-generator path, proving tsai is called and
+its returned inputs are the ones processed and stored. Compare values and
+boundaries with an independent reference across all ten configured frequency
+fixtures, multiple chunks, nonzero offsets, short/tail cases and partial resume.
+A helper-only test is insufficient. Keep the approved defaults, S1 membership,
+R rounding, cleaning and transformation semantics unchanged; do not introduce
+new libraries, split strategies, model work or unrelated refactoring.
+
+Recheck Mac, Ubuntu and GitHub at the current baseline, preserving these
+documentation edits and any unrelated work. Synchronise the corrected runtime
+files and verify their actual manifest, locks and native dependencies before
+running affected lightweight checks on both machines. Then validate the changed
+window path with the full first-100-series M4 Daily preparation using the
+approved 8-Mac/15-Ubuntu CPU profile. Use a fresh isolated acceptance pair so the
+existing accepted artifacts remain untouched; do not bypass source fingerprints
+to reuse a child built by different code. No GPU or unrelated earlier-gate or
+seasonal-tuning acceptance is required.
+
+Reconcile the persisted result against the previous 632 windows, 81/19 series
+and 495/137 train/test windows. Compare per-series membership, positions and
+transformed values/hashes rather than only totals; investigate any unexpected
+change without changing scientific settings. New preparation/run identifiers
+may differ and are not themselves a scientific mismatch. Verify real work and
+overlap on both hosts, Python/R retrieval, and a resume with zero recomputation
+and no duplicate windows. Retain the already passed GIFT-Eval evidence unless
+affected code or dependencies require its checks to be rerun.
+
+Update the decision, acceptance record and affected researcher documentation
+with the actual final path, evidence and manual QA commands. Review and publish
+only scoped code/tests/documentation with the authorised normal GitHub push,
+then safely synchronise Ubuntu and verify the three revisions and source
+manifest. Preserve all databases, results and unrelated changes. Report each of
+the two fixes and its tests, final persisted counts, commit and host status.
+Recommend IDs 011/016 ready for closure only when every requirement passes;
+otherwise report the precise outstanding item. Do not update the spreadsheet.
 
 ## Scope and preflight
 
@@ -142,9 +206,9 @@ scientific window defaults, stride W+H, S1 strategy, seed and scope are unchange
    changes, unpublished commits and active jobs. Fetch before deciding how to
    synchronise. Preserve unrelated work; stop for guidance on conflicts or
    unreviewed outgoing commits rather than publishing them implicitly.
-   If the reported clean bc50945 Ubuntu checkout is still an ancestor of
-   published 9728fce, fast-forward it safely first. This restores the baseline,
-   not readiness to test the subsequent corrections.
+   The latest reported shared baseline is 22e41bb. Verify the live state and
+   fast-forward only where safe; do not repeat the older bc50945 recovery or
+   move a newer checkout backwards.
 2. Before distributed tests, synchronise the reviewed task source and required
    locks to Ubuntu safely. Verify the actual tested file manifest on both
    machines, including relevant uncommitted files and submodules; matching HEAD
@@ -194,10 +258,9 @@ If Ubuntu is unavailable, leave distributed acceptance outstanding.
 
 ## Closure acceptance
 
-Run affected lightweight Python and R checks on both machines after the five
-corrections. Run the previously uncollected GIFT-Eval semantics test in its
-designated pinned environment; report its actual outcome without changing
-general dependencies to mask an environment error.
+Run affected lightweight Python and R checks on both machines after the final
+fixes. The pinned GIFT-Eval semantics suite already passed on both hosts at
+22e41bb; retain that evidence unless affected code or dependencies change.
 
 Then execute and persist the full first-100-series M4 Daily preparation in the
 fresh corrected experiment using the approved 8-Mac/15-Ubuntu CPU profile.
@@ -208,9 +271,10 @@ work units to expose useful parallelism without artificial participation quotas
 or unsafe simultaneous workloads. No GPU or model training is required.
 
 Independently reconcile the number of planned and stored windows, boundaries,
-tails and partitions. The earlier 632-window count is a comparison, not proof
-of persistence; investigate unexplained changes without adjusting settings to
-force a total. Verify disjoint series membership, actual Python/R retrieval,
+tails and partitions. The 22e41bb run persisted 632 windows, unlike the earlier
+count-only check. Preserve that evidence and verify the final code path itself;
+investigate unexplained changes without adjusting settings to force a total.
+Verify disjoint series membership, actual Python/R retrieval,
 per-window standardisation, a small sequential reference and duplicate-free
 resume that skips completed work. Supply exact manual QA commands with real
 stored identifiers, not placeholders.

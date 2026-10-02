@@ -609,6 +609,7 @@ def run_window_preparation(
                     dask_client=client,
                     source_manifest_hash=manifest_hash,
                     memory_safety=memory_safety,
+                    execution_profile=execution_profile,
                 )
         finally:
             client.close()

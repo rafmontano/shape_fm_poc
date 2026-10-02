@@ -5,11 +5,14 @@ Scope: approved IDs 011 and 016 only
 
 ## Current closure status
 
-The five approved review corrections passed focused and full 100-series
-acceptance. IDs 011 and 016 are recommended for closure after this reviewed
-revision is published and both checkouts are advanced to it. Configuration v6
-owns the corrected semantics; version 5 and its historical 80/20 evidence remain
-unchanged and resumable.
+The full 100-series v6 acceptance below was published in 22e41bb. Subsequent
+review found two implementation misses: direct coordinator calls could omit
+local limits, and the actual bounded path manually sliced windows after tsai was
+tested only in a helper. Both are now corrected within the agreed design and a
+fresh final-manifest two-host acceptance passed. IDs 011 and 016 are recommended
+for closure after this reviewed revision is published and both hosts are safely
+synchronised. Configuration v6 and all scientific settings remain unchanged;
+earlier version-5 evidence is preserved.
 
 ## Implementation status
 
@@ -77,6 +80,18 @@ before child or parent preparation writes. Retrieval and R QA validate parent
 configuration, preparation/run linkage, membership, per-series source hash and
 window boundaries.
 
+The final safeguard applies inside `WindowPreparationCoordinator.run()` as well
+as the CLI. Direct local calls require exactly two positive integer limits, with
+policy maximums of 100 series and 200 windows. Missing, malformed, excessive and
+falsely distributed calls fail before series selection, parent lookup writes,
+child creation or worker launch. Distributed calls require the approved
+`poc2_seasonal_recovery` profile and reject local-limit substitution.
+
+The final bounded path reads at most one configured job chunk of complete W+H
+blocks, invokes tsai 1.0.1 `SlidingWindow`, preserves its returned inputs and
+absolute positions, and then filters already persisted ordinals. Future values
+exist only transiently at the generator boundary and are not sent to R or stored.
+
 Mac and Ubuntu tested identical runtime/lock fingerprints at source-manifest
 `f39d4c9c8e832758c01dfc75a78fac6a0709deffb50e543b14f83e2868a7d221`,
 GIFT-Eval submodule `4d5ab3fa0fe7451bbf59bb1ff6dd76e6e414d64a`, and tsai 1.0.1. The same 49
@@ -116,14 +131,53 @@ environment; this is a current packaging limitation rather than duplicated data.
 Lock regeneration added the required graph without changing or removing any
 previously locked package version.
 
+## Final closure acceptance
+
+Mac and Ubuntu tested the final reviewed source manifest
+`1a8f22a907d2036ed5588f9c6f84ecc71e81abee7d56218e483b18ec291e6c8e` with
+byte-identical affected runtime/tests, unchanged locks, GIFT-Eval submodule
+`4d5ab3fa0fe7451bbf59bb1ff6dd76e6e414d64a`, tsai 1.0.1, R 4.6.1,
+forecast 8.24.0, jsonlite 2.0.0 and tsfeatures 1.1.1. The same 52 focused Python
+tests passed on each host. They now prove direct-coordinator rejection before
+writes/worker calls, permitted bounded CLI forwarding, all ten configured
+frequency paths, nonzero offsets, three chunks per frequency, partial resume,
+and persistence of a deliberately altered tsai-returned input. R transformation
+tests and QA parsing also passed on each host. The recorded renv completeness
+warning remains outside this scope.
+
+The authoritative fresh pair is
+`.amp/in/id011016-closure-parent.duckdb` and
+`.amp/in/id011016-closure-windows.duckdb`. It imported the same 100 M4
+Daily series and 57,235 observations. The corrected path persisted 632 unique
+windows with zero duplicate IDs or `(series_key, window_ordinal)` pairs:
+81 train series/495 windows/4,137 unused observations and 19 test series/137
+windows/1,002 unused observations. Every task completed once. Mac contributed
+30 series/192 windows and Ubuntu 70 series/440 windows, with completion intervals
+overlapping from 11:00:39.606705 to 11:00:58.403142 local time. Minimum available
+memory during work was 4.35 GiB on Mac and 118.38 GiB on Ubuntu; no safety
+response or swap growth was recorded. No GPU worker was launched.
+
+Against the preserved 22e41bb acceptance, all 100 parent identities and series
+memberships, all 632 boundaries, and all 632 raw-input hashes matched exactly.
+Of 632 transformed arrays, 630 were byte-identical; two windows assigned from
+Mac to Ubuntu had robust-cleaning floating-point differences no larger than
+2.67 × 10⁻¹⁵. One fitted-state scale differed by 1.42 × 10⁻¹⁴; all other state
+fields and all other fitted states were byte-identical. The two
+cleaned/transformed hashes consequently differ. This is a recorded cross-host
+numerical limitation, not a split, window or settings change. Python and R both
+retrieved official series 0/window 0 with 64 transformed inputs and 14 unchanged
+future observations. A full approved-profile resume reused persisted membership,
+submitted zero jobs, retained 632 unique windows and left all 100 task attempt
+counts at one.
+
 ## Manual QA
 
-For the retained local acceptance artifacts, run from a repository-root R
+For the retained final acceptance artifacts, run from a repository-root R
 session:
 
 ```r
-ROLLING_QA_PARENT_DATABASE <- ".amp/in/id011016-corrected-parent.duckdb"
-ROLLING_QA_WINDOWS_DATABASE <- ".amp/in/id011016-corrected-windows.duckdb"
+ROLLING_QA_PARENT_DATABASE <- ".amp/in/id011016-closure-parent.duckdb"
+ROLLING_QA_WINDOWS_DATABASE <- ".amp/in/id011016-closure-windows.duckdb"
 ROLLING_QA_DATASET_ID <- "gift_eval/m4_daily/2919659809a2c1c5e5ccb2eb"
 ROLLING_QA_SERIES_ID <- "0"
 ROLLING_QA_WINDOW_ORDINAL <- 0L
@@ -139,8 +193,8 @@ Equivalent command-line QA is:
 
 ```sh
 Rscript src/r/qa/inspect_rolling_window.R \
-  .amp/in/id011016-corrected-parent.duckdb \
-  .amp/in/id011016-corrected-windows.duckdb \
+  .amp/in/id011016-closure-parent.duckdb \
+  .amp/in/id011016-closure-windows.duckdb \
   gift_eval/m4_daily/2919659809a2c1c5e5ccb2eb 0 0
 ```
 

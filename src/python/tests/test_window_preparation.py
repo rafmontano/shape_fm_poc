@@ -17,10 +17,12 @@ import unittest
 import json
 import shutil
 from pathlib import Path
+from unittest.mock import patch
 
 import duckdb
 
 from util.configuration import (
+    json_fingerprint,
     load_experiment_configuration,
     resolve_experiment_configuration,
 )
@@ -38,6 +40,7 @@ from util.window_preparation import (
 ROOT = Path(__file__).resolve().parents[3]
 CONFIGURATION = ROOT / "config/experiments/poc2_m4_daily_100_rolling_windows_corrected.json"
 LEGACY_CONFIGURATION = ROOT / "config/experiments/poc2_m4_daily_100_rolling_windows.json"
+LOCAL_TEST_LIMITS = {"max_series": 100, "max_windows": 200}
 
 
 class RollingWindowUnitTests(unittest.TestCase):
@@ -134,6 +137,105 @@ class RollingWindowUnitTests(unittest.TestCase):
         values[5] = float("inf")
         with self.assertRaisesRegex(ValueError, "infinity"):
             rolling_window_inputs(values, 64, 14)
+
+    def test_coordinator_jobs_use_tsai_windows_for_every_configured_frequency(self) -> None:
+        """The actual job path uses tsai outputs across chunks, offsets, and resume gaps."""
+        configuration = load_experiment_configuration(CONFIGURATION)
+        frequencies = configuration.resolved["pipeline"]["window_preparation"][
+            "frequencies"
+        ]
+        sources: dict[str, list[float]] = {}
+        series = []
+        for series_key, (frequency, settings) in enumerate(frequencies.items(), start=1):
+            stride = settings["stride"]
+            values = [float(series_key * 10000 + index) for index in range(3 + 5 * stride + 2)]
+            sources[str(series_key)] = values
+            series.append(
+                {
+                    "dataset_id": "dataset/test",
+                    "series_id": str(series_key),
+                    "series_key": series_key,
+                    "frequency": frequency,
+                    "usable_start": 3,
+                    "window_count": 5,
+                }
+            )
+
+        class Rows:
+            """Supply the minimal DuckDB cursor contract exercised by _jobs()."""
+
+            def __init__(self, rows):
+                self.rows = rows
+
+            def fetchall(self):
+                return self.rows
+
+            def fetchone(self):
+                return self.rows[0] if self.rows else None
+
+        class Parent:
+            """Resolve bounded list_slice reads from in-memory source vectors."""
+
+            def execute(self, query, parameters):
+                del query
+                start, end, _, series_id = parameters
+                return Rows([(sources[series_id][start - 1 : end],)])
+
+        class Child:
+            """Expose every series as pending and one persisted resume ordinal."""
+
+            def execute(self, query, parameters):
+                if "FROM window_tasks" in query:
+                    return Rows([(item["series_key"],) for item in series])
+                series_key = parameters[1]
+                return Rows([(1,)]) if series_key == 1 else Rows([])
+
+        coordinator = WindowPreparationCoordinator.__new__(WindowPreparationCoordinator)
+        coordinator.parent = Parent()
+        coordinator.child = Child()
+        coordinator.preparation_id = "preparation/test"
+        coordinator.definition = configuration.resolved["pipeline"]["window_preparation"]
+        periods = {frequency: {"r_period": 1} for frequency in frequencies}
+        with patch(
+            "util.window_preparation.rolling_window_inputs",
+            wraps=rolling_window_inputs,
+        ) as generate:
+            jobs = list(coordinator._jobs(series, periods, windows_per_job=2))
+
+        self.assertEqual(generate.call_count, len(frequencies) * 3)
+        by_series = {item["series_key"]: [] for item in series}
+        for job in jobs:
+            by_series[job["series_key"]].extend(job["windows"])
+        for item in series:
+            settings = frequencies[item["frequency"]]
+            expected_ordinals = [0, 2, 3, 4] if item["series_key"] == 1 else list(range(5))
+            self.assertEqual(
+                [window["window_ordinal"] for window in by_series[item["series_key"]]],
+                expected_ordinals,
+            )
+            for window in by_series[item["series_key"]]:
+                ordinal = window["window_ordinal"]
+                start = 3 + ordinal * settings["stride"]
+                self.assertEqual(
+                    (
+                        window["input_start"],
+                        window["input_end"],
+                        window["future_start"],
+                        window["future_end"],
+                    ),
+                    (
+                        start,
+                        start + settings["input_length"],
+                        start + settings["input_length"],
+                        start + settings["stride"],
+                    ),
+                )
+                self.assertEqual(
+                    window["input"],
+                    sources[str(item["series_key"])][
+                        start : start + settings["input_length"]
+                    ],
+                )
 
     def test_constant_and_missing_inputs_are_cleaned_then_standardised(self) -> None:
         """The real worker keeps fitted state finite for risky constant/missing inputs."""
@@ -271,8 +373,29 @@ class WindowPersistenceTests(unittest.TestCase):
 
     def test_preparation_retrieval_and_restart_preserve_membership(self) -> None:
         """A second run skips completed series and preserves every persisted identity."""
+        original_generator = rolling_window_inputs
+        changed_input = [9999.0] + [float(value) for value in range(1, 64)]
+
+        def changed_first_tsai_window(*args, **kwargs):
+            """Make one tsai result distinctive so persistence provenance is observable."""
+            windows = [
+                {**window, "input": list(window["input"])}
+                for window in original_generator(*args, **kwargs)
+            ]
+            if kwargs.get("offset") == 0 and windows and windows[0]["input"][0] == 0.0:
+                windows[0]["input"] = changed_input
+            return tuple(windows)
+
         with WindowPreparationCoordinator(self.parent, self.child) as coordinator:
-            first = coordinator.run(source_manifest_hash="fixture-manifest")
+            with patch(
+                "util.window_preparation.rolling_window_inputs",
+                side_effect=changed_first_tsai_window,
+            ) as generate:
+                first = coordinator.run(
+                    source_manifest_hash="fixture-manifest",
+                    local_limits=LOCAL_TEST_LIMITS,
+                )
+        self.assertEqual(generate.call_count, 100)
         self.assertEqual(first["eligible"], 100)
         self.assertEqual(first["zero_window"], 0)
         self.assertEqual(first["series_by_partition"], {"train": 81, "test": 19})
@@ -289,11 +412,29 @@ class WindowPersistenceTests(unittest.TestCase):
             membership = child.execute(
                 "SELECT series_key, partition FROM series_membership ORDER BY series_key"
             ).fetchall()
+            parent = duckdb.connect(str(self.parent), read_only=True)
+            try:
+                series_zero_key = parent.execute(
+                    """SELECT s.series_key FROM series_lookup s
+                       JOIN dataset_lookup d USING (dataset_key)
+                       WHERE d.dataset_id='dataset/test' AND s.series_id='0'"""
+                ).fetchone()[0]
+            finally:
+                parent.close()
+            self.assertEqual(
+                child.execute(
+                    "SELECT input_hash FROM prepared_windows WHERE series_key=?",
+                    [series_zero_key],
+                ).fetchone()[0],
+                json_fingerprint(changed_input),
+            )
         finally:
             child.close()
 
         with WindowPreparationCoordinator(self.parent, self.child) as coordinator:
-            second = coordinator.run(source_manifest_hash="fixture-manifest")
+            second = coordinator.run(
+                source_manifest_hash="fixture-manifest", local_limits=LOCAL_TEST_LIMITS
+            )
         self.assertEqual(second["membership_fingerprint"], first["membership_fingerprint"])
         self.assertEqual(second["membership_source"], "persisted_resume")
         self.assertEqual(second["worker_series_counts"], {})
@@ -325,7 +466,9 @@ class WindowPersistenceTests(unittest.TestCase):
         finally:
             parent.close()
         with WindowPreparationCoordinator(self.parent, self.child) as coordinator:
-            reconciled = coordinator.run(source_manifest_hash="fixture-manifest")
+            reconciled = coordinator.run(
+                source_manifest_hash="fixture-manifest", local_limits=LOCAL_TEST_LIMITS
+            )
         self.assertEqual(reconciled["worker_series_counts"], {})
 
         selected = get_prepared_window(
@@ -357,10 +500,50 @@ class WindowPersistenceTests(unittest.TestCase):
     def test_resume_rejects_changed_source_manifest(self) -> None:
         """A child created from one tested source cannot resume under another."""
         with WindowPreparationCoordinator(self.parent, self.child) as coordinator:
-            coordinator.run(source_manifest_hash="reviewed-source-a")
+            coordinator.run(
+                source_manifest_hash="reviewed-source-a", local_limits=LOCAL_TEST_LIMITS
+            )
         with WindowPreparationCoordinator(self.parent, self.child) as coordinator:
             with self.assertRaisesRegex(RuntimeError, "source manifest"):
-                coordinator.run(source_manifest_hash="different-source-b")
+                coordinator.run(
+                    source_manifest_hash="different-source-b",
+                    local_limits=LOCAL_TEST_LIMITS,
+                )
+
+    def test_direct_execution_guard_rejects_before_writes_or_worker_launch(self) -> None:
+        """Malformed, oversized, and falsely distributed direct calls have no side effects."""
+        invalid_calls = (
+            (None, None, "requires explicit"),
+            ({}, None, "requires explicit"),
+            ({"max_series": 100}, None, "requires explicit"),
+            ({"max_series": 0, "max_windows": 1}, None, "positive integer"),
+            ({"max_series": True, "max_windows": 1}, None, "positive integer"),
+            ({"max_series": 101, "max_windows": 200}, None, "safety policy"),
+            ({"max_series": 100, "max_windows": 201}, None, "safety policy"),
+            (LOCAL_TEST_LIMITS, "poc2_seasonal_recovery", "cannot claim"),
+        )
+        for limits, profile, message in invalid_calls:
+            with self.subTest(limits=limits, profile=profile):
+                with (
+                    WindowPreparationCoordinator(self.parent, self.child) as coordinator,
+                    patch("util.window_preparation.window_preparation_batch") as worker,
+                    self.assertRaisesRegex((RuntimeError, ValueError), message),
+                ):
+                    coordinator.run(
+                        source_manifest_hash="fixture-manifest",
+                        local_limits=limits,
+                        execution_profile=profile,
+                    )
+                worker.assert_not_called()
+                self.assertFalse(self.child.exists())
+        parent = duckdb.connect(str(self.parent), read_only=True)
+        try:
+            self.assertEqual(parent.execute("SELECT count(*) FROM series_lookup").fetchone()[0], 0)
+            self.assertEqual(
+                parent.execute("SELECT count(*) FROM window_preparation_runs").fetchone()[0], 0
+            )
+        finally:
+            parent.close()
 
     def test_explicit_local_bounds_are_enforced_before_writes(self) -> None:
         """A declared focused limit blocks an oversized workload without child state."""
@@ -383,7 +566,9 @@ class WindowPersistenceTests(unittest.TestCase):
     def test_retrieval_rejects_wrong_parent_with_same_series_identifiers(self) -> None:
         """Changed observations cannot be paired to a child by numeric aliases alone."""
         with WindowPreparationCoordinator(self.parent, self.child) as coordinator:
-            coordinator.run(source_manifest_hash="fixture-manifest")
+            coordinator.run(
+                source_manifest_hash="fixture-manifest", local_limits=LOCAL_TEST_LIMITS
+            )
         wrong_parent = self.parent.with_name("wrong-parent.duckdb")
         shutil.copy2(self.parent, wrong_parent)
         connection = duckdb.connect(str(wrong_parent))
@@ -424,7 +609,9 @@ class WindowPersistenceTests(unittest.TestCase):
         finally:
             connection.close()
         with WindowPreparationCoordinator(self.parent, self.child) as coordinator:
-            first = coordinator.run(source_manifest_hash="fixture-manifest")
+            first = coordinator.run(
+                source_manifest_hash="fixture-manifest", local_limits=LOCAL_TEST_LIMITS
+            )
         self.assertEqual(first["memory_bounds"]["windows_per_job"], 16)
         self.assertEqual(first["memory_bounds"]["jobs_per_batch"], 16)
         self.assertEqual(first["memory_bounds"]["maximum_windows_per_batch"], 256)
@@ -455,7 +642,9 @@ class WindowPersistenceTests(unittest.TestCase):
         finally:
             child.close()
         with WindowPreparationCoordinator(self.parent, self.child) as coordinator:
-            resumed = coordinator.run(source_manifest_hash="fixture-manifest")
+            resumed = coordinator.run(
+                source_manifest_hash="fixture-manifest", local_limits=LOCAL_TEST_LIMITS
+            )
         self.assertTrue(resumed["worker_series_counts"])
         child = duckdb.connect(str(self.child), read_only=True)
         try:

@@ -4,10 +4,15 @@ Status: Combined IDs 011 and 016 approved by the researcher on 1 October 2026.
 The previously confirmed window sizes and stride rule remain unchanged.
 AMP-Code is authorised to implement this scope and publish its reviewed changes
 to GitHub, with safe Ubuntu synchronisation. Version 5 was published at 9728fce.
-On 2 October 2026 the researcher approved five review corrections. They are
-implemented as configuration v6 and passed the full 100-series, two-host
-acceptance; closure is recommended after publication and final host
-synchronisation. See the [acceptance record](poc2-rolling-windows-acceptance.md).
+On 2 October 2026 the researcher approved review corrections. Configuration v6
+and its initial successful 100-series, two-host acceptance were published at
+22e41bb. Subsequent review identified two implementation misses: direct
+coordinator safeguards and tsai use in the actual bounded path. Both fixes and
+their fresh 100-series two-host acceptance are complete without changing the
+agreed architecture. Publication and final Mac/Ubuntu revision synchronisation
+remain before closure. See the
+[acceptance record](poc2-rolling-windows-acceptance.md) and
+[final closure instructions](amp-poc2-rolling-windows-instructions.md#final-closure-work).
 
 ## Scope
 

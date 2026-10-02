@@ -31,11 +31,16 @@ import duckdb
 from .configuration import ExperimentConfiguration, canonical_json, json_fingerprint
 from .database import load_database_configuration, migrate_database
 from .distributed_execution import run_batches, window_preparation_batch
+from .execution_profiles import APPROVED_HEAVY_TUNING_PROFILE
 from .import_execution import repository_root
 
 
 # Code constant: child schema is independent of the parent DuckDB migration number.
 WINDOW_DATABASE_SCHEMA_VERSION = 2
+# Operational safety bounds: direct local preparation is for focused checks,
+# never a substitute for the approved two-host profile used by heavy workflows.
+MAX_LOCAL_PREPARATION_SERIES = 100
+MAX_LOCAL_PREPARATION_WINDOWS = 200
 
 
 # Code constant: normalized child schema stores definitions and membership once;
@@ -659,55 +664,51 @@ class WindowPreparationCoordinator:
                 ).fetchall()
             }
             for first_ordinal in range(0, item["window_count"], windows_per_job):
-                ordinals = [
-                    ordinal
-                    for ordinal in range(
-                        first_ordinal,
-                        min(first_ordinal + windows_per_job, item["window_count"]),
-                    )
-                    if ordinal not in existing
-                ]
-                if not ordinals:
+                stop_ordinal = min(
+                    first_ordinal + windows_per_job, item["window_count"]
+                )
+                if all(
+                    ordinal in existing
+                    for ordinal in range(first_ordinal, stop_ordinal)
+                ):
                     continue
-                # Missing ordinals can only arise at a restart boundary because
-                # chunks commit atomically. Fetch each retained input directly,
-                # keeping even one exceptionally long source series bounded.
+                # Read a bounded set of complete W+H blocks. tsai receives the
+                # transient future values needed to create each window, but only
+                # its returned inputs and positions leave this coordinator.
+                block_start = item["usable_start"] + first_ordinal * settings["stride"]
+                block_end = item["usable_start"] + stop_ordinal * settings["stride"]
+                raw_row = self.parent.execute(
+                    """SELECT list_slice(target, ?, ?) FROM series
+                       WHERE dataset_id=? AND series_id=?""",
+                    [block_start + 1, block_end, item["dataset_id"], item["series_id"]],
+                ).fetchone()
+                expected_length = (stop_ordinal - first_ordinal) * settings["stride"]
+                if raw_row is None or len(raw_row[0]) != expected_length:
+                    raise RuntimeError("bounded source block does not match complete W+H blocks")
+                generated = rolling_window_inputs(
+                    raw_row[0],
+                    settings["input_length"],
+                    settings["future_horizon"],
+                    offset=block_start,
+                )
+                if len(generated) != stop_ordinal - first_ordinal:
+                    raise RuntimeError("tsai returned an unexpected bounded chunk")
                 windows = []
-                for ordinal in ordinals:
-                    input_start = item["usable_start"] + ordinal * settings["stride"]
-                    input_end = input_start + settings["input_length"]
-                    raw_row = self.parent.execute(
-                        """SELECT list_slice(target, ?, ?) FROM series
-                           WHERE dataset_id=? AND series_id=?""",
-                        [input_start + 1, input_end, item["dataset_id"], item["series_id"]],
-                    ).fetchone()
-                    if raw_row is None or len(raw_row[0]) != settings["input_length"]:
-                        raise RuntimeError("bounded target slice does not match configured input length")
-                    input_values = []
-                    for value in raw_row[0]:
-                        if value is None or math.isnan(float(value)):
-                            input_values.append(None)
-                        elif not isfinite(float(value)):
-                            raise ValueError("rolling-window source cannot contain infinity")
-                        else:
-                            input_values.append(float(value))
-                    future_start = input_end
-                    future_end = future_start + settings["future_horizon"]
+                for window in generated:
+                    ordinal = first_ordinal + int(window["window_ordinal"])
+                    if ordinal in existing:
+                        continue
                     identity = {
                         "preparation": self.preparation_id,
                         "series_key": item["series_key"],
-                        "input_start": input_start,
-                        "input_end": input_end,
-                        "future_start": future_start,
-                        "future_end": future_end,
+                        "input_start": window["input_start"],
+                        "input_end": window["input_end"],
+                        "future_start": window["future_start"],
+                        "future_end": window["future_end"],
                     }
                     windows.append({
+                        **window,
                         "window_ordinal": ordinal,
-                        "input_start": input_start,
-                        "input_end": input_end,
-                        "future_start": future_start,
-                        "future_end": future_end,
-                        "input": input_values,
                         "window_id": "prepared-window/" + json_fingerprint(identity)[:32],
                     })
                 yield {
@@ -784,8 +785,40 @@ class WindowPreparationCoordinator:
         source_manifest_hash: str | None = None,
         memory_safety: dict[str, Any] | None = None,
         local_limits: dict[str, int] | None = None,
+        execution_profile: str | None = None,
     ) -> dict[str, Any]:
         """Create/resume membership and prepare all incomplete selected series."""
+        if dask_client is None:
+            if not isinstance(local_limits, dict) or set(local_limits) != {
+                "max_series",
+                "max_windows",
+            }:
+                raise RuntimeError(
+                    "direct local window preparation requires explicit max_series and max_windows"
+                )
+            for field in ("max_series", "max_windows"):
+                value = local_limits[field]
+                if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                    raise ValueError(f"local preparation {field} must be a positive integer")
+            if (
+                local_limits["max_series"] > MAX_LOCAL_PREPARATION_SERIES
+                or local_limits["max_windows"] > MAX_LOCAL_PREPARATION_WINDOWS
+            ):
+                raise RuntimeError(
+                    "local preparation limits exceed the focused safety policy; "
+                    f"maximums are {MAX_LOCAL_PREPARATION_SERIES} series and "
+                    f"{MAX_LOCAL_PREPARATION_WINDOWS} windows"
+                )
+            if execution_profile is not None:
+                raise ValueError("a local preparation cannot claim a distributed profile")
+        elif (
+            local_limits is not None
+            or execution_profile != APPROVED_HEAVY_TUNING_PROFILE
+        ):
+            raise RuntimeError(
+                "distributed window preparation requires the approved execution profile "
+                f"{APPROVED_HEAVY_TUNING_PROFILE} and no local limits"
+            )
         started = time.monotonic()
         series = self._selected_series()
         for item in series:

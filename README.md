@@ -145,7 +145,8 @@ CPU profile:
 ```
 
 A local focused check must declare enforced bounds instead of silently running
-an unbounded local workload:
+an unbounded local workload. The coordinator enforces the same contract for
+direct calls: positive limits no greater than 100 series and 200 windows.
 
 ```sh
 .tools/uv/uv run --locked --no-sync python src/python/00_main.py prepare-windows \

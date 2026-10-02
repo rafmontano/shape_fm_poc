@@ -27,8 +27,12 @@ by original series. The researcher approved the combined scope on 1 October 2026
 Version 5 is published at 9728fce. Configuration v6 preserves v5 while correcting
 execution safeguards, retrieval identity validation, R-compatible split
 rounding, bounded memory and central settings. Focused checks and the corrected
-100-series 8-Mac/15-Ubuntu acceptance passed on 2 October 2026. Features, labels,
-Mantis training and prediction remain outside this increment. See the
+100-series 8-Mac/15-Ubuntu acceptance passed on 2 October 2026 and was published
+at 22e41bb. The final review corrections now enforce the local guard inside the
+coordinator and route bounded complete blocks through tsai in the actual
+preparation path. A fresh 100-series two-host acceptance passed without changing
+the agreed architecture or scientific settings. Features, labels, Mantis
+training and prediction remain outside this increment. See the
 [acceptance record](poc2-rolling-windows-acceptance.md).
 
 ![ShapeFM research architecture](images/shapefm_research_architecture.png)
@@ -309,12 +313,20 @@ input length and future horizon; resolution derives and persists stride as
 `input_length + future_horizon`. The production document selects only M4 Daily.
 It does not claim full multi-dataset GIFT-Eval support.
 
-The coordinator protects the official training boundary, finds complete blocks,
-and allocates eligible original series—not window rows—to S1 train/test using
-the pinned tsai 1.0.1 splitter, fraction 0.80 and seed 123. Membership and its
-fingerprint are persisted before work. Each input is robust-cleaned with the
-officially resolved R period and independently fitted with
-`standardise_sample_v1`; future observations never enter cleaning or fitting.
+The coordinator protects the official training boundary and sends bounded,
+complete W+H blocks through pinned tsai 1.0.1 `SlidingWindow`; the returned
+inputs and absolute boundaries are the values processed and persisted. It also
+allocates eligible original series—not window rows—to S1 train/test using the
+pinned tsai splitter, fraction 0.80 and seed 123. Membership and its fingerprint
+are persisted before work. Each input is robust-cleaned with the officially
+resolved R period and independently fitted with `standardise_sample_v1`; future
+observations are transient window-generator inputs only and never enter cleaning,
+fitting or child storage.
+
+Local execution is guarded inside the coordinator as well as the CLI. Focused
+calls must declare positive limits no greater than 100 series and 200 windows;
+the production 632-window acceptance therefore requires the approved named
+8-Mac/15-Ubuntu profile even when the coordinator is called directly.
 
 The parent database owns canonical raw observations, official boundaries,
 stable numeric lookup aliases and run status. One child database stores the

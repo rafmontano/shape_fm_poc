@@ -299,6 +299,34 @@ class MainResultsTests(unittest.TestCase):
             )
         self.assertFalse(Path("not-created.duckdb").exists())
 
+    def test_bounded_local_window_preparation_forwards_both_limits(self):
+        """The CLI boundary passes explicit focused bounds to the guarded coordinator."""
+        coordinator = MagicMock()
+        coordinator.__enter__.return_value = coordinator
+        coordinator.run.return_value = {"preparation_id": "preparation/focused"}
+        with (
+            patch.object(MAIN, "WindowPreparationCoordinator", return_value=coordinator),
+            patch(
+                "util.distributed_execution.repository_source_manifest",
+                return_value={"src/python/00_main.py": "hash"},
+            ),
+            patch(
+                "util.distributed_execution.source_manifest_fingerprint",
+                return_value="focused-manifest",
+            ),
+        ):
+            result = MAIN.run_window_preparation(
+                Path("parent.duckdb"),
+                Path("windows.duckdb"),
+                local_max_series=2,
+                local_max_windows=20,
+            )
+        coordinator.run.assert_called_once_with(
+            source_manifest_hash="focused-manifest",
+            local_limits={"max_series": 2, "max_windows": 20},
+        )
+        self.assertEqual(result["execution_mode"], "bounded_local_focused")
+
     def test_incomplete_forecast_selectors_fail_before_database_access(self):
         """Partial forecast selectors fail before querying or creating a database."""
         selectors = {
