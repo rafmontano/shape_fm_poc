@@ -138,3 +138,8 @@ focused Gate 1–3 acceptance and its limits are recorded in the
 [evidence record](poc2-standardisation-evidence.md). This status does not certify
 a full forecasting/evaluation pipeline, forecast improvement, a commit, or
 GitHub publication.
+
+For future exploration only, see
+[transformation objects and fable research notes](research-notes-transformations.md).
+The note preserves implementation options and sources; it does not amend this
+decision or authorise work in the current migration.

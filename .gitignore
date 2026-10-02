@@ -76,6 +76,9 @@ __pycache__/
 # Test scratch space
 /.test-tmp/
 
+# Coordinator-local Prefect operational history (SQLite, logs, and memo state)
+/.prefect/
+
 # renv private library and transient state (activation files remain tracked)
 /renv/library/
 /renv/staging/

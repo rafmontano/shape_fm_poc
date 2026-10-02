@@ -31,6 +31,7 @@ import duckdb
 
 from .configuration import (
     ImportValidationError,
+    ExperimentConfiguration,
     canonical_import_configuration,
     canonical_json,
     dataset_identity,
@@ -38,7 +39,12 @@ from .configuration import (
     json_fingerprint,
 )
 from .database import load_database_configuration, migrate_database
-from .gift_eval_source import iter_source_series, source_fingerprint, source_metadata
+from .gift_eval_source import (
+    ConfiguredGiftEvalSource,
+    iter_source_series,
+    source_fingerprint,
+    source_metadata,
+)
 from .provenance import sha256_file, utc_now
 
 
@@ -108,21 +114,7 @@ def compute_series(task: SeriesTask) -> SeriesResult:
     zero-based, end-exclusive validation/test window.
     Notes: Performs no database access and cross-checks window logic centrally.
     """
-    # Preserve legacy hashes for complete series. Missing series use an explicit
-    # per-value marker so Arrow null and NaN positions remain deterministic.
-    if all(value is not None and not math.isnan(value) for value in task.target):
-        packed = struct.pack(f"<{len(task.target)}f", *task.target)
-    else:
-        parts = []
-        for value in task.target:
-            if value is None:
-                parts.append(b"N")
-            elif math.isnan(value):
-                parts.append(b"A")
-            else:
-                parts.append(b"V" + struct.pack("<f", value))
-        packed = b"".join(parts)
-    content_hash = hashlib.sha256(packed).hexdigest()
+    content_hash = target_content_hash(task.target)
     window = {
         "window_id": task.window_id,
         "split_name": "validation_and_test",
@@ -159,6 +151,24 @@ def compute_series(task: SeriesTask) -> SeriesResult:
         content_hash=content_hash,
         window=window,
     )
+
+
+def target_content_hash(target: Iterable[float | None]) -> str:
+    """Hash raw source values while preserving the distinct Arrow-null/NaN contract."""
+    values = tuple(target)
+    if all(value is not None and not math.isnan(value) for value in values):
+        packed = struct.pack(f"<{len(values)}f", *values)
+    else:
+        parts = []
+        for value in values:
+            if value is None:
+                parts.append(b"N")
+            elif math.isnan(value):
+                parts.append(b"A")
+            else:
+                parts.append(b"V" + struct.pack("<f", value))
+        packed = b"".join(parts)
+    return hashlib.sha256(packed).hexdigest()
 
 
 def worker_entry(task: SeriesTask) -> WorkerOutcome:
@@ -243,7 +253,11 @@ class ImportCoordinator:
     Notes: Worker processes are side-effect free; this instance owns database writes.
     """
 
-    def __init__(self, database_path: Path):
+    def __init__(
+        self,
+        database_path: Path,
+        configuration: ExperimentConfiguration | None = None,
+    ):
         """Purpose: Acquire coordinator-owned database and configuration state.
 
         Inputs: Path to an existing initialized experiment database.
@@ -255,7 +269,7 @@ class ImportCoordinator:
             )
         self.database_path = migrate_database(database_path)
         self.connection = duckdb.connect(str(self.database_path))
-        self.configuration = load_database_configuration(
+        self.configuration = configuration or load_database_configuration(
             self.database_path, self.connection
         )
 
@@ -449,6 +463,24 @@ class ImportCoordinator:
         except BaseException:
             self.connection.execute("ROLLBACK")
             raise
+
+    def start_import_task(self, task: SeriesTask) -> int:
+        """Start and durably account for one prepared import task attempt."""
+        return self._start_attempt(task.task_id)
+
+    def accept_import_result(
+        self, result: SeriesResult, attempt: int, summary: dict[str, Any]
+    ) -> None:
+        """Atomically accept one result and update this invocation's success count."""
+        self._commit_result(result, attempt)
+        summary["completed_this_invocation"] += 1
+
+    def fail_import_task(
+        self, task: SeriesTask, attempt: int, error: BaseException, summary: dict[str, Any]
+    ) -> None:
+        """Atomically fail one attempt and update this invocation's failure count."""
+        self._record_failure(task.task_id, attempt, f"{type(error).__name__}: {error}")
+        summary["failed_this_invocation"] += 1
 
     def _commit_result(self, result: SeriesResult, attempt: int) -> None:
         """Purpose: Atomically persist scientific output and complete its task attempt.
@@ -829,11 +861,12 @@ class ImportCoordinator:
         )
         pending: list[SeriesTask] = []
         try:
-            for source in iter_source_series(
+            records = iter_source_series(
                 source_dir,
                 config["benchmark"]["frequency"],
                 config["max_series"],
-            ):
+            )
+            for source in records:
                 summary["selected_series"] += 1
                 series_id = source.source_series_id
                 task_id, status = self._register_task(run_id, dataset_id, series_id)
@@ -867,7 +900,8 @@ class ImportCoordinator:
                 summary["completed_this_invocation"] += completed
                 summary["failed_this_invocation"] += failed
 
-            if source_fingerprint(source_dir) != source_before:
+            source_after = source_fingerprint(source_dir)
+            if source_after != source_before:
                 raise ImportValidationError("source files changed during import")
             reference_records = self._read_m4_reference_forecasts(dataset_id, config)
             reference_inserted, reference_skipped = self._store_reference_forecasts(
@@ -958,29 +992,153 @@ class ImportCoordinator:
         Outputs: ``import_m4_daily`` summary after source hashes match stored digests;
         mismatch raises ``ImportValidationError`` before import.
         """
-        root = repository_root()
-        source = (
-            root
-            / self.configuration.source_directory
-            / self.configuration.resolved["data"]["dataset_name"]
+        from .import_flow import gate1_import_flow
+
+        return gate1_import_flow(self.database_path)
+
+    def begin_configured_import(self, source: ConfiguredGiftEvalSource) -> dict[str, Any]:
+        """Prepare restartable storage using one verified configured source snapshot."""
+        self._source_before = source.fingerprint()
+        self._selected_ids = []
+        dataset_id, config_hash = dataset_identity(
+            source.settings, source.revision, self._source_before["files"]
         )
-        configured_hashes = self.configuration.resolved["data"]["source"]["files"]
-        actual = source_fingerprint(source)["files"]
-        actual_hashes = {name: details["sha256"] for name, details in actual.items()}
-        if actual_hashes != configured_hashes:
-            raise ImportValidationError(
-                "pinned M4 Daily source hashes do not match stored configuration"
+        workers = int(self.configuration.execution["import_workers"])
+        run_id, invocation_id = self._prepare(
+            dataset_id, config_hash, source.settings, source.revision,
+            self._source_before, source.metadata(), workers,
+        )
+        return {
+            "run_id": run_id, "invocation_id": invocation_id, "dataset_id": dataset_id,
+            "workers": workers, "execution_mode": "coordinator-local-prefect",
+            "selected_series": 0, "submitted_tasks": 0, "skipped_completed": 0,
+            "completed_this_invocation": 0, "failed_this_invocation": 0,
+        }
+
+    def prepare_source_record(self, record: Any, summary: dict[str, Any]) -> SeriesTask | None:
+        """Register one source identity or independently verify its accepted result."""
+        self._selected_ids.append(record.source_series_id)
+        summary["selected_series"] += 1
+        task_id, status = self._register_task(
+            summary["run_id"], summary["dataset_id"], record.source_series_id
+        )
+        settings = self.configuration.import_settings
+        task = SeriesTask(
+            task_id, summary["dataset_id"], record.source_series_id,
+            record.source_series_id, record.source_row, record.frequency,
+            record.start_timestamp, record.target,
+            settings["benchmark"]["prediction_length"],
+            f"{settings['benchmark']['term']}/000", settings["benchmark"]["boundary_convention"],
+        )
+        if status == "completed":
+            expected = compute_series(task)
+            stored = self.connection.execute(
+                """SELECT source_series_id,source_row,frequency,start_timestamp,target,
+                          observation_count,content_hash
+                   FROM series WHERE dataset_id=? AND series_id=?""",
+                [summary["dataset_id"], record.source_series_id],
+            ).fetchone()
+            window = self.connection.execute(
+                """SELECT split_name,train_start,train_end,validation_start,validation_end,
+                          test_start,test_end,horizon,boundary_convention
+                   FROM evaluation_windows WHERE dataset_id=? AND series_id=? AND window_id=?""",
+                [summary["dataset_id"], record.source_series_id, expected.window["window_id"]],
+            ).fetchone()
+            expected_window = tuple(
+                expected.window[key] for key in (
+                    "split_name", "train_start", "train_end", "validation_start",
+                    "validation_end", "test_start", "test_end", "horizon",
+                    "boundary_convention",
+                )
             )
-        workers = int(
-            self.configuration.resolved["execution"]["default"]["import_workers"]
-        )
-        batch_size = int(
-            self.configuration.resolved["execution"]["default"]["batch_sizes"]["import"]
-        )
-        return self.import_m4_daily(
-            source,
-            self.configuration.import_settings,
-            self.configuration.resolved["data"]["source"]["revision"],
-            workers=workers,
-            batch_size=batch_size,
-        )
+            values_match = stored is not None and len(stored[4]) == len(record.target) and all(
+                saved == raw or (saved is None and raw is not None and math.isnan(raw))
+                for saved, raw in zip(stored[4], record.target, strict=True)
+            )
+            if (stored is None or stored[:4] != (
+                    expected.source_series_id, expected.source_row, expected.frequency,
+                    expected.start_timestamp,
+                ) or not values_match or stored[5:] != (
+                    expected.observation_count, expected.content_hash,
+                ) or window != expected_window):
+                raise ImportValidationError(
+                    "completed import identity, values, hash, or window lineage differs from source"
+                )
+            summary["skipped_completed"] += 1
+            return None
+        summary["submitted_tasks"] += 1
+        return task
+
+    def finish_configured_import(self, source: ConfiguredGiftEvalSource,
+                                 summary: dict[str, Any]) -> dict[str, Any]:
+        """Verify source/membership and references before accepting the import run."""
+        if source.fingerprint() != self._source_before:
+            raise ImportValidationError("source files changed during import")
+        self._verify_expected_membership(summary["run_id"], summary["dataset_id"], self._selected_ids)
+        references = self._read_m4_reference_forecasts(summary["dataset_id"], source.settings)
+        inserted, skipped = self._store_reference_forecasts(references)
+        summary.update(reference_forecasts_inserted=inserted, reference_forecasts_skipped=skipped)
+        summary["task_counts"] = dict(self.connection.execute(
+            "SELECT status, count(*) FROM tasks WHERE run_id=? GROUP BY status", [summary["run_id"]]
+        ).fetchall())
+        summary["series_count"], summary["observation_count"] = self.connection.execute(
+            "SELECT count(*), coalesce(sum(observation_count),0) FROM series WHERE dataset_id=?",
+            [summary["dataset_id"]],
+        ).fetchone()
+        self.verify_import_completion(summary)
+        self.record_import_outcome(summary)
+        return summary
+
+    def record_import_outcome(self, summary: dict[str, Any], error: str | None = None) -> None:
+        """Record success or failure for both parent import and invocation atomically."""
+        status = "failed" if error is not None else "completed"
+        self.connection.execute("BEGIN TRANSACTION")
+        try:
+            self.connection.execute(
+                "UPDATE runs SET status=?, ended_at=current_timestamp, summary=?, error_summary=? WHERE run_id=?",
+                [status, canonical_json(summary), error, summary["run_id"]],
+            )
+            self.connection.execute(
+                "UPDATE run_invocations SET status=?, ended_at=current_timestamp, summary=?, error=? WHERE invocation_id=?",
+                [status, canonical_json(summary), error, summary["invocation_id"]],
+            )
+            self.connection.execute("COMMIT")
+        except BaseException:
+            self.connection.execute("ROLLBACK")
+            raise
+
+    def verify_import_completion(self, summary: dict[str, Any]) -> None:
+        """Verify expected configured membership exists as tasks and canonical output."""
+        expected = self.configuration.series_count
+        completed = int(summary.get("task_counts", {}).get("completed", 0))
+        if (
+            int(summary.get("selected_series", -1)) != expected
+            or int(summary.get("series_count", -1)) != expected
+            or completed != expected
+        ):
+            raise ImportValidationError(
+                "configured import did not produce the expected task and series membership"
+            )
+
+    def _verify_expected_membership(
+        self, run_id: str, dataset_id: str, expected_ids: list[str]
+    ) -> None:
+        """Compare authoritative source identities with durable tasks and outputs."""
+        expected = set(expected_ids)
+        task_ids = {
+            str(row[0])
+            for row in self.connection.execute(
+                "SELECT series_id FROM tasks WHERE run_id=? AND status='completed'",
+                [run_id],
+            ).fetchall()
+        }
+        stored_ids = {
+            str(row[0])
+            for row in self.connection.execute(
+                "SELECT series_id FROM series WHERE dataset_id=?", [dataset_id]
+            ).fetchall()
+        }
+        if len(expected_ids) != len(expected) or task_ids != expected or stored_ids != expected:
+            raise ImportValidationError(
+                "configured import durable membership differs from authoritative source records"
+            )

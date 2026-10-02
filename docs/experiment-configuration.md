@@ -37,6 +37,15 @@ constants, monitors active owned R processes and implements eight Mac CPU
 workers. Preserve stored creation documents and integrity hashes; do not reload
 or rewrite scientific configuration.
 
+The approved Stage 1 closure implements `poc2_seasonal_recovery` runtime v3
+as an explicit `--execution-profile` override. Its profile fingerprint and
+resolved workload topology are recorded with execution history; the experiment's
+scientific and configuration-integrity hashes do not change. CPU-only work
+resolves 23 workers with zero GPU workers, and CPU/GPU work resolves 38 total.
+Historical `final_acceptance` documents describe past evidence, not a mandatory
+GPU hardware field: ordinary preflight consumes the effective profile and still
+requires CUDA on GPU workers when that historical field is absent.
+
 ## Versions 1–6
 
 Version 1 coupled `data.benchmark.seasonality = 7` to R preprocessing, R

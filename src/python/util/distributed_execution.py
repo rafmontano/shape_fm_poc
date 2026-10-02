@@ -23,6 +23,7 @@ import subprocess
 import threading
 import time
 import uuid
+from collections import deque
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
@@ -52,6 +53,9 @@ MAC_TUNING_R_RESOURCE = "MAC_TUNING_R_SLOT"
 UBUNTU_TUNING_R_RESOURCE = "UBUNTU_TUNING_R_SLOT"
 # Machine-local coordination directory for cross-worker R-memory reservations.
 TUNING_RESERVATION_DIRECTORY = Path("/tmp/shapefm-r-tuning-reservations")
+# One physical GPU has one machine-wide startup gate. It protects model loading,
+# not inference, and therefore does not turn logical GPU slots into a serial queue.
+CHRONOS_GPU_STARTUP_LOCK = Path("/tmp/shapefm-chronos-gpu-startup.lock")
 
 
 def package_version_probe(package: str) -> str:
@@ -197,7 +201,7 @@ def repository_source_manifest() -> dict[str, str]:
         check=True,
         capture_output=True,
     ).stdout.split(b"\0")
-    runtime_prefixes = ("src/python/", "src/r/")
+    runtime_prefixes = ("src/python/", "src/r/", "config/", "scripts/", "environments/")
     runtime_files = {
         "config/execution_profiles.json",
         "config/experiments/poc2_m4_daily_100_period_tuning.json",
@@ -449,6 +453,7 @@ class TuningMemoryMonitor:
         swap_growth_limit_gib: float,
         admission: dict[str, Any] | None = None,
         probe: Callable[[], dict[str, float]] | None = None,
+        minimum_accelerator_available_gib: float | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         """Store thresholds and injectable probes without starting monitoring."""
@@ -457,6 +462,7 @@ class TuningMemoryMonitor:
         self.breach_grace_seconds = breach_grace_seconds
         self.swap_growth_limit_gib = swap_growth_limit_gib
         self.admission = dict(admission or {})
+        self.minimum_accelerator_available_gib = minimum_accelerator_available_gib
         self._probe = probe or self._host_probe
         self._clock = clock
         self._lock = threading.Lock()
@@ -466,7 +472,10 @@ class TuningMemoryMonitor:
         initial = self._probe()
         self.initial_swap_used_gib = initial["swap_used_gib"]
         self.min_available_gib = initial["available_gib"]
+        self.current_available_gib = initial["available_gib"]
         self.max_swap_used_gib = initial["swap_used_gib"]
+        self.min_accelerator_available_gib = initial.get("accelerator_available_gib")
+        self.current_accelerator_available_gib = initial.get("accelerator_available_gib")
         self.peak_owned_process_tree_rss_gib = 0.0
         self._breach_started: float | None = None
         self._unsafe_reason: str | None = None
@@ -488,6 +497,9 @@ class TuningMemoryMonitor:
             if self._process is not None:
                 raise RuntimeError("memory monitor already owns an R process")
             self._process = process
+            unsafe = self._unsafe_reason is not None
+        if unsafe:
+            self._cancel_owned(process)
 
     def clear_process(self, process: subprocess.Popen[str]) -> None:
         """Forget a completed R process without affecting another process."""
@@ -512,13 +524,27 @@ class TuningMemoryMonitor:
     def sample_once(self) -> None:
         """Sample safety state and trigger bounded owned-process cancellation."""
         now = self._clock()
-        snapshot = self._probe()
+        try:
+            snapshot = self._probe()
+        except BaseException as error:
+            self._mark_unsafe(f"resource probe failed closed: {error}")
+            return
         with self._lock:
             process = self._process
         available = snapshot["available_gib"]
         swap_used = snapshot["swap_used_gib"]
+        self.current_available_gib = available
         self.min_available_gib = min(self.min_available_gib, available)
         self.max_swap_used_gib = max(self.max_swap_used_gib, swap_used)
+        accelerator_available = snapshot.get("accelerator_available_gib")
+        self.current_accelerator_available_gib = accelerator_available
+        if accelerator_available is not None:
+            self.min_accelerator_available_gib = min(
+                self.min_accelerator_available_gib
+                if self.min_accelerator_available_gib is not None
+                else accelerator_available,
+                accelerator_available,
+            )
         self.peak_owned_process_tree_rss_gib = max(
             self.peak_owned_process_tree_rss_gib, self._owned_rss_gib(process)
         )
@@ -531,6 +557,15 @@ class TuningMemoryMonitor:
             reasons.append(
                 f"swap grew {swap_used - self.initial_swap_used_gib:.2f} GiB"
             )
+        if (
+            self.minimum_accelerator_available_gib is not None
+            and (accelerator_available is None
+                 or accelerator_available < self.minimum_accelerator_available_gib)
+        ):
+            reasons.append(
+                "accelerator free memory unavailable or below "
+                f"{self.minimum_accelerator_available_gib:.2f} GiB floor"
+            )
         if not reasons:
             self._breach_started = None
             return
@@ -541,6 +576,20 @@ class TuningMemoryMonitor:
             return
         self._unsafe_reason = "; ".join(reasons)
         self.safety_responses += 1
+        self._cancel_owned(process)
+
+    def _mark_unsafe(self, reason: str) -> None:
+        """Fail closed immediately when a safety probe itself is unavailable."""
+        with self._lock:
+            process = self._process
+        if self._unsafe_reason is None:
+            self._unsafe_reason = reason
+            self.safety_responses += 1
+        self._cancel_owned(process)
+
+    @staticmethod
+    def _cancel_owned(process: subprocess.Popen[str] | None) -> None:
+        """Boundedly terminate only the registered child process group."""
         if process is not None and process.poll() is None:
             try:
                 os.killpg(process.pid, signal.SIGTERM)
@@ -567,15 +616,26 @@ class TuningMemoryMonitor:
         """Stop and join the monitor without raising over an active exception."""
         self._stop.set()
         if self._thread is not None:
-            self._thread.join(timeout=max(2.0, self.poll_interval_seconds * 2))
+            # NVIDIA probes take at most ten seconds plus bounded child shutdown.
+            self._thread.join()
             self._thread = None
 
     def raise_if_unsafe(self) -> None:
         """Raise a retryable resource interruption after a sustained breach."""
         if self._unsafe_reason:
             raise ResourceSafetyInterruption(
-                "R tuning resource safety interruption: " + self._unsafe_reason
+                "resource safety interruption: " + self._unsafe_reason
             )
+
+    def raise_if_current_pressure(self) -> None:
+        """Reject startup on one fresh below-floor sample, independent of grace."""
+        if self.current_available_gib < self.minimum_available_gib or (
+            self.minimum_accelerator_available_gib is not None
+            and (self.current_accelerator_available_gib is None
+                 or self.current_accelerator_available_gib
+                 < self.minimum_accelerator_available_gib)
+        ):
+            raise ResourceSafetyInterruption("resource pressure blocks model startup")
 
     def evidence(self) -> dict[str, Any]:
         """Return admission, ongoing telemetry extrema, and safety-response count."""
@@ -590,7 +650,70 @@ class TuningMemoryMonitor:
             "peak_owned_process_tree_rss_gib": self.peak_owned_process_tree_rss_gib,
             "safety_responses": self.safety_responses,
             "unsafe_reason": self._unsafe_reason,
+            "minimum_accelerator_available_gib": self.minimum_accelerator_available_gib,
+            "minimum_accelerator_available_gib_during_work": self.min_accelerator_available_gib,
         }
+
+
+def _gpu_host_probe() -> dict[str, float]:
+    """Sample host pressure and the sole physical NVIDIA GPU with a bounded probe."""
+    snapshot = TuningMemoryMonitor._host_probe()
+    output = subprocess.run(
+        ["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits", "-i", "0"],
+        check=True, capture_output=True, text=True, timeout=10,
+    ).stdout.strip().splitlines()
+    if len(output) != 1:
+        raise RuntimeError("expected exactly one physical GPU sample")
+    snapshot["accelerator_available_gib"] = float(output[0]) / 1024
+    import math
+    if any(not math.isfinite(value) or value < 0 for value in snapshot.values()):
+        raise RuntimeError("invalid GPU/host memory sample")
+    return snapshot
+
+
+@contextmanager
+def gpu_startup_admission(monitor: TuningMemoryMonitor, timeout_seconds: float,
+                          poll_interval_seconds: float) -> Iterator[dict[str, Any]]:
+    """Pressure-gate and serialize model startup, releasing immediately after ready."""
+    deadline = time.monotonic() + timeout_seconds
+    CHRONOS_GPU_STARTUP_LOCK.parent.mkdir(parents=True, exist_ok=True)
+    with CHRONOS_GPU_STARTUP_LOCK.open("a+") as lock:
+        while True:
+            monitor.sample_once()
+            monitor.raise_if_unsafe()
+            try:
+                monitor.raise_if_current_pressure()
+            except ResourceSafetyInterruption:
+                if time.monotonic() >= deadline:
+                    raise ResourceSafetyInterruption(
+                        "Chronos GPU startup pressure admission timed out"
+                    )
+                time.sleep(poll_interval_seconds)
+                continue
+            try:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise ResourceSafetyInterruption("Chronos GPU startup admission timed out")
+                time.sleep(poll_interval_seconds)
+                continue
+            try:
+                # Recheck under the shared gate: another startup may have used
+                # memory after the pre-lock sample and before lock acquisition.
+                monitor.sample_once()
+                monitor.raise_if_unsafe()
+                monitor.raise_if_current_pressure()
+            except BaseException:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+                raise
+            monitor.admission["startup_throttled_seconds"] = (
+                time.monotonic() - (deadline - timeout_seconds)
+            )
+            break
+        try:
+            yield monitor.admission
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
 
 def clean_batch(
@@ -773,11 +896,26 @@ def autoarima_batch(
     timeout: float,
     threads: int,
     retry_count: int = 0,
+    memory_safety: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Purpose: Forecast one batch with the R AutoARIMA bridge. Inputs: ``batch`` contains coordinator jobs with IDs, numeric contexts, horizons, and seasonality; ``settings`` is resolved AutoARIMA configuration; ``script`` is repository-relative; timeout is seconds, threads is the R limit, and retry count is zero-based. Outputs: Forecast result mappings, elapsed seconds, and worker/package/settings provenance; launches one R subprocess and strips routing-only fields."""
     started = time.monotonic()
-    response = _run_r(
-        {
+    monitor_context = nullcontext(None)
+    if memory_safety is not None:
+        is_mac = socket.gethostname() == memory_safety["mac_hostname"]
+        monitor_context = tuning_memory_reservation(
+            minimum_available_gib=float(
+                memory_safety["mac_minimum_available_gib"] if is_mac
+                else memory_safety["ubuntu_minimum_available_gib"]
+            ),
+            fit_budget_gib=float(memory_safety["fit_budget_gib"]),
+            timeout_seconds=float(memory_safety["admission_timeout_seconds"]),
+            poll_interval_seconds=float(memory_safety["poll_interval_seconds"]),
+            breach_grace_seconds=float(memory_safety["breach_grace_seconds"]),
+            swap_growth_limit_gib=float(memory_safety["swap_growth_limit_gib"]),
+        )
+    with monitor_context as memory_monitor:
+        response = _run_r({
             "action": "forecast",
             "settings": settings,
             "jobs": [
@@ -788,11 +926,7 @@ def autoarima_batch(
                 }
                 for job in batch
             ],
-        },
-        script,
-        timeout,
-        threads,
-    )
+        }, script, timeout, threads, memory_monitor=memory_monitor)
     runtime = time.monotonic() - started
     return {
         "results": response["results"],
@@ -802,6 +936,8 @@ def autoarima_batch(
             "packages": response["packages"],
             "settings": settings,
             "batch_task_count": len(batch),
+            **({"memory_safety": memory_monitor.evidence()}
+               if memory_monitor is not None else {}),
         },
     }
 
@@ -859,6 +995,7 @@ def _get_chronos(
     worker_script: str,
     startup_timeout: float,
     request_timeout: float,
+    memory_monitor: TuningMemoryMonitor | None = None,
 ) -> tuple[Any, int]:
     """Purpose: Acquire the Dask process's keyed persistent Chronos bridge. Inputs: Model/revision/device/dtype strings, positive internal CPU threads, repository-relative environment and worker paths, and startup/request timeouts in seconds. Outputs: The owned ``PersistentChronosWorker`` and monotonic generation number; under a global lock, starts a subprocess or force-replaces one whose full configuration key differs."""
     global _chronos_worker, _chronos_key, _chronos_generation
@@ -876,7 +1013,9 @@ def _get_chronos(
         request_timeout,
     )
     with _chronos_lock:
-        if _chronos_worker is None or _chronos_key != key:
+        if (_chronos_worker is None or _chronos_key != key
+                or (memory_monitor is not None
+                    and _chronos_worker.memory_monitor is not memory_monitor)):
             if _chronos_worker is not None:
                 _chronos_worker.close(force=True)
             command = [
@@ -895,7 +1034,7 @@ def _get_chronos(
                 str(internal_cpu_threads),
             ]
             _chronos_worker = PersistentChronosWorker(
-                command, startup_timeout=startup_timeout
+                command, startup_timeout=startup_timeout, memory_monitor=memory_monitor
             )
             _chronos_worker.start()
             _chronos_key = key
@@ -918,22 +1057,62 @@ def chronos_batch(
     startup_timeout: float,
     request_timeout: float,
     retry_count: int = 0,
+    accelerator_safety: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Purpose: Forecast one homogeneous batch through the cached Chronos subprocess. Inputs: ``batch`` contains coordinator jobs with IDs, numeric contexts, and a common positive horizon; model identity, quantiles in [0,1], device/dtype and batching flags configure inference; thread count and timeouts are bounded execution controls; retry count is zero-based. Outputs: Forecasts, elapsed seconds, worker/process generation, effective batch size, inference seconds, and memory telemetry; may start/restart or close the cached subprocess on out-of-memory errors."""
-    worker, generation = _get_chronos(
-        model,
-        revision,
-        device,
-        dtype,
-        internal_cpu_threads,
-        environment,
-        worker_script,
-        startup_timeout,
-        request_timeout,
-    )
     started = time.monotonic()
-    response = worker.request(
-        {
+    monitor = None
+    safety_evidence: dict[str, Any] = {}
+    if accelerator_safety is not None:
+        required = ("minimum_available_gib", "host_minimum_available_gib",
+                    "admission_timeout_seconds", "poll_interval_seconds",
+                    "breach_grace_seconds", "swap_growth_limit_gib")
+        invalid = [key for key in required
+                   if not isinstance(accelerator_safety.get(key), (int, float))
+                   or accelerator_safety[key] <= 0]
+        if invalid:
+            raise ResourceSafetyInterruption(
+                "Chronos accelerator protection requires positive controls: "
+                + ", ".join(invalid)
+            )
+        try:
+            monitor = TuningMemoryMonitor(
+                minimum_available_gib=float(accelerator_safety["host_minimum_available_gib"]),
+                minimum_accelerator_available_gib=float(accelerator_safety["minimum_available_gib"]),
+                poll_interval_seconds=float(accelerator_safety["poll_interval_seconds"]),
+                breach_grace_seconds=float(accelerator_safety["breach_grace_seconds"]),
+                swap_growth_limit_gib=float(accelerator_safety["swap_growth_limit_gib"]),
+                probe=_gpu_host_probe,
+            )
+        except BaseException as error:
+            raise ResourceSafetyInterruption(f"Chronos GPU safety probe failed closed: {error}") from error
+        monitor.start()
+    pending = deque([(batch, 0)])
+    results: list[dict[str, Any]] = []
+    subdivisions: list[int] = []
+    try:
+        while pending:
+            current, subdivision = pending.popleft()
+            if monitor is not None:
+                with gpu_startup_admission(
+                    monitor, float(accelerator_safety["admission_timeout_seconds"]),
+                    float(accelerator_safety["poll_interval_seconds"]),
+                ):
+                    worker, generation = _get_chronos(
+                        model, revision, device, dtype, internal_cpu_threads, environment,
+                        worker_script, startup_timeout, request_timeout, monitor,
+                    )
+                    # The startup gate is not released until a fresh post-ready sample.
+                    monitor.sample_once()
+                    monitor.raise_if_unsafe()
+                    monitor.raise_if_current_pressure()
+            else:
+                worker, generation = _get_chronos(
+                    model, revision, device, dtype, internal_cpu_threads, environment,
+                    worker_script, startup_timeout, request_timeout,
+                )
+            try:
+                response = worker.request({
             "command": "predict",
             "batch_id": f"chronos-batch/{uuid.uuid4().hex}",
             "jobs": [
@@ -943,24 +1122,48 @@ def chronos_batch(
                     if key
                     not in {"model", "instance_id", "variant_id", "seasonality"}
                 }
-                for job in batch
+                for job in current
             ],
-            "horizon": batch[0]["horizon"],
+            "horizon": current[0]["horizon"],
             "quantile_levels": quantile_levels,
-            "inference_batch_size": len(batch),
+            "inference_batch_size": len(current),
             "cross_learning": cross_learning,
             "predict_batches_jointly": predict_batches_jointly,
-        },
-        timeout=request_timeout,
-    )
-    if response.get("type") != "result":
-        error = response.get("error", f"invalid Chronos response: {response}")
-        if response.get("error_kind") == "out_of_memory":
+                }, timeout=request_timeout)
+            except BaseException:
+                if monitor is not None:
+                    monitor.raise_if_unsafe()
+                raise
+            if monitor is not None:
+                monitor.sample_once()
+                monitor.raise_if_unsafe()
+            if response.get("type") == "result":
+                results.extend(response["results"])
+                subdivisions.append(subdivision)
+                continue
+            error = response.get("error", f"invalid Chronos response: {response}")
+            if (response.get("error_kind") != "out_of_memory" or len(current) == 1
+                    or cross_learning or predict_batches_jointly):
+                if response.get("error_kind") == "out_of_memory":
+                    _close_chronos()
+                raise RuntimeError(error)
             _close_chronos()
-        raise RuntimeError(error)
+            midpoint = max(1, len(current) // 2)
+            splits = [current[index:index + midpoint]
+                      for index in range(0, len(current), midpoint)]
+            pending.extendleft((split, subdivision + 1) for split in reversed(splits))
+        if monitor is not None:
+            monitor.sample_once()
+            monitor.raise_if_unsafe()
+            safety_evidence = monitor.evidence()
+    finally:
+        if monitor is not None:
+            # Protected models never remain resident without their monitor.
+            _close_chronos()
+            monitor.stop()
     runtime = time.monotonic() - started
     return {
-        "results": response["results"],
+        "results": results,
         "runtime_seconds": runtime,
         "worker": {
             **_worker_provenance(retry_count),
@@ -970,6 +1173,8 @@ def chronos_batch(
             "inference_seconds": response["inference_seconds"],
             "peak_process_memory_bytes": response["peak_process_memory_bytes"],
             "accelerator_memory_after": response["accelerator_memory"],
+            "oom_subdivision_depth": max(subdivisions, default=0),
+            "accelerator_safety": safety_evidence,
         },
     }
 
@@ -1036,6 +1241,7 @@ print(json.dumps({
         **_worker_provenance(worker=dask_worker),
         "git_commit": _command("git", "rev-parse", "HEAD"),
         "git_dirty": bool(_command("git", "status", "--porcelain", "--untracked-files=all")),
+        "source_manifest": repository_source_manifest(),
         "python_version": platform.python_version(),
         "dask_version": dask.__version__,
         "distributed_version": distributed.__version__,
@@ -1068,10 +1274,12 @@ def validate_cluster(
     require_gpu: bool,
     expected_gpu_name: str | None,
     expected_gpu_workers: int = 1,
+    expected_manifest: dict[str, str] | None = None,
+    expected_topology: dict[str, Any] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Purpose: Enforce the coordinator's Dask cluster identity contract. Inputs: A distributed ``Client``; positive expected worker/GPU counts; timeout in seconds; pinned commit, configuration, source, checkpoint and package identities; dependency paths; and GPU requirements/name. Outputs: Reports keyed by worker address when all checks pass; waits for workers, remotely runs hardware/software probes, and raises one aggregated error on mismatch."""
-    if expected_gpu_workers < 1:
-        raise ValueError("expected_gpu_workers must be positive")
+    if expected_gpu_workers < 0 or (require_gpu and expected_gpu_workers < 1):
+        raise ValueError("expected_gpu_workers must be nonnegative and positive for GPU work")
     client.wait_for_workers(expected_workers, timeout=timeout)
     reports = client.run(
         worker_preflight,
@@ -1086,13 +1294,21 @@ def validate_cluster(
     for address, report in reports.items():
         expected = {
             "git_commit": expected_commit,
-            "git_dirty": False,
             "python_version": "3.12.14",
             "dask_version": EXPECTED_DASK_VERSION,
             "distributed_version": EXPECTED_DASK_VERSION,
             "configuration_hash": expected_configuration_hash,
             "gift_eval_revision": expected_gift_eval_revision,
         }
+        if expected_manifest is None:
+            # Historical callers retain their clean-tree contract. The normal
+            # researcher route supplies the reviewed, synchronized source bytes.
+            expected["git_dirty"] = False
+        elif report.get("source_manifest") != expected_manifest:
+            observed = report.get("source_manifest", {})
+            changed = sorted(path for path in observed.keys() | expected_manifest.keys()
+                             if observed.get(path) != expected_manifest.get(path))
+            failures.append(f"{address}: source manifest mismatch: {changed}")
         for field, value in expected.items():
             if report.get(field) != value:
                 failures.append(
@@ -1118,13 +1334,28 @@ def validate_cluster(
             failures.append(f"{address}: pinned Chronos checkpoint is unavailable")
         if report["resources"].get(CHRONOS_GPU_RESOURCE, 0) >= 1:
             gpu_workers += 1
-            if expected_gpu_name and (
-                not chronos["cuda_available"]
-                or chronos["cuda_name"] != expected_gpu_name
-            ):
-                failures.append(f"{address}: GPU worker is not the required RTX 5090 CUDA host")
+            if (not chronos["cuda_available"]
+                    or (expected_gpu_name and chronos["cuda_name"] != expected_gpu_name)):
+                failures.append(f"{address}: GPU worker lacks the required CUDA device")
     if len(reports) != expected_workers:
         failures.append(f"registered {len(reports)} workers, expected {expected_workers}")
+    if expected_topology is not None:
+        local = socket.gethostname()
+        cpu = [r for r in reports.values() if r["resources"].get("CPU") == 1]
+        actual = (sum(r["hostname"] == local for r in cpu),
+                  sum(r["hostname"] != local for r in cpu), gpu_workers)
+        expected = tuple(expected_topology[key] for key in
+                         ("mac_cpu_workers", "ubuntu_cpu_workers", "ubuntu_gpu_workers"))
+        if actual != expected or len(cpu) + gpu_workers != len(reports):
+            failures.append(f"CPU/GPU topology {actual}, expected {expected}")
+        if any(r["hostname"] == local and r["resources"].get(CHRONOS_GPU_RESOURCE)
+               for r in reports.values()):
+            failures.append("GPU workers must run on Ubuntu, not the coordinator")
+        for address, report in reports.items():
+            resources = report["resources"]
+            expected_autoarima = int(report["hostname"] != local and resources.get("CPU") == 1)
+            if resources.get(AUTOARIMA_R_RESOURCE, 0) != expected_autoarima:
+                failures.append(f"{address}: incorrect approved AutoARIMA resource routing")
     if require_gpu and gpu_workers != expected_gpu_workers:
         failures.append(
             f"registered {gpu_workers} GPU workers, expected exactly "

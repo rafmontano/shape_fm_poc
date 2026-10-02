@@ -86,15 +86,15 @@ def _worker_summary(client: Client) -> dict:
 
 
 class ManagedTuningCluster:
-    """Own the approved eight-Mac/fifteen-Ubuntu CPU-only tuning cluster.
+    """Own approved CPU pools and the optional workload-required Ubuntu GPU pool.
 
     Machine addresses remain environment configuration. The profile owns worker
     counts, fit admission slots, and memory limits; this class owns only processes
     it starts and never transfers source, environments, databases, or results.
     """
 
-    def __init__(self, profile: ExecutionProfile):
-        """Resolve machine settings and validate the profile before process startup."""
+    def __init__(self, profile: ExecutionProfile, requires_gpu: bool = False):
+        """Resolve machine settings and workload topology before process startup."""
         required = (
             profile.dask_mac_cpu_workers,
             profile.dask_ubuntu_cpu_workers,
@@ -121,6 +121,11 @@ class ManagedTuningCluster:
         ):
             raise ValueError("every managed CPU worker must be eligible for tuning work")
         self.profile = profile
+        self.topology = profile.distributed_topology(requires_gpu)
+        if requires_gpu and self.topology["ubuntu_gpu_workers"] < 1:
+            raise ValueError(f"profile {profile.name} does not define GPU workers")
+        if requires_gpu and profile.accelerator_memory_min_available_gib <= 0:
+            raise ValueError("GPU workloads require a positive accelerator memory floor")
         self.ubuntu_host = os.environ.get(
             "SHAPEFM_UBUNTU_HOST", "rafmontano@WSUbuntu1.local"
         )
@@ -278,10 +283,7 @@ class ManagedTuningCluster:
                 "mac-tuning.log",
             )
         remote_root = shlex.quote(self.ubuntu_root)
-        remote_command = (
-            "set -eu; "
-            f"cd {remote_root}; mkdir -p .amp/in data/dask; "
-            "setsid nohup env PYTHONPATH=src/python RENV_CONFIG_SYNCHRONIZED_CHECK=false "
+        remote_workers = (
             ".tools/uv/uv run --locked --no-sync dask worker "
             f"{shlex.quote(self.worker_scheduler_address)} "
             f"--nworkers {self.profile.dask_ubuntu_tuning_workers} --nthreads 1 "
@@ -289,11 +291,29 @@ class ManagedTuningCluster:
             f"--resources 'CPU=1 {TUNING_R_RESOURCE}=1 {AUTOARIMA_R_RESOURCE}=1 "
             f"{UBUNTU_TUNING_R_RESOURCE}=1' "
             f"--memory-limit {self.profile.dask_ubuntu_worker_memory_gib}GiB "
-            "--no-dashboard >data/dask/seasonal-recovery.log 2>&1 </dev/null & "
+            "--no-dashboard >>data/dask/seasonal-recovery.log 2>&1 & "
+        )
+        if self.topology["requires_gpu"]:
+            from .distributed_execution import CHRONOS_GPU_RESOURCE
+            remote_workers += (
+                ".tools/uv/uv run --locked --no-sync dask worker "
+                f"{shlex.quote(self.worker_scheduler_address)} "
+                f"--nworkers {self.topology['ubuntu_gpu_workers']} --nthreads 1 "
+                "--name seasonal-ubuntu-gpu "
+                f"--resources 'GPU=1 {CHRONOS_GPU_RESOURCE}=1' "
+                f"--memory-limit {self.profile.dask_ubuntu_worker_memory_gib}GiB --no-dashboard "
+                ">>data/dask/seasonal-recovery-gpu.log 2>&1 & "
+            )
+        remote_command = (
+            "set -eu; "
+            f"cd {remote_root}; mkdir -p .amp/in data/dask; "
+            "setsid nohup env PYTHONPATH=src/python RENV_CONFIG_SYNCHRONIZED_CHECK=false "
+            f"sh -c {shlex.quote(remote_workers + 'wait')} "
+            ">>data/dask/seasonal-recovery-launch.log 2>&1 </dev/null & "
             "echo $! >.amp/in/seasonal-recovery-ubuntu.pid"
         )
-        self._ssh(remote_command)
         self.remote_started = True
+        self._ssh(remote_command)
         evidence["scheduler_address"] = self.scheduler_address
         evidence["configured_cpu_workers"] = {
             "mac": self.profile.dask_mac_cpu_workers,
@@ -301,8 +321,9 @@ class ManagedTuningCluster:
         }
         evidence["configured_logical_gpu_workers"] = {
             "ubuntu": self.profile.dask_ubuntu_gpu_workers,
-            "launched_for_cpu_only_workload": 0,
+            "launched": self.topology["ubuntu_gpu_workers"],
         }
+        evidence["resolved_topology"] = self.topology
         evidence["active_tuning_slots"] = {
             "mac": self.profile.dask_mac_tuning_workers,
             "ubuntu": self.profile.dask_ubuntu_tuning_workers,
@@ -321,6 +342,10 @@ class ManagedTuningCluster:
                     "kill -TERM -- -\"$pid\" 2>/dev/null; sleep 2; "
                     "kill -KILL -- -\"$pid\" 2>/dev/null; rm -f \"$p\"; fi"
                 )
+            except (OSError, subprocess.SubprocessError):
+                # Best-effort remote cleanup must never prevent owned local
+                # process groups from being released after partial startup.
+                pass
             finally:
                 self.remote_started = False
         for process in reversed(self.processes):

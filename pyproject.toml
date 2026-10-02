@@ -13,6 +13,8 @@ dependencies = [
   "distributed==2026.8.0",
   "duckdb>=1.2",
   "huggingface-hub>=0.36,<0.37",
+  "prefect==3.8.7",
+  "prefect-dask==0.3.7",
   "pyarrow>=20",
   "tsai==1.0.1",
 ]

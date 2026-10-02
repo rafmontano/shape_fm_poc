@@ -26,6 +26,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 import duckdb
+from prefect import flow
+from prefect.context import get_run_context
 
 from util.configuration import ExperimentConfiguration, canonical_json
 from util.database import initialize_experiment_database, load_database_configuration
@@ -36,6 +38,7 @@ from util.distributed_execution import (
 from util.execution_profiles import ExecutionProfile, ExecutionSettings
 from util.experiment_execution import ExperimentCoordinator
 from util.import_execution import ImportCoordinator
+from util.workflow_orchestration import gate_flow, research_writer_locks
 
 
 # Experiment globals: acceptance scope and expected scientific row/task counts are
@@ -1477,7 +1480,7 @@ def _write_failure_report(
     return updated
 
 
-def run_acceptance(
+def _run_acceptance(
     root: Path,
     database: Path,
     report_path: Path,
@@ -1492,6 +1495,7 @@ def run_acceptance(
     Outputs: Return the report mapping and write the isolated DuckDB database and
     JSON report; start and stop local/remote cluster subprocesses as required.
     """
+    prefect_flow_run_id = str(get_run_context().flow_run.id)
     database = database.resolve()
     report_path = report_path.resolve()
     authoritative = (root / "data/shapefm.duckdb").resolve()
@@ -1562,14 +1566,69 @@ def run_acceptance(
     sampler: _ResourceSampler | None = None
     try:
         database_work_started = True
-        with ImportCoordinator(database) as coordinator:
-            _mark_process(coordinator.connection, 1, "running")
+
+        def inspect_gate_state(process_id: int) -> dict[str, Any]:
+            """Read one acceptance gate and prerequisite state before execution."""
+            connection = duckdb.connect(str(database), read_only=True)
             try:
-                imported = coordinator.import_configured()
-            except BaseException as exc:
-                _mark_process(coordinator.connection, 1, "failed", error=str(exc))
-                raise
-            _mark_process(coordinator.connection, 1, "completed", imported)
+                states = dict(
+                    connection.execute(
+                        "SELECT process_id, status FROM experiment_processes"
+                    ).fetchall()
+                )
+            finally:
+                connection.close()
+            if process_id > 1 and states.get(process_id - 1) != "completed":
+                raise RuntimeError(
+                    f"Process {process_id - 1} must be completed before Process {process_id}"
+                )
+            return {
+                "process_id": process_id,
+                "status_before": states.get(process_id),
+                "prerequisite_status": states.get(process_id - 1),
+            }
+
+        def validate_gate_state(
+            process_id: int, _result: dict[str, Any]
+        ) -> dict[str, Any]:
+            """Confirm that one acceptance gate committed its completion state."""
+            connection = duckdb.connect(str(database), read_only=True)
+            try:
+                state = connection.execute(
+                    "SELECT status FROM experiment_processes WHERE process_id=?",
+                    [process_id],
+                ).fetchone()
+            finally:
+                connection.close()
+            if state != ("completed",):
+                raise RuntimeError(f"Process {process_id} did not commit completion")
+            return {
+                "process_id": process_id,
+                "committed_status": state[0],
+                "output_validated": True,
+            }
+
+        def run_import_gate(process_id: int) -> dict[str, Any]:
+            """Run acceptance Process 01 with existing durable state transitions."""
+            if process_id != 1:
+                raise ValueError("acceptance import runner only supports Process 01")
+            with ImportCoordinator(database) as coordinator:
+                _mark_process(coordinator.connection, 1, "running")
+                try:
+                    result = coordinator.import_configured()
+                except BaseException as exc:
+                    _mark_process(coordinator.connection, 1, "failed", error=str(exc))
+                    raise
+                _mark_process(coordinator.connection, 1, "completed", result)
+                return result
+
+        imported = gate_flow.with_options(name="ShapeFM Process 01")(
+            1,
+            inspect_gate_state,
+            run_import_gate,
+            validate_gate_state,
+            int(configuration.execution["dask_retries"]),
+        )
         if (
             imported["selected_series"] != SERIES_LIMIT
             or imported["series_count"] != SERIES_LIMIT
@@ -1614,15 +1673,15 @@ def run_acceptance(
             dask_expected_workers=EXPECTED_WORKERS,
             dask_expected_gpu_workers=UBUNTU_GPU_WORKERS,
             dask_max_in_flight=profile.dask_max_in_flight or MAX_IN_FLIGHT,
-            dask_retries=configuration.resolved["execution"]["default"]["dask_retries"],
+            dask_retries=0,
         )
         phase = "scientific_execution"
         sampler = _ResourceSampler(cluster.scheduler_address, topology, cluster.stop)
         try:
             with sampler:
-                with ExperimentCoordinator(database) as coordinator:
-                    execution = []
-                    for process_id in range(2, 7):
+                def run_scientific_gate(process_id: int) -> dict[str, Any]:
+                    """Run one acceptance scientific gate on the Mac coordinator."""
+                    with ExperimentCoordinator(database) as coordinator:
                         _mark_process(coordinator.connection, process_id, "running")
                         try:
                             result = coordinator.run_process(
@@ -1645,7 +1704,22 @@ def run_acceptance(
                             "completed",
                             result,
                         )
-                        execution.append(result)
+                        return result
+
+                execution = []
+                for process_id in range(2, 7):
+                    execution.append(
+                        gate_flow.with_options(
+                            name=f"ShapeFM Process {process_id:02d}"
+                        )(
+                            process_id,
+                            inspect_gate_state,
+                            run_scientific_gate,
+                            validate_gate_state,
+                            int(configuration.execution["dask_retries"]),
+                        )
+                    )
+                with ExperimentCoordinator(database) as coordinator:
                     coordinator.connection.execute(
                         "UPDATE experiments SET status='completed', updated_at=current_timestamp WHERE experiment_id=?",
                         [plan.experiment_id],
@@ -1726,6 +1800,7 @@ def run_acceptance(
             "ended_at": _utc_now(),
             "database_was_fresh": database_was_fresh,
             "entry_invocation": entry_invocation,
+            "prefect_flow_run_id": prefect_flow_run_id,
             "import": imported,
             "plan": asdict(plan),
             "execution": execution,
@@ -1782,3 +1857,15 @@ def run_acceptance(
     finally:
         if cluster_control_started:
             cluster.stop()
+
+
+@flow(name="ShapeFM two-machine acceptance", persist_result=False)
+def run_acceptance(
+    root: Path,
+    database: Path,
+    report_path: Path,
+    entry_invocation: dict[str, Any],
+) -> dict[str, Any]:
+    """Run the fixed acceptance under Prefect and one Mac writer lock."""
+    with research_writer_locks((database,)):
+        return _run_acceptance(root, database, report_path, entry_invocation)

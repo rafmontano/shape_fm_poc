@@ -14,6 +14,222 @@ modularity, and efficient development by one researcher. Start with the
 simplest useful structure. Add a file or folder only when an actual need
 justifies it.
 
+## Pragmatic implementation
+
+Approved by the researcher on 3 October 2026: development effort must serve the
+research outcome. For POC2 consolidation, prioritise required methods and readable
+connected workflows over polishing temporary or obsolete infrastructure.
+
+- Use known, controlled input/output contracts. Validate at the authoritative
+  external, provider, storage and restart boundaries; avoid repeating the same
+  defensive checks between internal components that already share that contract.
+- Consolidate cohesive utilities and remove unnecessary forwarding layers,
+  speculative branches and obsolete implementations after checking real callers
+  and replacement behaviour. Do not retain executable scaffolding merely for a
+  hypothetical future need; keep future research options in documentation.
+- Document genuine fixed constants without making each one configurable.
+  Scientific choices and operational settings retain their central authority.
+- OOP, small reusable functions and documentation remain the standard, applied
+  proportionately. No class, module, test matrix or exception framework exists
+  solely to satisfy a checklist.
+- Test the changed behaviour and relevant connected path; reuse valid evidence
+  and group related checks. Do not repeat full campaigns for internal edits.
+
+This relaxes unnecessary structural and defensive machinery, not scientific
+correctness, explicit errors, required data contracts, accepted-data preservation,
+single-writer/restart integrity, provenance or approved memory/resource limits.
+Record deferred work honestly in the existing acceptance record. A researcher
+may accept a bounded increment with explicit limitations without claiming that
+unperformed tests passed.
+
+## Mandatory object oriented implementation
+
+Researcher direction clarified on 2 October 2026: object-oriented design, with
+small reusable methods and functions, is the standing code standard for the
+entire ShapeFM project and all future projects, not only POC2. Apply it using
+each language's appropriate mechanisms; the current implementation uses R and
+Python. The POC2 migration brings existing code into this standard, not just new
+code or `00_main.py`. The standard remains an acceptance requirement, with the
+bounded practical exceptions below; it does not require classes for their own sake.
+
+### Purpose and precedence
+
+Clarified by the researcher on 2 October 2026: OOP serves the code standards;
+it does not outrank them. Its purpose is to manage growing complexity and make
+components easier to reuse, maintain and extend without rewriting the system.
+Class counts, inheritance depth and fewer lines are not measures of success.
+
+Scientific correctness comes first. Structural changes must not silently change
+calculations, inputs, transformations, fallbacks or experiment meaning. Apply
+OOP alongside simplicity and proven library capabilities, human readability,
+mandatory documentation, cohesive responsibilities and shared implementation,
+consistent naming, central configuration, explicit data contracts,
+reproducibility and safety, and incremental evidence-based development.
+
+Use the simplest adequate design under this standard and its practical
+exceptions. An abstraction must earn its place through a clear responsibility
+or demonstrated reuse or maintenance benefit, not speculative future needs.
+
+### Object responsibilities
+
+Objects encapsulate a cohesive responsibility, its relevant data/state and the
+small methods that implement its behaviour. Reuse existing suitable classes and
+language-native model objects. A large procedural coordinator renamed as a class,
+or data records passed into unchanged monolithic functions, is not compliance.
+Prefer composition and clear interfaces; avoid deep inheritance, universal
+context objects, unnecessary forwarding classes and a new object framework.
+
+| Object responsibility | Required boundary |
+| --- | --- |
+| Configuration | Load and validate authoritative stored settings; expose the relevant resolved settings to consumers |
+| Dataset source | Read the configured source and expose its records through a small, consistent interface |
+| Research storage | Own database access, transactions and durable research state on the coordinator |
+| Scientific provider | Apply configured preprocessing, transformation, forecasting or evaluation behaviour using native libraries and small reusable functions |
+| Request, job and result | Carry explicit identity, required settings, bounded values/references and provenance between components |
+
+Prefect flows/tasks orchestrate operations on these objects; Dask schedules
+eligible computation. Domain objects must not become competing workflow engines,
+schedulers or infrastructure-retry controllers. Thin Prefect callables invoke
+object methods. Small pure scientific/validation helpers may support those
+methods; they are not an alternative procedural application architecture.
+Use Python classes and documented native R class/method contracts, preserving
+existing library objects rather than adding a framework solely for OOP.
+
+Configuration is stored, loaded through the configuration object, then consumed
+by the responsible objects. Preserve creation-time JSON validation/storage and
+DuckDB authority on resume. Consumers must not independently reread configuration
+files, reinterpret fields or maintain competing settings. Operational overrides
+still follow the execution policy and are recorded without changing science.
+
+GIFT-Eval import must follow this simple pattern: load configuration, construct
+the configured source object, read bounded records, validate and persist through
+the storage object. Acquisition/cache/source-version details belong behind the
+source boundary; sequencing and parallel work belong to Prefect/Dask. Reuse the
+pinned official reader where it meets our contract; justify necessary adaptation.
+Remove redundant discovery, conversion and configuration handling without losing
+source identity, required validation, streaming or restart guarantees.
+
+Functions and methods must be minimal and reusable: one clear operation at one
+level of abstraction, with explicit inputs, outputs and effects. Combine these
+operations to perform a task; do not create tiny forwarding functions merely to
+inflate abstraction. Do not start jobs or mutate research data in constructors.
+Serialise bounded job/result data at real boundaries, not live storage/service
+objects or writable connections. Reconstruct native provider objects where used.
+
+### Practical exceptions
+
+Use a simpler functional implementation when object-oriented structure would
+add complexity without a useful benefit, for example a small self-contained
+test, diagnostic or one-off utility. Keep functions minimal, readable, documented
+and reusable where useful; do not add classes merely to satisfy a style count.
+
+Simple calculations and performance-sensitive scientific kernels may remain
+small functions supporting the object interfaces. Do not add heavy object
+structures around them without a demonstrated benefit. Claims that one design
+is faster require proportionate measurement, not an assumption that procedural
+or object-oriented code is inherently faster.
+
+This is an authorised part of the standard, not a new approval request for every
+small test. Briefly record the reason and bounded scope in the relevant source
+comment or existing handoff; no separate exception document is required. It does
+not waive scientific correctness, configuration authority, documentation, safety
+or execution policy, or permit a second production orchestration path.
+
+Reassess the design if the work grows, gains substantial state or becomes a
+shared production component. Broader departures affecting the application's
+architecture still require researcher approval. The aim is maintainable,
+proportionate design, not maximum class usage.
+
+### Enforcement and reuse
+
+Enforce this standard through code review, object/interface tests and targeted
+architecture checks. Every refactor handoff must map changed responsibilities to
+their object, methods, Prefect owner where applicable, and tests; record any
+unmigrated code and justified practical exceptions explicitly. Acceptance requires
+coverage of the agreed increment with no unexplained departures; the current
+POC2 migration still covers all active first-party components. Passing numerical
+tests, adding decorators, or reducing lines does not waive the standard. The
+researcher approves changes beyond the practical exceptions above. Every later
+project must reference or include this baseline and its exception policy rather
+than re-establishing them from chat memory. This includes the precedence rules
+and two-reviewer quality assurance process below.
+
+### Two reviewer quality assurance
+
+At the agreed implementation review checkpoint, use two complementary reviews
+of the same identified source version and test evidence:
+
+1. **ChatGPT technical review.** Inspect the actual implementation, tests and
+   documentation, not only AMP's completion report. Provide evidence-backed
+   findings and recommendations for R, Python and their boundaries, including
+   Prefect/Dask ownership where applicable.
+2. **Researcher independent review.** Assess human readability, research intent
+   and whether the processes and modules make sense. The researcher retains
+   final acceptance authority; a technical pass is not automatic approval.
+
+Both reviews assess whether:
+
+- Scientific behaviour, data contracts and experiment meaning are preserved.
+- Objects and modules have clear responsibilities, use small reusable methods
+  and appropriate libraries, and simplify maintenance without unnecessary layers.
+- Names, documentation, inputs/outputs and central configuration make the
+  process understandable; R/Python native objects preserve the same meaning.
+- Tests support the claimed behaviour, reproducibility, restart and safety;
+  obsolete implementations are removed only after replacement coverage.
+
+Report **required corrections**, **recommended improvements** and **acceptable
+exceptions**, with relevant source references and evidence. Distinguish verified
+behaviour from untested areas and state remaining work. Reuse the existing
+handoff/acceptance record; do not create another review registry.
+
+Reviews recommend changes; they do not automatically implement them or expand
+approved scope. Address agreed corrections, retest affected behaviour and update
+documentation together before requesting acceptance. Apply this process to the
+current staged refactor and carry it into the baseline for future projects.
+
+## Mandatory workflow architecture
+
+The researcher approved the
+[workflow standard and software-layer diagram](poc2-workflow-orchestration-decision.md)
+on 2 October 2026. It is mandatory for this migration and later workflow work
+until explicitly superseded. The initial implementation has reported test
+evidence. Stage 1 is now accepted for progression with recorded limitations;
+the remaining required workflow integration and simplification proceed in
+Stage 2 under the pragmatic implementation rule. The
+[acceptance record](poc2-workflow-orchestration-acceptance.md) retains prior evidence.
+
+Use Prefect for experiment/gate/substep orchestration, Dask for eligible compute
+scheduling, native R/Python adapters for scientific work, and the Mac's single
+DuckDB writer for validated research results. Keep scientific functions usable
+without workflow-service dependencies. Do not introduce independent schedulers,
+competing retry loops, duplicate resource settings or a second research store.
+Use normal source contracts, not a custom workflow-description framework.
+
+Keep workflow definitions high-level: named tasks, dependencies and results.
+Follow the decision's shared handoff convention, reusing existing identities,
+payload validation and native adapters. Prefer framework execution facilities
+over repeated per-script retry/timeout machinery, retaining proven scientific
+and process-safety responsibilities. Simplicity is reduced maintenance, not
+shorter files achieved by hidden logic or removed documentation.
+
+This migration must record before/after R/Python script counts, per-script line
+counts and reconciled totals under the
+[measurement instructions](amp-poc2-workflow-orchestration-instructions.md#script-and-line-count-comparison).
+Include new integration code, tests and QA explicitly. A lower line count is a
+goal to measure, not evidence on its own that the architecture is correct.
+
+Every workflow change must document its owning layer, inputs/outputs,
+prerequisites, validation, retry/restart behaviour and authoritative execution
+settings, and test the real entry-to-output path. Preserve read-only utilities
+and the single researcher entry point. Update architecture and affected
+researcher guidance in the same increment; distinguish approved, implemented
+and tested status. Record temporary compatibility paths explicitly.
+
+The [execution policy](execution-policy.md) still governs limits and two-machine
+testing. Scientific behaviour remains governed by approved experiment decisions.
+Any conflict or material departure requires researcher approval before coding;
+an implementation convenience does not silently amend the standard.
+
 ## Agile development approach
 
 Each POC follows the same small cycle:
@@ -53,6 +269,57 @@ python src/python/00_main.py test
 
 There is no implicit default that starts an experiment, installs software, or
 modifies data. A mutating action must be explicit.
+
+## Readable modules and object boundaries
+
+Researcher direction recorded on 2 October 2026: the current `00_main.py`
+requires refactoring. This is a coding requirement, not a claim that the
+refactoring or workflow migration has been accepted.
+
+The entry point must be extremely simple: obtain a request through the CLI
+component, dispatch the requested action, and present its result or failure.
+It must not implement argument definitions, SQL, database transactions, cluster
+lifecycle, scheduling, retry loops or scientific calculations. A researcher
+must be able to understand the top-level flow without reading those details.
+
+| Component | Responsibility behind its interface |
+| --- | --- |
+| Entry point | Connect request, action and presentation through a few clear calls |
+| CLI and presentation | Parse arguments, validate command syntax, format results/errors and exit status |
+| Configuration | Resolve the authoritative settings into documented configuration objects |
+| Workflows and action handlers | Express the requested operation as named steps with explicit dependencies |
+| Storage utilities | Own database access, transactions and persisted-state operations |
+| Execution utilities and adapters | Own service/cluster lifecycle, resource handling and native worker boundaries under the approved architecture |
+| Scientific functions | Calculate results from their documented inputs |
+
+Reuse cohesive existing modules under `util/`; add specifically named modules
+only where responsibilities need separating. This rule applies recursively:
+database and execution modules must also expose simple operations over smaller
+components, not absorb all of `main` into another monolith. Avoid catch-all
+utilities, circular imports and layers that merely forward every call.
+
+Pass small, documented request, configuration, job and result objects between
+components, reusing existing types and contracts. Each component receives only
+what it needs. Implement component behaviour in cohesive classes under the
+[mandatory object-oriented standard](#mandatory-object-oriented-implementation),
+with small methods and supporting functions. Preserve native R/Python model
+objects within their adapters and serialize only at actual process, language or
+storage boundaries. Never send writable database connections to workers.
+
+Names and structure must make intent evident. Keep each function at one level
+of detail; high-level functions compose meaningful operations rather than
+mixing workflow decisions with low-level implementation. Encapsulate detail,
+but keep dependencies, failure propagation and important side effects explicit.
+
+Review acceptance requires a readable top-level flow, cohesive module ownership,
+documented object contracts, and tests of the unchanged public commands and
+affected boundaries. Preserve scientific behaviour, storage compatibility and
+safety guarantees during structural refactoring. File/line counts are supporting
+evidence, not an arbitrary limit or permission to remove documentation or tests.
+Apply this standard to R and Python and retain it for future projects. The POC2
+object-oriented migration covers all active components, delivered in the reviewed
+stages of the AMP instructions. Report remaining work; do not silently exclude
+existing modules or expand scientific scope.
 
 ## Experiment configuration evolution
 
@@ -259,9 +526,11 @@ rolling-window preparation and read-only retrieval
 Each utility file has one cohesive responsibility and a specific name. Avoid
 catch-all names such as `utils`, `helpers`, `common`, and `misc`.
 
-Moving existing foundation code into `util/` does not require splitting it
-prematurely. A module is divided only when a current POC creates a clear
-responsibility boundary and tests can demonstrate unchanged behaviour.
+Moving existing foundation code into `util/` is not itself simplification.
+Split demonstrated responsibilities under the
+[readability and object-boundary standard](#readable-modules-and-object-boundaries),
+with tests demonstrating unchanged behaviour. Do not create speculative layers
+or split files solely to reach a line-count target.
 
 ### Process-to-code map
 
@@ -438,9 +707,10 @@ environments require them.
 
 ## POC2 objectives and definition of done
 
-POC2 has two objectives. Objective 1 is approved below. Objective 2 has only
-provisional high-level approval; its detailed scope, target results, comparison
-rules, and completion criteria require later Chief Developer approval.
+POC2 has two objectives. Objective 1 is approved below. Objective 2 is being
+approved and implemented component by component; the item-specific decisions
+record the approved methods and contracts. Completion of infrastructure alone
+does not constitute scientific Objective 2 completion.
 
 ### Preparation
 
@@ -487,10 +757,10 @@ The approved direction is to reproduce only relevant M4 Daily results from
 and validating one necessary component at a time. Irrelevant previous-project
 methods are not imported merely for completeness.
 
-This direction is not yet a definition of done. Do not treat a particular
-result list, model list, comparison tolerance, import order, or completion
-criterion as approved until the Chief Developer supplies and approves the
-detailed Objective 2 scope.
+Use the recorded item-specific approvals, including the approved R forecast pool;
+do not reopen them merely because this overview is high-level. Do not invent
+remaining scientific result targets, comparison tolerances or training decisions.
+Obtain the Chief Developer's decision where an item genuinely lacks one.
 
 The working discipline remains: agree, change one bounded item, test, review,
 and then continue.

@@ -20,7 +20,11 @@ from typing import Any, Iterator
 import pyarrow as pa
 import pyarrow.ipc as ipc
 
-from .configuration import ImportValidationError, json_fingerprint
+from .configuration import (
+    ExperimentConfiguration,
+    ImportValidationError,
+    json_fingerprint,
+)
 from .provenance import sha256_file
 
 
@@ -43,6 +47,61 @@ class SourceSeries:
     start_timestamp: Any
     frequency: str
     target: tuple[float | None, ...]
+
+
+class ConfiguredGiftEvalSource:
+    """Own the read-only GIFT-Eval source contract for one stored experiment.
+
+    Construction resolves no JSON and performs no I/O.  The configuration supplied
+    by the DuckDB loader remains authoritative; ``records`` streams at most its
+    configured selection count while preserving Arrow order and missing values.
+    The official reader is also lazy, but its NumPy/GluonTS formatting loses the
+    Arrow null-versus-NaN distinction. Raw import keeps that distinction and
+    independently verifies byte hashes; evaluation still uses the official reader.
+    """
+
+    def __init__(self, configuration: ExperimentConfiguration, repository: Path):
+        """Resolve the configured source path without I/O or acquisition."""
+        self.configuration = configuration
+        self.path = (
+            Path(repository)
+            / configuration.source_directory
+            / configuration.resolved["data"]["dataset_name"]
+        )
+
+    @property
+    def revision(self) -> str:
+        """Return the pinned source revision from authoritative configuration."""
+        return str(self.configuration.resolved["data"]["source"]["revision"])
+
+    @property
+    def settings(self) -> dict[str, Any]:
+        """Return the bounded canonical import settings."""
+        return self.configuration.import_settings
+
+    def fingerprint(self) -> dict[str, Any]:
+        """Return and validate the snapshot's byte identity."""
+        result = source_fingerprint(self.path)
+        expected = self.configuration.resolved["data"]["source"]["files"]
+        observed = {name: value["sha256"] for name, value in result["files"].items()}
+        if observed != expected:
+            raise ImportValidationError(
+                "pinned M4 Daily source hashes do not match stored configuration"
+            )
+        return result
+
+    def metadata(self) -> dict[str, Any]:
+        """Return pinned descriptive metadata without interpreting it as configuration."""
+        return source_metadata(self.path)
+
+    def records(self) -> Iterator[SourceSeries]:
+        """Stream the configured bounded records in authoritative source order."""
+        settings = self.settings
+        return iter_source_series(
+            self.path,
+            settings["benchmark"]["frequency"],
+            settings["max_series"],
+        )
 
 
 def source_fingerprint(source_dir: Path) -> dict[str, Any]:

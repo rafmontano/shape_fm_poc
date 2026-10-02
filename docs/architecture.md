@@ -7,6 +7,105 @@ baseline, expandable forecast and feature pools, alternative meta-learners,
 and explicit foundation-model roles in forecasting, features, meta-learning,
 combination and adjustment.
 
+The [approved workflow standard and software-layer diagram](poc2-workflow-orchestration-decision.md#software-layers)
+define the implementation for existing and future workflows: Prefect orchestration,
+Dask compute scheduling, native R/Python adapters, and one Mac DuckDB writer.
+Approved on 2 October 2026; Stage 1 was accepted for progression with limitations
+on 3 October, and pragmatic Stage 2 is authorised. Full migration remains open. The
+[mandatory object-oriented standard](code-standards.md#mandatory-object-oriented-implementation)
+governs configuration, data access, storage and scientific objects; Prefect/Dask
+orchestrate their operations. See the retained initial evidence in the
+[acceptance record](poc2-workflow-orchestration-acceptance.md). Follow the
+[AMP-Code instructions](amp-poc2-workflow-orchestration-instructions.md) for the
+implementation boundary and update this map with later workflow changes.
+
+### Stage 1 working implementation boundaries
+
+The accepted Stage 1 snapshot uses these responsibilities. Verification gaps
+carried into Stage 2 remain in the acceptance record; acceptance is not a claim
+that all workflows or capability tests are complete.
+
+| Responsibility | Object and operations | Execution owner / tests |
+| --- | --- | --- |
+| CLI | `ResearcherCLI.request`, `present`, `present_error`; `ResearcherRequest` carries command values | `00_main.py` connects request, action and presentation; `test_main` |
+| Researcher actions | `ResearcherActions`, `ProcessAction`, `WindowPreparationAction` | Existing Prefect experiment/preparation flow; read-only actions stay direct; `test_main` |
+| Configuration | Existing `ExperimentConfiguration` loaded through `load_database_configuration` | DuckDB remains authoritative after creation; `test_configuration` |
+| GIFT-Eval source | `ConfiguredGiftEvalSource.fingerprint`, `metadata`, `records` | Bounded raw Arrow records; `test_import` and import integration tests |
+| Import storage | `ImportCoordinator.begin_configured_import`, `prepare_source_record`, `finish_configured_import` and task/result transactions | `gate1_import_flow` explicitly reads, computes and commits; the historical direct import API remains a Stage 2 compatibility path |
+| Process/event storage | `ProcessStorage.transition`, `validate`; `ExecutionEventStorage.start`, `finish`, `record_prefect_identity` | Coordinator-local SQL; `test_process_storage`, `test_main` |
+| Forecast storage | `ForecastStorage.prepare_pending_jobs`, `commit_response`, `verify_completion` | Opened inside the Mac flow; never a distributed task argument; `test_forecast_flow` |
+| Forecast providers | `DistributedForecastProvider`, `LocalAutoArimaProvider`, `LocalChronosProvider` | Native R/Chronos adapters retain scientific behavior; `test_experiment_execution` |
+| Forecast workflow | `ordinary_forecast_flow` submits named compute tasks with explicit `DaskTaskRunner(address=...)` | Prefect retries; Dask resources and bounded in-flight submission; `test_forecast_flow` |
+| Infrastructure | Existing `ExecutionProfile`, `ExecutionSettings`, `ManagedTuningCluster`, writer locks | Central profile/preflight remains mandatory; existing execution tests |
+
+The ordinary Gate 4 custom dispatch body has been removed. Tuning, Gates 2/3/5/6,
+window preparation, historical acceptance support and direct import compatibility
+still retain their documented Stage 2 paths. Their complete OOP migration is not
+claimed by this checkpoint. R scientific functions and the delegating AutoARIMA
+adapter are unchanged.
+
+The 3 October correction snapshot changes the affected boundaries as follows:
+all forecast providers expose `forecast(model, batch)`; the task wrappers no
+longer inspect provider types. `ForecastSafetyPolicy` carries effective profile
+controls into the existing R reservation and continuous child monitor. Import
+attempt/result/failure bookkeeping belongs to public `ImportCoordinator`
+operations. `ProcessStorage` verifies imported source values/windows, preprocessing
+hashes/contracts and recomputed transformations before skip or predecessor reuse.
+Historical R integer-JSON hashes remain valid after DuckDB DOUBLE conversion.
+
+The forecast flow refills bounded slots in Prefect completion order instead of
+waiting for an entire mixed CPU/GPU wave. Disabling overlap still imposes the
+configured CPU/GPU phase boundary. Normal preflight compares actual source,
+configuration/support files and locks on every worker, permitting matching dirty
+source while rejecting missing, stale or extra runtime files. Legacy callers
+without a manifest retain the clean-tree check.
+
+The approved closure follow-up implements runtime profile v3 as an explicit
+operational override, preserving historical experiment snapshots. The profile's
+`distributed_topology(requires_gpu)` supplies launch and preflight counts:
+23 CPU workers for CPU-only work, or 23 CPU plus 15 logical GPU workers.
+Ordinary AutoARIMA submission enforces its profile-owned eight-batch cap inside
+the overall bound. CPU work retains submission capacity when GPU tasks block;
+the approved no-overlap profile still executes separate CPU/GPU phases.
+AutoARIMA requests the existing `CPU` and `AUTOARIMA_R_SLOT` resources, aligning
+ordinary forecasting with tuning's Ubuntu large-fit placement. Registered Mac
+workers do not prove Mac model computation: bounded closure checks had only
+5–6 GiB available on Mac, below the unchanged 12 GiB fit budget plus 3 GiB floor.
+Native CPU overlap is carried into Stage 2; current ordinary AutoARIMA routing
+excludes Mac independently of its available memory. Pending
+forecast state determines GPU need; a completed second resume launches only the
+CPU pool, without changing the configured GPU capacity or historical settings.
+
+Protected Chronos uses shared startup admission and the existing continuous
+owned-child monitor. A machine-local lock gates startup until readiness and a
+fresh host/GPU sample, then releases before inference. Pressure/probe failures
+stop owned children; protected models close at the batch boundary rather than
+remaining resident without monitoring. This is reactive pressure protection,
+not a predictive GPU fit reservation: the profile defines no GPU fit budget.
+No inference-long global lock or second resource manager is introduced.
+See the acceptance record for normal-route evidence, Stage 1 acceptance and
+remaining limitations. Stage 2 consolidates only retained workflows and required
+approved methods; it does not preserve every legacy module for its own sake.
+
+```text
+00_main → CLI request → researcher action → Prefect gate
+                          │                   │
+                          │                   ├─ configured GIFT source → import storage
+                          │                   │
+                          │                   └─ forecast flow → named Dask compute tasks
+                          │                                      │
+                          └─ read-only retrieval       native R / Chronos provider
+                                                                 │
+                                                   validated Mac DuckDB commit
+```
+
+Prefect-Dask serializes parent flow parameters as task context. Consequently,
+passing storage only to a flow (rather than explicitly to a compute task) is
+still unsafe: the flow now receives paths/identities and opens storage locally.
+The raw Arrow source adaptation preserves null-versus-NaN missingness and
+per-file hashes. The official GIFT-Eval reader is lazy too, but its NumPy/GluonTS
+formatting does not retain Arrow validity metadata; it remains the evaluator.
+
 The approved minimal POC2 approach is described in
 [object adaptation and seasonal period](poc2-object-adaptation.md). It reuses
 existing adapters and stored configuration; implementation is tracked separately
@@ -59,18 +158,26 @@ avoiding full reruns, data sprawl, and manual orchestration.
 
 ## Technical layers
 
+The image below predates the orchestration migration; the governing current
+software-layer diagram is linked above. The target layers are listed below;
+the initial implementation remains under refactoring and review:
+
+1. **Research interface.** `src/python/00_main.py` is the sole public command.
+2. **Prefect workflow layer on Mac.** Readable experiment, gate and preparation
+   flows orchestrate meaningful object operations and retain operational history
+   in local SQLite. Scientific result persistence and task caching are disabled.
+3. **Dask compute layer.** Eligible bounded jobs use the approved Mac/Ubuntu
+   pools and execution profile; local coordinator work remains local.
+4. **Native objects/adapters.** Configured source/provider objects encapsulate
+   Python/R library operations and small reusable functions; remote computation
+   has no writable database access.
+5. **Acceptance/storage layer on Mac.** A coordinator-local storage object owns
+   serialized commits of validated authoritative research state to DuckDB.
+
 ![ShapeFM technical layers](images/shapefm_technical_layers.png)
 
-The technical view has three layers:
-
-1. **DuckDB data layer.** One database stores canonical series, evaluation
-   boundaries, scientific results, task/attempt state, and provenance.
-2. **Python/R application layer.** Python coordinates and is the sole writable
-   database owner. R receives ordinary JSON jobs for approved `standard` and
-   `robust` preprocessing and allowlisted forecast-method computation, then
-   returns ordinary JSON results.
-3. **Dask/concurrent.futures execution layer.** Bounded local or distributed
-   queues execute serializable work. Workers never open writable DuckDB.
+The older three-layer image remains useful for the scientific/data interior,
+but the approved diagram is authoritative for workflow ownership.
 
 Gate 3 owns fitted transformations and their inversion state. The R forecast
 pool receives an already prepared numeric series at Gate 4 and returns

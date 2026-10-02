@@ -11,6 +11,10 @@ researcher-facing experiment entry point is:
 the command does not install or update dependencies. The public actions are
 `plan`, `run`, `prepare-windows`, `status`, `results`, and `test`.
 
+The [working and communication agreement](docs/working-agreement.md) defines
+roles, approvals and effective collaboration. It prioritises productivity and
+clarity, not word limits.
+
 Heavy testing must follow the [approved execution policy](docs/execution-policy.md).
 The [execution safeguard instructions](docs/amp-poc2-execution-safeguards-instructions.md)
 record the implemented eight Mac CPU workers and enforcement fixes. The focused
@@ -51,6 +55,31 @@ ignored by narrowly scoped repository-relative rules. Environment manifests,
 lockfiles, source, configuration, documentation, and tests remain trackable.
 
 ## Research workflow
+
+The [approved workflow standard and software-layer diagram](docs/poc2-workflow-orchestration-decision.md)
+govern this and future workflow development: Prefect coordinates, Dask schedules
+compute, and the Mac remains the sole DuckDB writer. The researcher closed
+Stage 1 on 3 October 2026 with known limitations and authorised pragmatic Stage 2
+consolidation and the reviewed GitHub checkpoint. See the
+[acceptance record](docs/poc2-workflow-orchestration-acceptance.md). Prefect records
+local operational history without persisting scientific task results, while
+DuckDB remains authoritative for accepted work. Follow the [implementation
+instructions](docs/amp-poc2-workflow-orchestration-instructions.md) and
+[code standards](docs/code-standards.md); do not introduce a parallel workflow
+framework or silently change the approved execution policy.
+
+Stage 1 is **accepted for progression with documented limitations**. Runtime
+profile v3 supports workload-dependent GPU launch and shared-GPU safeguards. Bounded
+normal-entry forecasting, retrieval, post-commit restart and sequential comparison
+passed. Native CPU overlap and a fresh normal-route scheduler-loss check are
+carried into Stage 2, not marked as passed. Ordinary AutoARIMA currently runs
+on Ubuntu under the large-fit rule. Do not bypass memory limits to force Mac
+participation or repeat full campaigns for internal refactoring. See the
+[closure evidence and manual QA instructions](docs/poc2-workflow-orchestration-acceptance.md#stage-1-closure-follow-up-handoff)
+for fixture limitations and the current acceptance at the top of that record.
+Stage 2 prioritises necessary workflows, already-approved previous-project
+methods and consolidation of utilities under the
+[pragmatic code standard](docs/code-standards.md#pragmatic-implementation).
 
 The six ordered processes are:
 
@@ -207,6 +236,7 @@ src/python/05_combine.py                 Process 05 wrapper
 src/python/06_evaluate.py                Process 06 wrapper
 src/python/06_01_evaluate_gift_eval.py   official evaluation substep
 src/python/util/                         shared Python implementation
+src/python/util/workflow_orchestration.py Prefect flows, tasks, and writer locks
 src/python/util/window_preparation.py    rolling-window/S1 coordinator and retrieval
 src/python/tests/                        unit, integration, and acceptance tests
 src/r/02_01_preprocess_series.R          R preprocessing substep
@@ -249,3 +279,9 @@ See the [research vision](docs/research-vision.md),
 [experiment configuration reference](docs/experiment-configuration.md),
 [configuration inventory](docs/configuration-inventory.md), [data contract](docs/data-contract.md),
 and [local execution contract](docs/local-execution.md).
+
+## Research notes
+
+[Transformation objects and fable](docs/research-notes-transformations.md)
+records future implementation options and source evidence. It is research only,
+not an approved change, scheduled release item or instruction for current work.

@@ -57,11 +57,15 @@ PYTHON_ENVIRONMENTS = {
         "versions": {
             "dask": "2026.8.0",
             "distributed": "2026.8.0",
+            "prefect": "3.8.7",
+            "prefect-dask": "0.3.7",
         },
         "imports": (
-            "import dask, distributed, duckdb, pyarrow",
+            "import dask, distributed, duckdb, importlib.metadata, prefect, prefect_dask, pyarrow",
             "values={'dask': dask.__version__, 'distributed': distributed.__version__, "
-            "'duckdb': duckdb.__version__, 'pyarrow': pyarrow.__version__}",
+            "'duckdb': duckdb.__version__, 'pyarrow': pyarrow.__version__, "
+            "'prefect': prefect.__version__, "
+            "'prefect-dask': importlib.metadata.version('prefect-dask')}",
         ),
     },
     "gift-eval": {

@@ -502,7 +502,7 @@ class TransactionTests(unittest.TestCase):
             nonlocal calls
             calls += 1
             received_settings.append(payload["settings"])
-            if calls == 2:
+            if payload["jobs"][0]["id"] == "task-1":
                 raise RuntimeError("second external batch failed")
             job = payload["jobs"][0]
             values = [3.0, 3.0]
@@ -524,6 +524,16 @@ class TransactionTests(unittest.TestCase):
             }
 
         self.coordinator._r_worker = worker
+        from util.forecast_provider import LocalAutoArimaProvider
+
+        provider_patch = patch.object(
+            LocalAutoArimaProvider, "from_configuration",
+            side_effect=lambda configuration: LocalAutoArimaProvider(
+                self.coordinator._r_worker, configuration.auto_arima_settings
+            ),
+        )
+        provider_patch.start()
+        self.addCleanup(provider_patch.stop)
         with self.assertRaisesRegex(RuntimeError, "Process 4 failed"):
             self.coordinator.run_process("experiment", 4, workers=1, batch_size=1)
         self.assertEqual(connection.execute("SELECT count(*) FROM forecasts").fetchone()[0], 1)
@@ -632,10 +642,13 @@ class TransactionTests(unittest.TestCase):
                 "packages": {"forecast": "stub"},
             }
 
-        self.coordinator._r_worker = stub_worker
-        result = self.coordinator.run_process(
-            "experiment", 4, workers=1, batch_size=1
-        )
+        from util.forecast_provider import LocalAutoArimaProvider
+
+        with patch.object(LocalAutoArimaProvider, "from_configuration", return_value=
+                          LocalAutoArimaProvider(stub_worker, self.coordinator.configuration.auto_arima_settings)):
+            result = self.coordinator.run_process(
+                "experiment", 4, workers=1, batch_size=1
+            )
 
         self.assertEqual(result["counts"], {"completed": 1})
         self.assertEqual(received_contexts, [[-1.0, 0.0, 1.0]])
@@ -777,7 +790,7 @@ class TransactionTests(unittest.TestCase):
             "sequential_safe", {"chronos_inference_batch_size": 2}
         )
         with patch(
-            "util.experiment_execution.PersistentChronosWorker", OOMThenSuccessWorker
+            "util.forecast_provider.PersistentChronosWorker", OOMThenSuccessWorker
         ):
             result = self.coordinator.run_process("experiment", 4, execution=execution)
         self.assertEqual(result["counts"], {"completed": 2})

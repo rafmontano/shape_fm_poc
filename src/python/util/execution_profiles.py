@@ -17,6 +17,7 @@ import os
 import platform
 import re
 import selectors
+import signal
 import subprocess
 import threading
 from dataclasses import asdict, dataclass, replace
@@ -31,7 +32,7 @@ GIB = 1024**3
 # Execution-global policy identity: the sole approved distributed profile for
 # ordinary heavy seasonal tuning. Historical snapshots remain stored in DuckDB.
 APPROVED_HEAVY_TUNING_PROFILE = "poc2_seasonal_recovery"
-APPROVED_HEAVY_TUNING_PROFILE_VERSION = 2
+APPROVED_HEAVY_TUNING_PROFILE_VERSION = 3
 # Code constant: profile fields admitted by the execution-override interface.
 WORKER_FIELDS = (
     "cleaning_workers",
@@ -93,6 +94,25 @@ class ExecutionProfile:
         ).encode("utf-8")
         return hashlib.sha256(encoded).hexdigest()
 
+    def distributed_topology(self, requires_gpu: bool) -> dict[str, Any]:
+        """Resolve profile-owned CPU/GPU worker counts for one workload.
+
+        Inputs: ``requires_gpu`` states whether the workload contains accelerator
+        work. Outputs: Exact Mac CPU, Ubuntu CPU, Ubuntu GPU, and total counts;
+        GPU workers are zero for CPU-only work. No processes are started.
+        """
+        mac_cpu = int(self.dask_mac_cpu_workers or 0)
+        ubuntu_cpu = int(self.dask_ubuntu_cpu_workers or 0)
+        ubuntu_gpu = int(self.dask_ubuntu_gpu_workers or 0) if requires_gpu else 0
+        return {
+            "mac_cpu_workers": mac_cpu,
+            "ubuntu_cpu_workers": ubuntu_cpu,
+            "ubuntu_gpu_workers": ubuntu_gpu,
+            "cpu_workers": mac_cpu + ubuntu_cpu,
+            "total_workers": mac_cpu + ubuntu_cpu + ubuntu_gpu,
+            "requires_gpu": requires_gpu,
+        }
+
 
 @dataclass(frozen=True)
 class ExecutionSettings:
@@ -104,7 +124,7 @@ class ExecutionSettings:
     dask_scheduler_address: str | None = None
     dask_timeout_seconds: float = 60.0
     dask_expected_workers: int = 1
-    dask_expected_gpu_workers: int = 1
+    dask_expected_gpu_workers: int = 0
     dask_max_in_flight: int = 8
     dask_retries: int = 2
 
@@ -116,10 +136,10 @@ class ExecutionSettings:
             raise ValueError("Dask timeout must be positive")
         if (
             self.dask_expected_workers < 1
-            or self.dask_expected_gpu_workers < 1
+            or self.dask_expected_gpu_workers < 0
             or self.dask_max_in_flight < 1
         ):
-            raise ValueError("Dask worker, GPU-worker, and in-flight limits must be positive")
+            raise ValueError("Dask worker and in-flight limits must be positive; GPU-worker count cannot be negative")
         if self.dask_retries < 0:
             raise ValueError("Dask retries cannot be negative")
 
@@ -419,11 +439,13 @@ class PersistentChronosWorker:
         command: list[str],
         startup_timeout: float = 300.0,
         stderr_tail_bytes: int = 32 * 1024,
+        memory_monitor: Any = None,
     ):
         """Purpose: Initialize an unstarted Chronos process owner. Inputs: ``command`` is the complete argv string list, ``startup_timeout`` is seconds, and ``stderr_tail_bytes`` is the positive retention bound. Outputs: None; stores configuration and creates lock/buffer state without launching a subprocess."""
         self.command = command
         self.startup_timeout = startup_timeout
         self.stderr_tail_bytes = stderr_tail_bytes
+        self.memory_monitor = memory_monitor
         self.process: subprocess.Popen[str] | None = None
         self.ready: dict[str, Any] | None = None
         self._stderr_tail = b""
@@ -469,7 +491,18 @@ class PersistentChronosWorker:
             stderr=subprocess.PIPE,
             text=True,
             bufsize=1,
+            start_new_session=True,
         )
+        if self.memory_monitor is not None:
+            # Registration is deliberately the first operation after Popen: an
+            # already-unsafe monitor can then cancel the newly owned group.
+            self.memory_monitor.register_process(self.process)
+            try:
+                self.memory_monitor.sample_once()
+                self.memory_monitor.raise_if_unsafe()
+            except BaseException:
+                self.close(force=True)
+                raise
         if self.process.stderr is None:
             self.close(force=True)
             raise RuntimeError("Chronos worker stderr pipe was not created")
@@ -491,6 +524,9 @@ class PersistentChronosWorker:
                 self._diagnostic(f"Chronos worker failed to start: {message}")
             )
         self.ready = message
+        if self.memory_monitor is not None:
+            self.memory_monitor.sample_once()
+            self.memory_monitor.raise_if_unsafe()
         return message
 
     def _read(self, timeout: float) -> dict[str, Any]:
@@ -541,11 +577,14 @@ class PersistentChronosWorker:
             except (BrokenPipeError, subprocess.TimeoutExpired):
                 force = True
         if force and process.poll() is None:
-            process.terminate()
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
             try:
                 process.wait(timeout=5)
             except subprocess.TimeoutExpired:
-                process.kill()
+                os.killpg(process.pid, signal.SIGKILL)
                 process.wait(timeout=5)
         thread, self._stderr_thread = self._stderr_thread, None
         if thread is not None:
@@ -553,6 +592,8 @@ class PersistentChronosWorker:
         for stream in (process.stdin, process.stdout, process.stderr):
             if stream is not None:
                 stream.close()
+        if self.memory_monitor is not None:
+            self.memory_monitor.clear_process(process)
 
     def __enter__(self) -> "PersistentChronosWorker":
         """Start the bridge and return this context-managed client."""

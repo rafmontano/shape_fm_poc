@@ -105,6 +105,12 @@ Each environment has a readable `pyproject.toml`, committed `uv.lock`, local
 TensorFlow is never combined with PyTorch. Mantis and Chronos-2 remain separate
 because their foundation-model dependency ranges can evolve independently.
 
+The core lock pins Prefect 3.8.7 and prefect-dask 0.3.7 alongside Dask 2026.8.0.
+Setup verifies all four exact versions. Workflow commands keep coordinator-local
+Prefect SQLite/log state under ignored `/.prefect/`; this operational history is
+not scientific storage and must not be copied to Ubuntu or treated as DuckDB
+completion evidence.
+
 ## R dependency superset
 
 `renv.lock` is the authoritative definition and contains the union of the

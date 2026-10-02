@@ -14,6 +14,7 @@ import math
 import shutil
 import tempfile
 import unittest
+from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 from subprocess import TimeoutExpired
@@ -25,13 +26,19 @@ import pyarrow.ipc as ipc
 
 from util.configuration import (
     ImportValidationError,
+    ExperimentConfiguration,
     dataset_identity,
     evaluation_window,
     json_fingerprint,
+    load_experiment_configuration,
     validate_config,
 )
 from util.database import ShapeFMDatabase, initialize_experiment_database, migrate_database
-from util.gift_eval_source import iter_source_series
+from util.gift_eval_source import (
+    ConfiguredGiftEvalSource,
+    iter_source_series,
+    source_fingerprint,
+)
 from util.import_execution import (
     ImportCoordinator,
     SeriesResult,
@@ -226,6 +233,66 @@ class MissingObservationImportTests(unittest.TestCase):
             write_source(source, [[1.0, value, 3.0]])
             with self.assertRaisesRegex(ImportValidationError, "cannot be infinite"):
                 list(iter_source_series(source, "D", 1))
+
+    def test_configured_source_exposes_bounded_records_and_validated_identity(self):
+        """The source object owns path, metadata, fingerprint, and bounded streaming."""
+        source = self.temp / "configured" / "m4_daily"
+        write_source(source, [[float(value) for value in range(30)]] * 2)
+        reference = load_experiment_configuration(
+            Path(__file__).resolve().parents[3]
+            / "config/experiments/poc2_m4_daily_100.json"
+        )
+        resolved = deepcopy(reference.resolved)
+        resolved["data"]["source"]["directory"] = "configured"
+        resolved["data"]["source"]["files"] = {
+            name: value["sha256"]
+            for name, value in source_fingerprint(source)["files"].items()
+        }
+        resolved["data"]["selection"]["count"] = 1
+        configured = ConfiguredGiftEvalSource(
+            ExperimentConfiguration(reference.original, resolved), self.temp
+        )
+        self.assertEqual(configured.metadata()["dataset_info.json"]["rows"], 2)
+        self.assertEqual(len(list(configured.records())), 1)
+        self.assertRegex(configured.fingerprint()["fingerprint"], r"^[0-9a-f]{64}$")
+
+    def test_completed_configured_import_rejects_corrupt_value_and_preserves_hash(self):
+        """Gate 1 skip rejects altered values without repairing data or changing its hash."""
+        source = self.temp / "configured" / "m4_daily"
+        write_source(source, [[float(value) for value in range(30)]])
+        reference = load_experiment_configuration(
+            Path(__file__).resolve().parents[3]
+            / "config/experiments/poc2_m4_daily_100.json"
+        )
+        resolved = deepcopy(reference.resolved)
+        resolved["data"]["source"]["directory"] = "configured"
+        resolved["data"]["source"]["files"] = {
+            name: value["sha256"]
+            for name, value in source_fingerprint(source)["files"].items()
+        }
+        resolved["data"]["selection"]["count"] = 1
+        configuration = ExperimentConfiguration(reference.original, resolved)
+        configured = ConfiguredGiftEvalSource(configuration, self.temp)
+        database = self.temp / "corrupt.duckdb"
+        initialize_test_database(database)
+        with ImportCoordinator(database, configuration) as coordinator:
+            summary = coordinator.begin_configured_import(configured)
+            record = next(configured.records())
+            task = coordinator.prepare_source_record(record, summary)
+            attempt = coordinator.start_import_task(task)
+            coordinator.accept_import_result(compute_series(task), attempt, summary)
+            original_hash = coordinator.connection.execute(
+                "SELECT content_hash FROM series"
+            ).fetchone()[0]
+            coordinator.connection.execute(
+                "UPDATE series SET target=list_transform(target,(x,i)->CASE WHEN i=2 THEN 99.0 ELSE x END)"
+            )
+            with self.assertRaisesRegex(ImportValidationError, "identity, values, hash"):
+                coordinator.prepare_source_record(record, summary)
+            self.assertEqual(
+                coordinator.connection.execute("SELECT content_hash FROM series").fetchone()[0],
+                original_hash,
+            )
 
 
 class DatabaseTests(unittest.TestCase):

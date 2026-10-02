@@ -5,6 +5,15 @@ ShapeFM heavy testing, including seasonal-period tuning. It supersedes earlier
 Mac-only tuning guidance and prevents historical calibration or smoke-test
 settings from becoming the heavy-test default. Scientific decisions are unchanged.
 
+The [workflow orchestration standard](poc2-workflow-orchestration-decision.md),
+approved on 2 October 2026, adds Prefect above the existing Dask execution layer.
+Stage 1 was accepted for progression on 3 October 2026 with remaining checks
+carried into Stage 2; full migration acceptance remains open under the current
+AMP instructions. The migration does not change this
+policy, worker capacities, memory floors or availability rules. Prefect consumes
+the same resolved profile and owns the bounded application retry on its paths;
+it does not introduce another compute-worker pool or stacked retry authority.
+
 Updated approval on 30 September 2026: increase Mac CPU capacity from five to
 eight workers and correct the three execution safeguards identified in review.
 The 800-forecast seasonal test is complete and its results remain accepted.
@@ -79,6 +88,31 @@ must be available for useful eligible computation, not merely registered as
 permanently unused capacity. The current profile owner is
 `config/execution_profiles.json`; evolve its reviewed runtime profile and record
 the effective version or fingerprint without changing historical snapshots.
+
+### Approved profile reconciliation
+
+Approved on 3 October 2026 for the Stage 1 closure follow-up; implementation and
+subsequent Stage 1 acceptance with limitations are recorded in the acceptance
+record. The approved change evolves `poc2_seasonal_recovery` from runtime profile
+v2 to v3 so GPU workloads receive the existing 4 GiB accelerator headroom rather
+than v2's zero value. Extend the existing managed lifecycle to support the
+configured GPU pool when required, with launchers and validators consuming the
+same effective profile. Reconcile the exact-version tuning guard with v3.
+
+Preserve the approved 8 Mac/15 Ubuntu CPU capacities, 15 logical Ubuntu GPU
+workers, host floors, 12 GiB R fit budget, AutoARIMA concurrency cap of 8, other
+thread/batch/admission limits and `cpu_gpu_overlap=false`. Worker capacity is
+not a requirement to run every fit or load every GPU model concurrently.
+CPU-only work must not launch an unused GPU pool. Ordinary forecasting must
+enforce model-specific concurrency caps as well as the overall in-flight limit.
+
+Keep prior runtime snapshots and experiment hashes unchanged. Apply v3 as an
+explicit operational override with its resolved values/fingerprint recorded in
+execution history, not a silent reinterpretation of stored v2. This approval
+does not authorise scientific changes. The later
+[pragmatic Stage 2 amendment](poc2-workflow-orchestration-decision.md#pragmatic-stage-2-amendment)
+authorises Stage 2 and checkpoint publication. Deferred CPU-overlap and
+scheduler-loss checks move into Stage 2; the safeguards above are not relaxed.
 
 ## Memory safety and workload placement
 

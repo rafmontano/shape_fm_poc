@@ -120,8 +120,18 @@ class ExecutionProfileTests(unittest.TestCase):
                 recovery.dask_ets_max_in_flight,
                 recovery.dask_autoarima_fit_budget_gib,
             ),
-            (2, 8, 15, 15, 8, 15, 23, 8, 15, 12),
+            (3, 8, 15, 15, 8, 15, 23, 8, 15, 12),
         )
+        self.assertEqual(recovery.accelerator_memory_min_available_gib, 4.0)
+        self.assertEqual(
+            recovery.distributed_topology(False),
+            {
+                "mac_cpu_workers": 8, "ubuntu_cpu_workers": 15,
+                "ubuntu_gpu_workers": 0, "cpu_workers": 23,
+                "total_workers": 23, "requires_gpu": False,
+            },
+        )
+        self.assertEqual(recovery.distributed_topology(True)["total_workers"], 38)
         self.assertEqual(len(recovery.fingerprint), 64)
 
     def test_hardware_provenance_records_cpu_model(self) -> None:
@@ -145,23 +155,80 @@ class ExecutionProfileTests(unittest.TestCase):
         self.assertEqual(settings.to_dict()["dask_expected_gpu_workers"], 3)
         with self.assertRaisesRegex(ValueError, "execution mode"):
             ExecutionSettings(mode="remote")
+        self.assertEqual(ExecutionSettings(dask_expected_gpu_workers=0).dask_expected_gpu_workers, 0)
         with self.assertRaisesRegex(ValueError, "GPU-worker"):
-            ExecutionSettings(dask_expected_gpu_workers=0)
+            ExecutionSettings(dask_expected_gpu_workers=-1)
+
+    def test_heavy_guard_rejects_version_and_fingerprint_drift(self) -> None:
+        """The startup guard requires the exact approved v3 profile identity."""
+        from dataclasses import replace
+
+        profile, _ = resolve_execution_profile("poc2_seasonal_recovery")
+        settings = ExecutionSettings(mode="dask", dask_scheduler_address="managed")
+        validate_heavy_tuning_execution(profile, settings, {})
+        for drifted in (
+            replace(profile, profile_version=2),
+            replace(profile, accelerator_memory_min_available_gib=3.0),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "profile poc2_seasonal_recovery v3"):
+                validate_heavy_tuning_execution(drifted, settings, {})
+
+    def test_managed_cluster_resolves_cpu_only_and_gpu_topology(self) -> None:
+        """The managed launcher uses workload topology and rejects missing GPU safety."""
+        from dataclasses import replace
+        from util.distributed_cluster import ManagedTuningCluster
+
+        profile, _ = resolve_execution_profile("poc2_seasonal_recovery")
+        probe = MagicMock(stdout="192.0.2.1\n")
+        with patch("util.distributed_cluster.subprocess.run", return_value=probe):
+            cpu = ManagedTuningCluster(profile)
+            gpu = ManagedTuningCluster(profile, requires_gpu=True)
+            self.assertEqual(cpu.topology["ubuntu_gpu_workers"], 0)
+            self.assertEqual(cpu.topology["total_workers"], 23)
+            self.assertEqual(gpu.topology["ubuntu_gpu_workers"], 15)
+            self.assertEqual(gpu.topology["total_workers"], 38)
+            with self.assertRaisesRegex(ValueError, "positive accelerator memory floor"):
+                ManagedTuningCluster(
+                    replace(profile, accelerator_memory_min_available_gib=0),
+                    requires_gpu=True,
+                )
+
+    def test_managed_cluster_partial_remote_cleanup_releases_local_processes(self) -> None:
+        """A remote cleanup failure cannot strand owned local process groups."""
+        from util.distributed_cluster import ManagedTuningCluster
+
+        profile, _ = resolve_execution_profile("poc2_seasonal_recovery")
+        process = MagicMock(pid=123)
+        process.poll.return_value = None
+        probe = MagicMock(stdout="192.0.2.1\n")
+        with (
+            patch("util.distributed_cluster.subprocess.run", return_value=probe),
+            patch("util.distributed_cluster.os.killpg") as kill_group,
+        ):
+            cluster = ManagedTuningCluster(profile)
+            cluster.remote_started = True
+            cluster.processes = [process]
+            cluster._ssh = MagicMock(side_effect=subprocess.SubprocessError("offline"))
+            cluster.stop()
+        self.assertFalse(cluster.remote_started)
+        self.assertEqual(cluster.processes, [])
+        kill_group.assert_called_once_with(123, 15)
+        process.wait.assert_called_once_with(timeout=5)
 
     def test_run_process_propagates_expected_gpu_worker_count_to_validation(self) -> None:
         """Dask process execution passes its expected GPU count to cluster validation."""
         coordinator = object.__new__(ExperimentCoordinator)
         coordinator.root = Path(__file__).resolve().parents[3]
         coordinator.configuration = load_experiment_configuration(
-            coordinator.root / "config/experiments/poc2_m4_daily_100.json"
+            coordinator.root / "config/experiments/poc2_m4_daily_100_standardised.json"
         )
         coordinator.config = coordinator.configuration.workflow
         coordinator.execution_hardware = MagicMock(return_value={})
-        profile = resolve_execution_profile("sequential_safe")
+        profile = resolve_execution_profile("poc2_seasonal_recovery")
         settings = ExecutionSettings(
             mode="dask",
             dask_scheduler_address="tcp://scheduler:8786",
-            dask_expected_workers=35,
+            dask_expected_workers=38,
             dask_expected_gpu_workers=15,
         )
         client = MagicMock()
@@ -175,6 +242,7 @@ class ExecutionProfileTests(unittest.TestCase):
                 "util.experiment_execution.subprocess.run",
                 return_value=MagicMock(stdout="revision\n"),
             ),
+            patch("util.distributed_execution.repository_source_manifest", return_value={"source": "hash"}),
             self.assertRaisesRegex(RuntimeError, "validation sentinel"),
         ):
             coordinator.run_process(
@@ -184,6 +252,8 @@ class ExecutionProfileTests(unittest.TestCase):
                 execution_settings=settings,
             )
         self.assertEqual(validate.call_args.kwargs["expected_gpu_workers"], 15)
+        self.assertEqual(validate.call_args.kwargs["expected_topology"],
+                         profile[0].distributed_topology(True))
         client.close.assert_called_once()
 
     def test_tuning_preflight_rejects_wrong_topology_and_stale_source(self) -> None:
@@ -887,6 +957,81 @@ class CalibrationSafetyTests(unittest.TestCase):
             ),
             8,
         )
+
+
+class OrdinaryManifestTests(unittest.TestCase):
+    """Verify normal cluster validation accepts exact dirty source, not unknown code."""
+
+    def test_exact_dirty_manifest_and_mismatch_rejection(self):
+        """Retain dependency checks while replacing clean-Git with byte identity."""
+        from util.distributed_execution import validate_cluster, EXPECTED_DASK_VERSION
+
+        manifest = {"src/python/00_main.py": "approved", "uv.lock": "locked"}
+        report = {
+            "git_commit": "revision", "git_dirty": True, "source_manifest": manifest,
+            "python_version": "3.12.14", "dask_version": EXPECTED_DASK_VERSION,
+            "distributed_version": EXPECTED_DASK_VERSION, "configuration_hash": "config",
+            "gift_eval_revision": "gift", "resources": {},
+            "r_packages": {"R": "4.6.1", "renv": "1.2.4", "forecast": "8.24.0", "jsonlite": "2.0.0"},
+            "chronos": {"chronos_forecasting": "2.2.2", "checkpoint_revision": "model",
+                        "checkpoint_present": True},
+        }
+        client = MagicMock()
+        client.run.return_value = {"worker": report}
+        options = dict(expected_workers=1, timeout=1, expected_commit="revision",
+                       expected_configuration_hash="config", expected_gift_eval_revision="gift",
+                       expected_chronos_revision="model", expected_chronos_version="2.2.2",
+                       chronos_repository="repo", chronos_environment="env",
+                       gift_eval_source_directory="gift", require_gpu=False,
+                       expected_gpu_name=None, expected_manifest=manifest)
+        self.assertEqual(validate_cluster(client, **options), {"worker": report})
+        for altered in ({**manifest, "unexpected.py": "unknown"},
+                        {**manifest, "uv.lock": "stale"}, {}):
+            report["source_manifest"] = altered
+            with self.assertRaisesRegex(RuntimeError, "source manifest mismatch"):
+                validate_cluster(client, **options)
+        report["source_manifest"] = manifest
+        report["r_packages"]["forecast"] = "wrong"
+        with self.assertRaisesRegex(RuntimeError, "R forecast"):
+            validate_cluster(client, **options)
+
+    def test_normal_preflight_rejects_profile_topology_mismatch(self):
+        """Correct totals alone cannot hide a CPU pool on the wrong host."""
+        from util.distributed_execution import validate_cluster, EXPECTED_DASK_VERSION
+        import socket
+
+        report = {
+            "hostname": socket.gethostname(), "git_commit": "revision", "git_dirty": False,
+            "python_version": "3.12.14", "dask_version": EXPECTED_DASK_VERSION,
+            "distributed_version": EXPECTED_DASK_VERSION, "configuration_hash": "config",
+            "gift_eval_revision": "gift", "resources": {"CPU": 1},
+            "r_packages": {"R": "4.6.1", "renv": "1.2.4", "forecast": "8.24.0", "jsonlite": "2.0.0"},
+            "chronos": {"chronos_forecasting": "2.2.2", "checkpoint_revision": "model",
+                        "checkpoint_present": True},
+        }
+        client = MagicMock()
+        client.run.return_value = {"worker": report}
+        options = dict(expected_workers=1, timeout=1, expected_commit="revision",
+                       expected_configuration_hash="config", expected_gift_eval_revision="gift",
+                       expected_chronos_revision="model", expected_chronos_version="2.2.2",
+                       chronos_repository="repo", chronos_environment="env",
+                       gift_eval_source_directory="gift", require_gpu=False,
+                       expected_gpu_name=None, expected_gpu_workers=0,
+                       expected_topology={"mac_cpu_workers": 1, "ubuntu_cpu_workers": 0,
+                                          "ubuntu_gpu_workers": 0})
+        validate_cluster(client, **options)
+        report["hostname"] = "wrong-host"
+        with self.assertRaisesRegex(RuntimeError, "CPU/GPU topology"):
+            validate_cluster(client, **options)
+        options["expected_topology"].update(mac_cpu_workers=0, ubuntu_cpu_workers=1)
+        with self.assertRaisesRegex(RuntimeError, "AutoARIMA resource routing"):
+            validate_cluster(client, **options)
+        report["resources"]["AUTOARIMA_R_SLOT"] = 1
+        validate_cluster(client, **options)
+        report["hostname"] = socket.gethostname()
+        options["expected_topology"].update(mac_cpu_workers=1, ubuntu_cpu_workers=0)
+        with self.assertRaisesRegex(RuntimeError, "AutoARIMA resource routing"):
+            validate_cluster(client, **options)
 
 
 if __name__ == "__main__":

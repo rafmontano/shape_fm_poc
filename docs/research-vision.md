@@ -13,6 +13,16 @@ This vision is the reference point for architecture and implementation
 decisions. A change should support the vision directly or document why a
 temporary deviation is necessary.
 
+The [approved workflow standard and software-layer diagram](poc2-workflow-orchestration-decision.md)
+define how the outer system is to orchestrate that research: Prefect coordinates,
+Dask distributes eligible computation, adapters preserve language-native needs,
+and DuckDB holds validated research state. Approved on 2 October 2026; full
+migration acceptance remains open. The
+[mandatory object-oriented standard](code-standards.md#mandatory-object-oriented-implementation)
+defines implementation structure. These standards do not expand the approved
+scientific scope. Future work must preserve these boundaries or obtain an
+explicit amendment.
+
 ## Outer ShapeFM research system
 
 The outer system receives GIFT-Eval datasets and owns the end-to-end research

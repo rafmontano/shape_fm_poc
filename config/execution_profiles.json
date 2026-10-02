@@ -63,7 +63,7 @@
     "dask_max_in_flight": 12
   },
   "poc2_seasonal_recovery": {
-    "profile_version": 2,
+    "profile_version": 3,
     "required_accelerator": null,
     "expected_accelerator_name": null,
     "cleaning_workers": 8,
@@ -75,7 +75,7 @@
     "evaluation_workers": 1,
     "cpu_gpu_overlap": false,
     "system_memory_min_available_gib": 3.0,
-    "accelerator_memory_min_available_gib": 0.0,
+    "accelerator_memory_min_available_gib": 4.0,
     "database_writers": 1,
     "dask_mac_cpu_workers": 8,
     "dask_ubuntu_cpu_workers": 15,

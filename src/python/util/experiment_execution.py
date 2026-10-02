@@ -1241,21 +1241,18 @@ class ExperimentCoordinator:
                 validate_tuning_cluster,
             )
 
+            if process == 4 and self.configuration.seasonal_period_tuning is None and not settings.dask_scheduler_address:
+                raise RuntimeError(
+                    "ordinary Gate 4 Dask execution requires an existing scheduler address"
+                )
             if settings.dask_scheduler_address:
-                dask_client = Client(
-                    settings.dask_scheduler_address,
-                    timeout=f"{settings.dask_timeout_seconds}s",
-                )
-                expected_gpu_name = None
+                dask_client = Client(settings.dask_scheduler_address,
+                                     timeout=f"{settings.dask_timeout_seconds}s")
             else:
-                dask_client = Client(
-                    n_workers=1,
-                    threads_per_worker=1,
-                    processes=True,
-                    resources={"CPU": 1, "CHRONOS_GPU_SLOT": 1},
-                    timeout=f"{settings.dask_timeout_seconds}s",
-                )
-                expected_gpu_name = None
+                dask_client = Client(n_workers=1, threads_per_worker=1, processes=True,
+                                     resources={"CPU": 1, "CHRONOS_GPU_SLOT": 1},
+                                     timeout=f"{settings.dask_timeout_seconds}s")
+            expected_gpu_name = None
             try:
                 if process == 4 and self.configuration.seasonal_period_tuning is not None:
                     mac_workers = int(profile.dask_mac_cpu_workers or 0)
@@ -1272,9 +1269,8 @@ class ExperimentCoordinator:
                     )
                     resolved_device = "cpu"
                 else:
-                    expected_gpu_name = self.configuration.resolved["execution"][
-                        "final_acceptance"
-                    ]["gpu_name"]
+                    expected_gpu_name = profile.expected_accelerator_name or self.configuration.resolved[
+                        "execution"]["final_acceptance"].get("gpu_name")
                     resolved_device = "cuda"
                     expected_commit = subprocess.run(
                         ["git", "rev-parse", "HEAD"],
@@ -1295,9 +1291,12 @@ class ExperimentCoordinator:
                         chronos_repository=self.config["models"]["chronos_2"]["repository"],
                         chronos_environment=self.configuration.execution_paths["chronos_environment"],
                         gift_eval_source_directory=self.configuration.resolved["evaluation"]["gift_eval"]["source_directory"],
-                        require_gpu=process == 4,
+                        require_gpu=process == 4 and settings.dask_expected_gpu_workers > 0,
                         expected_gpu_name=expected_gpu_name,
                         expected_gpu_workers=settings.dask_expected_gpu_workers,
+                        expected_manifest=repository_source_manifest(),
+                        expected_topology=(profile.distributed_topology(settings.dask_expected_gpu_workers > 0)
+                                           if profile.dask_mac_cpu_workers is not None else None),
                     )
             except BaseException:
                 dask_client.close()
@@ -1346,6 +1345,7 @@ class ExperimentCoordinator:
         attempts = self._start_tasks(rows, invocation)
         started = time.monotonic()
         failures = []
+        execution_error: BaseException | None = None
         try:
             if process == 2:
                 self._run_02_preprocess(
@@ -1393,6 +1393,7 @@ class ExperimentCoordinator:
                     profile.evaluation_workers,
                 )
         except BaseException as exc:
+            execution_error = exc
             error = f"{type(exc).__name__}: {exc}"
             for row in rows:
                 current = self.connection.execute(
@@ -1407,7 +1408,11 @@ class ExperimentCoordinator:
                 [experiment_id, process],
             ).fetchall()
         )
-        status = "completed" if set(counts) <= {"completed"} else "failed"
+        status = (
+            "completed"
+            if execution_error is None and set(counts) <= {"completed"}
+            else "failed"
+        )
         summary = {
             "stage": process,
             "selected": len(rows),
@@ -1426,6 +1431,10 @@ class ExperimentCoordinator:
         )
         if dask_client is not None:
             dask_client.close()
+        if execution_error is not None and not failures:
+            # A post-commit orchestration/acknowledgement failure must remain
+            # visible even when every scientific row was durably accepted.
+            raise execution_error
         if status == "failed":
             raise RuntimeError(f"Process {process} failed; rerun retries failed tasks")
         return {"invocation_id": invocation, **summary}
@@ -1780,436 +1789,66 @@ class ExperimentCoordinator:
                     profile,
                 )
             return
-        prepared = []
-        for task_id, instance_id, variant_id, model in rows:
-            values, horizon, benchmark_metadata = self.connection.execute(
-                """SELECT t.transformed_target, i.horizon, b.metadata
-                FROM transformed_series t
-                JOIN forecast_instances i USING (forecast_instance_id)
-                JOIN benchmark_configurations b USING (benchmark_configuration_id)
-                WHERE t.experiment_id=? AND t.variant_id=? AND t.forecast_instance_id=?""",
-                [experiment_id, variant_id, instance_id],
-            ).fetchone()
-            metadata = json.loads(benchmark_metadata)
-            r_period = metadata.get(
-                "r_period", metadata.get("official_seasonality")
-            )
-            if r_period is None:
-                raise RuntimeError("benchmark metadata is missing the resolved R period")
-            prepared.append(
-                {
-                    "id": task_id,
-                    "context": values,
-                    "horizon": horizon,
-                    "seasonality": r_period,
-                    "model": model,
-                    "instance_id": instance_id,
-                    "variant_id": variant_id,
-                }
-            )
-        auto_jobs = [job for job in prepared if job["model"] == "auto_arima"]
-        chronos_jobs = [job for job in prepared if job["model"] == "chronos_2"]
-
-        def invoke_auto(batch: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any], float]:
-            """Purpose: Run one local AutoARIMA forecast batch through R.
-
-            Inputs: Transformed context jobs with horizons and official seasonality;
-            AutoARIMA settings come from authoritative configuration.
-            Outputs: Batch, forecasts with package/runtime provenance, and elapsed
-            seconds; launches R without writing DuckDB.
-            """
-            jobs = [
-                {key: value for key, value in job.items() if key not in {"model", "instance_id", "variant_id"}}
-                for job in batch
-            ]
-            started = time.monotonic()
-            response = self._r_worker(
-                {
-                    "action": "forecast",
-                    "settings": self.configuration.auto_arima_settings,
-                    "jobs": jobs,
-                }
-            )
-            runtime = time.monotonic() - started
-            metadata = {
-                "packages": response["packages"],
-                "settings": self.configuration.auto_arima_settings,
-                "execution_backend": "R/CPU",
-                "runtime_seconds": runtime,
-                "batch_task_count": len(batch),
-            }
-            return batch, {"results": response["results"], "metadata": metadata}, runtime
-
-        auto_batches = _batches(
-            auto_jobs, int(self.configuration.execution["batch_sizes"]["auto_arima"])
+        from .forecast_flow import run_ordinary_forecast_flow
+        from .forecast_provider import (
+            DistributedForecastProvider,
+            ForecastSafetyPolicy,
+            LocalAutoArimaProvider,
+            LocalChronosProvider,
         )
+        from .forecast_storage import ForecastStorage
 
-        def commit_response(
-            batch: list[dict[str, Any]],
-            response: dict[str, Any],
-            runtime: float,
-        ) -> None:
-            """Purpose: Validate and commit one Process 04 model response batch.
-
-            Inputs: Submitted jobs, worker forecast arrays/provenance, and batch runtime.
-            Outputs: None; verifies task identity, reads transformation parameters,
-            inverse-transforms mean/median/quantile arrays, then commits each forecast.
-            """
-            result_ids = [item["id"] for item in response["results"]]
-            by_id = {item["id"]: item for item in response["results"]}
-            if len(result_ids) != len(set(result_ids)) or set(by_id) != {
-                job["id"] for job in batch
-            }:
-                raise RuntimeError("Process 04 worker returned missing, duplicate, or unexpected task IDs")
-            metadata = response["metadata"]
-            for job in batch:
-                task_id = job["id"]
-                instance_id = job["instance_id"]
-                variant_id = job["variant_id"]
-                model = job["model"]
-                result = by_id[task_id]
-                method, parameters, transformation_id = self.connection.execute(
-                    """SELECT transformation_method, parameters, transformation_id
-                    FROM transformed_series WHERE experiment_id=? AND variant_id=? AND forecast_instance_id=?""",
-                    [experiment_id, variant_id, instance_id],
-                ).fetchone()
-                params = json.loads(parameters)
-                mean = inverse(result["mean"], method, params)
-                median = inverse(result["median"], method, params)
-                quantiles = [inverse(values, method, params) for values in result["quantiles"]]
-                validate_forecast_capability(
-                    list(mean),
-                    list(median),
-                    list(self.quantiles),
-                    [list(values) for values in quantiles],
-                    "probabilistic",
-                )
-                result_metadata = metadata
-                if "requested_method_id" in result:
-                    result_metadata = {
-                        **metadata,
-                        "forecast_method": {
-                            "requested_method_id": result["requested_method_id"],
-                            "executed_method_id": result["executed_method_id"],
-                            "fallback_used": result["fallback_used"],
-                            "fallback_reason": result["fallback_reason"],
-                            "provenance": result["provenance"],
-                        },
-                    }
-                forecast_id = f"forecast/{json_fingerprint({'experiment': experiment_id, 'variant': variant_id, 'instance': instance_id, 'candidate': model})[:32]}"
-                model_revision = (
-                    self.config["models"][model].get("revision")
-                    or metadata.get("packages", {}).get("forecast")
-                )
-
-                def insert(
-                    mean=mean,
-                    median=median,
-                    quantiles=quantiles,
-                    forecast_id=forecast_id,
-                    model_revision=model_revision,
-                    transformation_id=transformation_id,
-                    instance_id=instance_id,
-                    variant_id=variant_id,
-                    model=model,
-                    metadata=result_metadata,
-                ):
-                    """Purpose: Write one original-scale base forecast transactionally.
-
-                    Inputs: Captured horizon arrays, model/lineage IDs, revision, and
-                    execution metadata from the validated worker response.
-                    Outputs: None; inserts an idempotent ``forecasts`` row with hash.
-                    """
-                    self.connection.execute(
-                        """INSERT INTO forecasts
-                        (forecast_id, experiment_id, variant_id, forecast_instance_id,
-                         candidate, model_revision, parent_result_id, scale, mean,
-                         median, quantile_levels, quantiles, runtime_seconds,
-                         execution_metadata, content_hash, created_at,
-                         forecast_capability)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, 'original', ?, ?, ?, ?, ?, ?, ?,
-                                current_timestamp, 'probabilistic')
-                        ON CONFLICT (forecast_id) DO NOTHING""",
-                        [
-                            forecast_id,
-                            experiment_id,
-                            variant_id,
-                            instance_id,
-                            model,
-                            model_revision,
-                            transformation_id,
-                            list(mean),
-                            list(median),
-                            list(self.quantiles),
-                            [list(values) for values in quantiles],
-                            metadata.get("runtime_seconds", 0.0),
-                            canonical_json(metadata),
-                            json_fingerprint({"mean": mean, "quantiles": quantiles}),
-                        ],
-                    )
-
-                self._commit_task(
-                    task_id,
-                    attempts[task_id],
-                    runtime / len(batch),
-                    insert,
-                    result_metadata,
-                )
-
-        if dask_client is not None:
-            from .distributed_execution import (
-                autoarima_batch,
-                chronos_batch,
-                run_batch_groups,
-            )
-
-            chronos_pending = deque(
-                _length_aware_batches(
-                    chronos_jobs, profile.chronos_inference_batch_size
-                )
-            )
-
-            def pending_chronos() -> Iterable[list[dict[str, Any]]]:
-                """Purpose: Feed the mutable Chronos retry queue to Dask scheduling.
-
-                Inputs: Enclosing deque of length-aware context batches.
-                Outputs: Batches in queue order; consumes queue state but writes no DB rows.
-                """
-                while chronos_pending:
-                    yield chronos_pending.popleft()
-
-            groups = {}
-            if auto_batches:
-                groups["auto_arima"] = (
-                    autoarima_batch,
-                    auto_batches,
-                    {"CPU": 1},
-                    (
-                        self.configuration.auto_arima_settings,
-                        self.configuration.execution_paths["r_auto_arima_worker"],
-                        float(self.configuration.execution["worker_timeouts_seconds"]["r"]),
-                        int(self.configuration.execution["thread_limits"]["r"]),
-                    ),
-                    settings.dask_max_in_flight,
-                )
-            if chronos_jobs:
-                chronos = self.config["models"]["chronos_2"]
-                groups["chronos_2"] = (
-                    chronos_batch,
-                    pending_chronos(),
-                    {"CHRONOS_GPU_SLOT": 1},
-                    (
-                        chronos["repository"],
-                        chronos["revision"],
-                        list(self.quantiles),
-                        device,
-                        chronos["dtype"],
-                        chronos["cross_learning"],
-                        chronos["predict_batches_jointly"],
-                        self.configuration.execution["thread_limits"]["chronos"],
-                        self.configuration.execution_paths["chronos_environment"],
-                        self.configuration.execution_paths["chronos_worker"],
-                        float(
-                            self.configuration.execution["worker_timeouts_seconds"]["chronos_startup"]
-                        ),
-                        float(
-                            self.configuration.execution["worker_timeouts_seconds"]["chronos_request"]
-                        ),
-                    ),
-                    settings.dask_max_in_flight,
-                )
-            for model, batch, response in run_batch_groups(
-                dask_client, groups, retries=settings.dask_retries
-            ):
-                if isinstance(response, BaseException):
-                    if model == "chronos_2" and len(batch) > 1:
-                        smaller = max(1, len(batch) // 2)
-                        for split_batch in reversed(_batches(batch, smaller)):
-                            chronos_pending.appendleft(split_batch)
-                        continue
-                    raise response
-                metadata = {
-                    **response["worker"],
-                    "runtime_seconds": response["runtime_seconds"],
-                    "batch_task_count": len(batch),
-                    "requested_batch_size": (
-                        profile.chronos_inference_batch_size
-                        if model == "chronos_2"
-                        else len(batch)
-                    ),
-                }
-                commit_response(
-                    batch,
-                    {"results": response["results"], "metadata": metadata},
-                    response["runtime_seconds"],
-                )
-            return
-
-        def run_chronos(progress: Callable[[], None] = lambda: None) -> None:
-            """Purpose: Run local persistent Chronos inference with bounded OOM recovery.
-
-            Inputs: Prepared context batches, stored model/quantile settings, profile
-            memory limits and device, plus a callback for concurrent CPU progress.
-            Outputs: None; owns a Chronos subprocess, shrinks/requeues OOM batches,
-            commits successful forecasts/task state, and always closes the worker.
-            """
-            if not chronos_jobs:
-                return
+        storage = ForecastStorage(self, experiment_id, attempts)
+        execution = self.configuration.execution
+        paths = self.configuration.execution_paths
+        distributed = dask_client is not None
+        if distributed:
             chronos = self.config["models"]["chronos_2"]
-            paths = self.configuration.execution_paths
-            command = [
-                str(self.root / paths["chronos_environment"] / "bin/python"),
-                str(self.root / paths["chronos_worker"]),
-                "serve",
-                "--model",
-                chronos["repository"],
-                "--revision",
-                chronos["revision"],
-                "--device",
+            safety = ForecastSafetyPolicy.from_profile(profile, platform.node())
+            if any(row[3] == "chronos_2" for row in rows) and safety.accelerator["minimum_available_gib"] <= 0:
+                raise RuntimeError("distributed Chronos requires an approved positive GPU headroom policy")
+            provider = DistributedForecastProvider(
+                self.configuration.auto_arima_settings,
+                paths["r_auto_arima_worker"],
+                float(execution["worker_timeouts_seconds"]["r"]),
+                int(execution["thread_limits"]["r"]),
+                chronos,
+                tuple(self.quantiles),
                 device,
-                "--dtype",
-                chronos["dtype"],
-                "--internal-cpu-threads",
-                str(self.configuration.execution["thread_limits"]["chronos"]),
-            ]
-            pending = deque(
-                _length_aware_batches(
-                    chronos_jobs, profile.chronos_inference_batch_size
-                )
+                int(execution["thread_limits"]["chronos"]),
+                paths["chronos_environment"],
+                paths["chronos_worker"],
+                float(execution["worker_timeouts_seconds"]["chronos_startup"]),
+                float(execution["worker_timeouts_seconds"]["chronos_request"]),
+                safety,
             )
-            retries = {job["id"]: 0 for job in chronos_jobs}
-            worker: PersistentChronosWorker | None = None
-            generation = 0
-            try:
-                while pending:
-                    validate_system_memory(profile, system_hardware())
-                    if worker is None:
-                        worker = PersistentChronosWorker(
-                            command,
-                            startup_timeout=float(
-                                self.configuration.execution["worker_timeouts_seconds"]["chronos_startup"]
-                            ),
-                        )
-                        ready = worker.start()
-                        generation += 1
-                        available = ready["accelerator_memory"].get("available_bytes")
-                        threshold = int(profile.accelerator_memory_min_available_gib * GIB)
-                        if available is not None and available < threshold:
-                            raise RuntimeError(
-                                "accelerator memory safety threshold reached before inference"
-                            )
-                    batch = pending.popleft()
-                    batch_id = f"chronos-batch/{uuid.uuid4().hex}"
-                    payload_jobs = [
-                        {
-                            key: value
-                            for key, value in job.items()
-                            if key not in {"model", "instance_id", "variant_id", "seasonality"}
-                        }
-                        for job in batch
-                    ]
-                    response = worker.request(
-                        {
-                            "command": "predict",
-                            "batch_id": batch_id,
-                            "jobs": payload_jobs,
-                            "horizon": batch[0]["horizon"],
-                            "quantile_levels": list(self.quantiles),
-                            "inference_batch_size": len(batch),
-                            "cross_learning": chronos["cross_learning"],
-                            "predict_batches_jointly": chronos["predict_batches_jointly"],
-                        },
-                        timeout=float(
-                            self.configuration.execution["worker_timeouts_seconds"]["chronos_request"]
-                        ),
-                    )
-                    if response.get("type") == "error":
-                        if response.get("error_kind") != "out_of_memory":
-                            raise RuntimeError(response["error"])
-                        worker.close(force=True)
-                        worker = None
-                        if len(batch) == 1:
-                            raise RuntimeError(
-                                f"Chronos out of memory at minimum batch size: {response['error']}"
-                            )
-                        smaller = max(1, len(batch) // 2)
-                        for job in batch:
-                            retries[job["id"]] += 1
-                        for split_batch in reversed(_batches(batch, smaller)):
-                            pending.appendleft(split_batch)
-                        continue
-                    if response.get("type") != "result":
-                        raise RuntimeError(f"invalid Chronos worker response: {response}")
-                    metadata = {
-                        **{key: value for key, value in ready.items() if key != "type"},
-                        "execution_backend": ready["accelerator_backend"],
-                        "batch_id": batch_id,
-                        "requested_batch_size": profile.chronos_inference_batch_size,
-                        "effective_batch_size": response["effective_batch_size"],
-                        "retry_count": max(retries[job["id"]] for job in batch),
-                        "worker_generation": generation,
-                        "inference_seconds": response["inference_seconds"],
-                        "peak_process_memory_bytes": response["peak_process_memory_bytes"],
-                        "accelerator_memory_after": response["accelerator_memory"],
-                        "runtime_seconds": response["inference_seconds"],
-                    }
-                    commit_response(
-                        batch,
-                        {"results": response["results"], "metadata": metadata},
-                        response["inference_seconds"],
-                    )
-                    progress()
-                    available = response["accelerator_memory"].get("available_bytes")
-                    threshold = int(profile.accelerator_memory_min_available_gib * GIB)
-                    if available is not None and available < threshold and pending:
-                        raise RuntimeError(
-                            "accelerator memory safety threshold reached after committed batch"
-                        )
-            finally:
-                if worker is not None:
-                    worker.close()
-
-        if profile.cpu_gpu_overlap and auto_batches and chronos_jobs:
-            with ThreadPoolExecutor(max_workers=profile.autoarima_workers) as executor:
-                futures = [
-                    (batch, executor.submit(invoke_auto, batch)) for batch in auto_batches
-                ]
-                committed: set[int] = set()
-
-                def commit_finished_auto() -> None:
-                    """Purpose: Drain completed CPU forecasts while Chronos uses the GPU.
-
-                    Inputs: Enclosing AutoARIMA futures and committed-index set.
-                    Outputs: None; commits each finished batch once, thereby writing
-                    forecast and task state through ``commit_response``.
-                    """
-                    for index, (_, future) in enumerate(futures):
-                        if index in committed or not future.done():
-                            continue
-                        batch, response, runtime = future.result()
-                        commit_response(batch, response, runtime)
-                        committed.add(index)
-
-                chronos_error = None
-                try:
-                    run_chronos(commit_finished_auto)
-                except BaseException as error:
-                    chronos_error = error
-                commit_finished_auto()
-                if chronos_error is not None:
-                    raise chronos_error
-                for index, (_, future) in enumerate(futures):
-                    if index in committed:
-                        continue
-                    batch, response, runtime = future.result()
-                    commit_response(batch, response, runtime)
-                    committed.add(index)
+            auto_provider = chronos_provider = provider
         else:
-            for batch, response, runtime in _run_external_batches(
-                invoke_auto, auto_batches, profile.autoarima_workers
-            ):
-                commit_response(batch, response, runtime)
-            run_chronos()
+            auto_provider = LocalAutoArimaProvider.from_configuration(self.configuration)
+            chronos_provider = LocalChronosProvider(
+                self.root,
+                self.config["models"]["chronos_2"],
+                tuple(self.quantiles),
+                device,
+                profile,
+                execution,
+                paths,
+            )
+        run_ordinary_forecast_flow(
+            scheduler_address=settings.dask_scheduler_address if settings else None,
+            storage=storage,
+            rows=rows,
+            auto_provider=auto_provider,
+            chronos_provider=chronos_provider,
+            auto_batch_size=int(execution["batch_sizes"]["auto_arima"]),
+            chronos_batch_size=profile.chronos_inference_batch_size,
+            max_in_flight=(settings.dask_max_in_flight if distributed else profile.autoarima_workers),
+            autoarima_max_in_flight=(profile.dask_autoarima_max_in_flight
+                                    if distributed else profile.autoarima_workers),
+            cpu_gpu_overlap=profile.cpu_gpu_overlap,
+            distributed=distributed,
+            retries=settings.dask_retries if settings is not None else int(execution["dask_retries"]),
+        )
 
     def _run_05_combine(
         self,

@@ -13,7 +13,7 @@
 from pathlib import Path
 from typing import Any
 
-from util.import_execution import ImportCoordinator
+from util.import_flow import gate1_import_flow
 
 
 # Code constant: process identity validated by the numbered-wrapper loader.
@@ -27,5 +27,4 @@ def run(database: Path) -> dict[str, Any]:
     Outputs: Existing import summary; opens one ``ImportCoordinator`` that owns all
     Process 01 DuckDB writes and delegates source handling to shared utilities.
     """
-    with ImportCoordinator(database) as coordinator:
-        return coordinator.import_configured()
+    return gate1_import_flow(database)

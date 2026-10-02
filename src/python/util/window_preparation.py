@@ -786,8 +786,15 @@ class WindowPreparationCoordinator:
         memory_safety: dict[str, Any] | None = None,
         local_limits: dict[str, int] | None = None,
         execution_profile: str | None = None,
+        dask_retries: int | None = None,
     ) -> dict[str, Any]:
-        """Create/resume membership and prepare all incomplete selected series."""
+        """Create/resume membership and prepare all incomplete selected series.
+
+        ``dask_retries`` optionally transfers retry ownership to Prefect by setting
+        the inner Dask attempt count to zero without changing stored configuration.
+        """
+        if dask_retries is not None and dask_retries < 0:
+            raise ValueError("Dask retries cannot be negative")
         if dask_client is None:
             if not isinstance(local_limits, dict) or set(local_limits) != {
                 "max_series",
@@ -885,7 +892,11 @@ class WindowPreparationCoordinator:
                     batches,
                     resources={"CPU": 1},
                     max_in_flight=int(self.configuration.execution["dask_max_in_flight"]),
-                    retries=int(self.configuration.execution["dask_retries"]),
+                    retries=(
+                        int(self.configuration.execution["dask_retries"])
+                        if dask_retries is None
+                        else dask_retries
+                    ),
                     extra_arguments=(script, timeout, threads, memory_safety),
                 )
             worker_counts: dict[str, int] = {}
