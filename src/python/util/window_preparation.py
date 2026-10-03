@@ -39,15 +39,30 @@ from .shared_configuration import ExperimentConfiguration, canonical_json, json_
 from .shared_database import load_database_configuration, migrate_database
 from .shared_distributed_execution import window_preparation_batch
 from .shared_execution_profiles import APPROVED_HEAVY_TUNING_PROFILE
+from .shared_labels import (
+    DIRECTIONAL_LABEL_DEFINITION_ID,
+    DIRECTIONAL_LABEL_RULE,
+    DIRECTIONAL_LABEL_VERSION,
+    directional_labels,
+)
 from .p01_02_import_execution import repository_root
 
 
 # Code constant: child schema is independent of the parent DuckDB migration number.
-WINDOW_DATABASE_SCHEMA_VERSION = 2
+WINDOW_DATABASE_SCHEMA_VERSION = 3
 # Operational safety bounds: direct local preparation is for focused checks,
 # never a substitute for the approved two-host profile used by heavy workflows.
 MAX_LOCAL_PREPARATION_SERIES = 100
 MAX_LOCAL_PREPARATION_WINDOWS = 200
+# Code constants: only this worker-returned source proves that the stored
+# reference is the exact final cleaned input rather than an inverse reconstruction.
+EXACT_LABEL_REFERENCE_SOURCE = (
+    "R-cleaned final input value returned with bounded window result"
+)
+EXACT_REFERENCE_UNAVAILABLE_REASON = (
+    "exact prepared reference unavailable; accepted preparation data must not be "
+    "regenerated without explicit approval"
+)
 
 
 @task(name="compute window-preparation batch", cache_policy=NO_CACHE, persist_result=False)
@@ -146,12 +161,52 @@ CREATE TABLE IF NOT EXISTS prepared_windows (
     created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
     UNIQUE (preparation_id, series_key, window_ordinal)
 );
+CREATE TABLE IF NOT EXISTS directional_label_definitions (
+    preparation_id VARCHAR NOT NULL,
+    definition_id VARCHAR NOT NULL,
+    version INTEGER NOT NULL,
+    rule VARCHAR NOT NULL,
+    reference_policy VARCHAR NOT NULL,
+    target_policy VARCHAR NOT NULL,
+    PRIMARY KEY (preparation_id, definition_id)
+);
+CREATE TABLE IF NOT EXISTS window_directional_labels (
+    window_id VARCHAR PRIMARY KEY,
+    definition_id VARCHAR NOT NULL,
+    labels TINYINT[] NOT NULL,
+    reference_value DOUBLE NOT NULL,
+    reference_source VARCHAR NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp
+);
+"""
+
+
+# Additive migration for accepted version-2 children; existing rows and hashes
+# remain unchanged while labels are populated only through normal bounded resume.
+LABEL_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS directional_label_definitions (
+    preparation_id VARCHAR NOT NULL,
+    definition_id VARCHAR NOT NULL,
+    version INTEGER NOT NULL,
+    rule VARCHAR NOT NULL,
+    reference_policy VARCHAR NOT NULL,
+    target_policy VARCHAR NOT NULL,
+    PRIMARY KEY (preparation_id, definition_id)
+);
+CREATE TABLE IF NOT EXISTS window_directional_labels (
+    window_id VARCHAR PRIMARY KEY,
+    definition_id VARCHAR NOT NULL,
+    labels TINYINT[] NOT NULL,
+    reference_value DOUBLE NOT NULL,
+    reference_source VARCHAR NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp
+);
 """
 
 
 @dataclass(frozen=True)
 class PreparedWindow:
-    """One read-only model input plus its raw future resolved from the parent."""
+    """One read-only input, future, and labels when an exact reference exists."""
 
     window_id: str
     dataset_id: str
@@ -164,7 +219,11 @@ class PreparedWindow:
     future_end: int
     transformed_input: tuple[float, ...]
     transformation_state: dict[str, Any]
-    future: tuple[float, ...]
+    future: tuple[float | None, ...]
+    directional_labels: tuple[int | None, ...] | None
+    label_definition_id: str
+    label_reference: float | None
+    label_unavailable_reason: str | None
 
 
 def prepare_context(
@@ -346,6 +405,32 @@ def _target_content_hash(values: Iterable[float | None]) -> str:
     return hashlib.sha256(packed).hexdigest()
 
 
+def resolve_r_period(
+    root: Path,
+    configuration: ExperimentConfiguration,
+    frequency: str,
+) -> dict[str, Any]:
+    """Resolve one R period through the existing pinned GIFT-Eval adapter."""
+    command = [
+        str(root / configuration.resolved["evaluation"]["gift_eval"]["environment"] / "bin/python"),
+        str(root / "src/python/06_01_evaluate_gift_eval.py"),
+        "resolve-period",
+        "--frequency",
+        frequency,
+    ]
+    if configuration.r_period_override is not None:
+        command.extend(["--override", str(configuration.r_period_override)])
+    completed = subprocess.run(
+        command,
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    return json.loads(completed.stdout)
+
+
 def _initialize_child_database(
     path: Path,
     preparation_id: str,
@@ -363,7 +448,10 @@ def _initialize_child_database(
         connection.execute(WINDOW_SCHEMA_SQL)
         connection.execute(
             "INSERT INTO window_schema_versions VALUES (?, current_timestamp, ?)",
-            [WINDOW_DATABASE_SCHEMA_VERSION, "Rolling-window preparation and S1 membership"],
+            [
+                WINDOW_DATABASE_SCHEMA_VERSION,
+                "Rolling-window preparation, S1 membership, and directional labels",
+            ],
         )
         connection.execute(
             "INSERT INTO preparation_metadata VALUES (?, ?, ?, ?, ?, ?, current_timestamp)",
@@ -425,24 +513,7 @@ class WindowPreparationCoordinator:
 
     def _resolve_period(self, frequency: str) -> dict[str, Any]:
         """Resolve the cleaning period through the pinned GIFT-Eval environment."""
-        command = [
-            str(self.root / self.configuration.resolved["evaluation"]["gift_eval"]["environment"] / "bin/python"),
-            str(self.root / "src/python/06_01_evaluate_gift_eval.py"),
-            "resolve-period",
-            "--frequency",
-            frequency,
-        ]
-        if self.configuration.r_period_override is not None:
-            command.extend(["--override", str(self.configuration.r_period_override)])
-        completed = subprocess.run(
-            command,
-            cwd=self.root,
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        return json.loads(completed.stdout)
+        return resolve_r_period(self.root, self.configuration, frequency)
 
     def _selected_series(self) -> list[dict[str, Any]]:
         """Read the configured official prefix and protected training boundaries."""
@@ -535,6 +606,48 @@ class WindowPreparationCoordinator:
             raise RuntimeError("windows database does not match its parent/configuration")
         if source_manifest_hash is not None and row[3] != source_manifest_hash:
             raise RuntimeError("windows database source manifest does not match this run")
+        self._ensure_label_schema()
+
+    def _ensure_label_schema(self) -> None:
+        """Add the label tables to a compatible child without rewriting prior state."""
+        self.child.execute("BEGIN TRANSACTION")
+        try:
+            self.child.execute(LABEL_SCHEMA_SQL)
+            self.child.execute(
+                """INSERT INTO window_schema_versions VALUES (?, current_timestamp, ?)
+                   ON CONFLICT (version) DO NOTHING""",
+                [WINDOW_DATABASE_SCHEMA_VERSION, "Add centralized directional labels"],
+            )
+            self.child.execute(
+                """INSERT INTO directional_label_definitions VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT (preparation_id, definition_id) DO NOTHING""",
+                [
+                    self.preparation_id,
+                    DIRECTIONAL_LABEL_DEFINITION_ID,
+                    DIRECTIONAL_LABEL_VERSION,
+                    DIRECTIONAL_LABEL_RULE,
+                    "last prepared input value on original scale",
+                    "untouched parent future positions; missing remains unavailable",
+                ],
+            )
+            definition = self.child.execute(
+                """SELECT version, rule, reference_policy, target_policy
+                   FROM directional_label_definitions
+                   WHERE preparation_id=? AND definition_id=?""",
+                [self.preparation_id, DIRECTIONAL_LABEL_DEFINITION_ID],
+            ).fetchone()
+            expected = (
+                DIRECTIONAL_LABEL_VERSION,
+                DIRECTIONAL_LABEL_RULE,
+                "last prepared input value on original scale",
+                "untouched parent future positions; missing remains unavailable",
+            )
+            if definition != expected:
+                raise RuntimeError("persisted directional-label definition is incompatible")
+            self.child.execute("COMMIT")
+        except BaseException:
+            self.child.execute("ROLLBACK")
+            raise
 
     def _create_or_validate_membership(
         self, series: list[dict[str, Any]]
@@ -754,12 +867,86 @@ class WindowPreparationCoordinator:
         if batch:
             yield batch
 
+    def _calculate_label_rows(
+        self,
+        series_key: int,
+        windows: list[dict[str, Any]],
+        reference_source: str,
+    ) -> list[dict[str, Any]]:
+        """Read one bounded parent slice and label each window against its reference."""
+        if not windows:
+            return []
+        range_start = min(int(window["future_start"]) for window in windows)
+        range_end = max(int(window["future_end"]) for window in windows)
+        row = self.parent.execute(
+            """SELECT list_slice(s.target, ?, ?) FROM series s
+               JOIN dataset_lookup d USING (dataset_id)
+               JOIN series_lookup l ON l.dataset_key=d.dataset_key AND l.series_id=s.series_id
+               WHERE l.series_key=?""",
+            [range_start + 1, range_end, series_key],
+        ).fetchone()
+        if row is None or len(row[0]) != range_end - range_start:
+            raise RuntimeError("bounded future slice does not match persisted window positions")
+        futures = []
+        references = []
+        for window in windows:
+            start = int(window["future_start"]) - range_start
+            end = int(window["future_end"]) - range_start
+            futures.append(row[0][start:end])
+            references.append(float(window["prepared_reference"]))
+        batch_labels = directional_labels(futures, references).tolist()
+        label_rows = []
+        for window, labels, reference in zip(
+            windows, batch_labels, references, strict=True
+        ):
+            label_rows.append(
+                {
+                    "window_id": window["window_id"],
+                    "labels": [None if value != value else int(value) for value in labels],
+                    "reference_value": reference,
+                    "reference_source": reference_source,
+                }
+            )
+        return label_rows
+
+    def _insert_label_row(self, label: dict[str, Any]) -> None:
+        """Insert one accepted label idempotently and reject conflicting content."""
+        self.child.execute(
+            """INSERT INTO window_directional_labels VALUES (?, ?, ?, ?, ?, current_timestamp)
+               ON CONFLICT (window_id) DO NOTHING""",
+            [
+                label["window_id"],
+                DIRECTIONAL_LABEL_DEFINITION_ID,
+                label["labels"],
+                label["reference_value"],
+                label["reference_source"],
+            ],
+        )
+        stored = self.child.execute(
+            """SELECT definition_id, labels, reference_value, reference_source
+               FROM window_directional_labels WHERE window_id=?""",
+            [label["window_id"]],
+        ).fetchone()
+        if (
+            stored is None
+            or stored[0] != DIRECTIONAL_LABEL_DEFINITION_ID
+            or stored[1] != label["labels"]
+            or float(stored[2]) != label["reference_value"]
+            or stored[3] != label["reference_source"]
+        ):
+            raise RuntimeError("accepted directional labels conflict with calculated labels")
+
     def _commit_series_result(self, result: dict[str, Any], response: dict[str, Any]) -> None:
-        """Idempotently write one series' windows and mark its child task complete."""
+        """Atomically write one series' windows and actual labels, then update state."""
         series_key = int(result["series_key"])
+        labels = self._calculate_label_rows(
+            series_key,
+            result["windows"],
+            EXACT_LABEL_REFERENCE_SOURCE,
+        )
         self.child.execute("BEGIN TRANSACTION")
         try:
-            for window in result["windows"]:
+            for window, label in zip(result["windows"], labels, strict=True):
                 self.child.execute(
                     """INSERT INTO prepared_windows VALUES
                     (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
@@ -783,9 +970,12 @@ class WindowPreparationCoordinator:
                         window["transformed_hash"],
                     ],
                 )
-            completed, expected = self.child.execute(
-                """SELECT count(*), max(m.window_count) FROM prepared_windows w
+                self._insert_label_row(label)
+            completed, labelled, expected = self.child.execute(
+                """SELECT count(*), count(l.window_id), max(m.window_count)
+                   FROM prepared_windows w
                    JOIN series_membership m USING (preparation_id, series_key)
+                   LEFT JOIN window_directional_labels l USING (window_id)
                    WHERE w.preparation_id=? AND w.series_key=?""",
                 [self.preparation_id, series_key],
             ).fetchone()
@@ -793,7 +983,11 @@ class WindowPreparationCoordinator:
                 """UPDATE window_tasks SET status=?, attempt_count=attempt_count+1,
                    last_error=NULL, updated_at=current_timestamp
                    WHERE preparation_id=? AND series_key=?""",
-                ["completed" if completed == expected else "pending", self.preparation_id, series_key],
+                [
+                    "completed" if completed == expected and labelled == expected else "pending",
+                    self.preparation_id,
+                    series_key,
+                ],
             )
             self.child.execute("COMMIT")
         except BaseException:
@@ -941,14 +1135,14 @@ class WindowPreparationCoordinator:
                 membership_fingerprint,
             ],
         )
-        periods = {
-            frequency: self._resolve_period(frequency)
-            for frequency in self.definition["selected_frequencies"]
-        }
         jobs_per_batch = int(self.configuration.execution["batch_sizes"]["window_preparation"])
         windows_per_job = int(
             self.configuration.execution.get("window_preparation_windows_per_job", jobs_per_batch)
         )
+        periods = {
+            frequency: self._resolve_period(frequency)
+            for frequency in self.definition["selected_frequencies"]
+        }
         batches = self._batches(
             self._jobs(series, periods, windows_per_job), jobs_per_batch
         )
@@ -1007,6 +1201,14 @@ class WindowPreparationCoordinator:
                 [self.preparation_id],
             ).fetchall()
         )
+        total_labels, stored_labels, exact_labels = self.child.execute(
+            """SELECT count(*), count(l.window_id),
+                      count(CASE WHEN l.reference_source=? THEN 1 END)
+               FROM prepared_windows w LEFT JOIN window_directional_labels l USING (window_id)
+               WHERE w.preparation_id=?""",
+            [EXACT_LABEL_REFERENCE_SOURCE, self.preparation_id],
+        ).fetchone()
+        unavailable_labels = int(total_labels) - int(exact_labels)
         summary = {
             "preparation_id": self.preparation_id,
             "windows_database": str(self.child_path),
@@ -1015,6 +1217,15 @@ class WindowPreparationCoordinator:
             "series_by_partition": {key: int(value) for key, value in counts.items()},
             "windows_by_partition": {key: int(value) for key, value in window_counts.items()},
             "total_windows": sum(int(value) for value in window_counts.values()),
+            "directional_labels": int(exact_labels),
+            "stored_directional_label_rows": int(stored_labels),
+            "directional_labels_complete": unavailable_labels == 0,
+            "directional_labels_unavailable": unavailable_labels,
+            "directional_labels_unavailable_reason": (
+                EXACT_REFERENCE_UNAVAILABLE_REASON if unavailable_labels else None
+            ),
+            "backfilled_directional_labels": 0,
+            "label_definition_id": DIRECTIONAL_LABEL_DEFINITION_ID,
             "selected_frequencies": self.definition["selected_frequencies"],
             "periods": periods,
             "worker_series_counts": worker_counts,
@@ -1099,7 +1310,7 @@ def get_prepared_window(
     series_id: str,
     window_ordinal: int,
 ) -> PreparedWindow:
-    """Validate parent/child lineage, then resolve one unchanged raw future."""
+    """Validate lineage, then resolve one unchanged future and its actual labels."""
     parent_path = parent_database.resolve()
     child_path = windows_database.resolve()
     parent = duckdb.connect(str(parent_path), read_only=True)
@@ -1216,6 +1427,45 @@ def get_prepared_window(
         ):
             raise RuntimeError("prepared window boundaries are inconsistent with persisted definitions")
         future = tuple(parent_row[2][row[4] : row[5]])
+        transformation_state = json.loads(row[7])
+        labels = None
+        label_reference = None
+        label_unavailable_reason = EXACT_REFERENCE_UNAVAILABLE_REASON
+        has_label_table = child.execute(
+            """SELECT count(*) FROM information_schema.tables
+               WHERE table_name='window_directional_labels'"""
+        ).fetchone()[0]
+        if has_label_table:
+            label_row = child.execute(
+                """SELECT l.definition_id, l.labels, l.reference_value, l.reference_source,
+                          d.version, d.rule, d.reference_policy, d.target_policy
+                   FROM window_directional_labels l
+                   JOIN directional_label_definitions d
+                     ON d.preparation_id=? AND d.definition_id=l.definition_id
+                   WHERE l.window_id=?""",
+                [preparation_id, row[0]],
+            ).fetchone()
+            expected_definition = (
+                DIRECTIONAL_LABEL_VERSION,
+                DIRECTIONAL_LABEL_RULE,
+                "last prepared input value on original scale",
+                "untouched parent future positions; missing remains unavailable",
+            )
+            if label_row is not None and (
+                label_row[0] != DIRECTIONAL_LABEL_DEFINITION_ID
+                or label_row[4:] != expected_definition
+            ):
+                raise RuntimeError("prepared window has an incompatible directional-label definition")
+            if label_row is not None and label_row[3] == EXACT_LABEL_REFERENCE_SOURCE:
+                label_reference = float(label_row[2])
+                labels = tuple(label_row[1])
+                calculated = tuple(
+                    None if value != value else int(value)
+                    for value in directional_labels(future, label_reference).tolist()
+                )
+                if labels != calculated:
+                    raise RuntimeError("stored directional labels do not match the parent future")
+                label_unavailable_reason = None
         return PreparedWindow(
             window_id=row[0],
             dataset_id=dataset_id,
@@ -1227,8 +1477,12 @@ def get_prepared_window(
             future_start=int(row[4]),
             future_end=int(row[5]),
             transformed_input=tuple(row[6]),
-            transformation_state=json.loads(row[7]),
+            transformation_state=transformation_state,
             future=future,
+            directional_labels=labels,
+            label_definition_id=DIRECTIONAL_LABEL_DEFINITION_ID,
+            label_reference=label_reference,
+            label_unavailable_reason=label_unavailable_reason,
         )
     finally:
         child.close()

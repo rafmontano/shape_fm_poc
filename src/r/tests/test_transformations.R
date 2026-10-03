@@ -104,6 +104,17 @@ check("strict labels preserve upward changes and ties", function() {
   assert_true(identical(compute_label_vector(c(5, 5, 5), c(7, 5, 4)), c(1L, 0L, 0L)), "label rule changed")
   negative <- compute_label_vector(c(-2, -2), c(-1, -2, -3))
   assert_true(identical(negative, c(1L, 0L, 0L)), "negative label rule changed")
+  matrix_labels <- directional_labels(
+    matrix(c(2, 1, NA, -1, -2, -3), nrow = 2L, byrow = TRUE),
+    c(1, -2)
+  )
+  assert_true(
+    identical(matrix_labels, matrix(c(1L, 0L, NA_integer_, 1L, 0L, 0L), nrow = 2L, byrow = TRUE)),
+    "row-specific or missing matrix labels changed"
+  )
+  assert_error(function() directional_labels(matrix(1:4, nrow = 2L), 1), "one reference per row")
+  assert_error(function() directional_labels(c(1, Inf), 1), "infinity")
+  assert_error(function() directional_labels(c(1, 2), NA_real_), "references must be finite")
 })
 
 check("explicit context length preserves legacy M4 Daily value 64", function() {

@@ -22,7 +22,14 @@ one outer ShapeFM preparation workflow, following the
 every forecast model and is not a redefinition of Gate 3.
 
 Features, labels, Mantis resizing/embeddings, model training, prediction and
-accuracy optimisation remain outside this approval.
+accuracy optimisation remain outside this historical approval. Directional
+labels were subsequently approved as separate ID 013 work; see
+[the directional-label decision](poc2-directional-labels.md). The other listed
+capabilities remain outside scope.
+
+Base feature extraction was subsequently approved as separate optional ID 014
+work; see [the optional-feature decision](poc2-features.md). It does not change
+this window/split definition or authorise the remaining model capabilities.
 
 ## Window settings
 
@@ -105,6 +112,17 @@ through their identities and positions. No raw window copies.
    transformed inputs with their identity and preparation state.
 5. Report series/window counts by frequency and partition; verify retrieval
    and restart without duplicate windows or changed membership.
+
+The separately approved ID 013 extension uses each window's untouched parent
+future positions and final cleaned original-scale input value to calculate and
+persist `directional_strict_v1`. It adds no future cleaning or fitting, and does
+not alter the steps, settings or membership above.
+
+The separately approved ID 014 extension may read the prepared transformed
+inputs and centrally resolved period in bounded batches, then persist compact
+named feature rows against each existing window identity. It is explicitly
+requested, stores no arrays/futures/labels/membership, and does not alter this
+workflow when features are not requested.
 
 For L permitted observations in a contiguous segment, complete blocks number
 floor(L / stride). No padding or automatic resizing; report zero-window series

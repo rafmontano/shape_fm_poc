@@ -106,7 +106,7 @@ These decisions concern migration, not deletion of source from the previous proj
 | `compute_z` | Not needed | Legacy aggregate direction definitions. |
 | `compute_z_generic` | Not needed | Selector for those legacy definitions. |
 | `compute_z_all` | Not needed | Batch wrapper for those legacy definitions. |
-| `compute_label_vector` | Needed as is | Preserve future value > last history value as 1, otherwise 0; keep in label preparation. |
+| `compute_label_vector` | Compatibility adapter | ID 013 now owns the explicit-reference vector/matrix calculation; this historical name delegates to it. |
 
 `standardise_vec` and `scale_pair_std` represent one reusable capability per language, not independent scaling implementations. The min–max decisions supersede the earlier proposal to retain those functions. Constant-policy corrections must preserve real direction changes rather than reproduce zeroed future labels.
 

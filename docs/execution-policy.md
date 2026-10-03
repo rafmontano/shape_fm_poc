@@ -169,6 +169,21 @@ Do not commit/push unrelated work or infer new publication permission from an
 availability notice. Do not widen network exposure or disable SSH host-key
 checking to make a remote connection work.
 
+## Ubuntu OS-upgrade maintenance pause
+
+Recorded on 3 October 2026 for the planned Ubuntu OS upgrade. After the accepted
+ID 013/014 source is published and safely synchronized, Ubuntu enters a project
+maintenance pause. Do not start ShapeFM jobs, workers, Prefect/Dask services,
+database writers, automatic recovery or another migration item until the
+researcher confirms that the upgrade is complete. This pause does not authorise
+the upgrade, reboot or shutdown.
+
+After that confirmation, perform only lightweight connectivity, source,
+environment and relevant GPU/driver readiness checks before further project
+work. Reapply the normal source-synchronization, dependency and execution-profile
+checks before any later distributed run; do not treat pre-upgrade process or
+service state as restart authority.
+
 ## Safe synchronisation and evidence
 
 Inspect both checkouts and active processes before starting workers. Synchronise

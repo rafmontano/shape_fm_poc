@@ -81,6 +81,13 @@ class ResearcherCLI:
         windows.add_argument("--execution-profile")
         windows.add_argument("--local-max-series", type=self.positive_integer)
         windows.add_argument("--local-max-windows", type=self.positive_integer)
+        features = commands.add_parser(
+            "prepare-features", help="optionally create or resume reusable window features"
+        )
+        features.add_argument("--database", type=Path, required=True)
+        features.add_argument("--windows-database", type=Path, required=True)
+        features.add_argument("--execution-profile")
+        features.add_argument("--local-max-windows", type=self.positive_integer)
         status = commands.add_parser("status", help="read acceptance experiment status")
         status.add_argument("--database", type=Path, default=DEFAULT_DATABASE)
         status.add_argument("--experiment-id")
@@ -93,6 +100,7 @@ class ResearcherCLI:
         results.add_argument("--windows-database", type=Path)
         results.add_argument("--dataset-id")
         results.add_argument("--window-ordinal", type=int)
+        results.add_argument("--feature-set-id")
         test = commands.add_parser("test", help="run or restart the 100-series acceptance case")
         test.add_argument("--database", type=Path, default=DEFAULT_DATABASE)
         test.add_argument("--report", type=Path, default=DEFAULT_REPORT)

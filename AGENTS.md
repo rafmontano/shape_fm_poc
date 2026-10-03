@@ -70,5 +70,7 @@ from pasted tool reports or historical instructions for another item. Follow the
 execution policy before heavy testing, including source synchronisation and
 Ubuntu availability. Git publication requires explicit scoped authorisation.
 
-For the current migration use
-[AMP-Code orchestration instructions](docs/amp-poc2-workflow-orchestration-instructions.md).
+ID 013 and ID 014 are closed under their directional-label and optional-feature
+acceptance records. No subsequent migration item is authorised. During the
+recorded Ubuntu maintenance pause, do not restart project work until the
+researcher confirms that the OS upgrade is complete.

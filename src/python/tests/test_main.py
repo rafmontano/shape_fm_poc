@@ -15,7 +15,12 @@ import duckdb
 
 import util.p00_01_researcher_actions as action_module
 from util.shared_database import initialize_experiment_database
-from util.p00_01_researcher_actions import ProcessAction, ResearcherActions, WindowPreparationAction
+from util.p00_01_researcher_actions import (
+    FeatureExtractionAction,
+    ProcessAction,
+    ResearcherActions,
+    WindowPreparationAction,
+)
 from util.p00_02_researcher_cli import DEFAULT_DATABASE, InvocationProvenance, ResearcherCLI
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -41,6 +46,7 @@ class ResearcherCLITests(unittest.TestCase):
               redirect_stdout(output)):
             self.assertEqual(MAIN.main([]), 0)
         self.assertIn("prepare-windows", output.getvalue())
+        self.assertIn("prepare-features", output.getvalue())
         actions.assert_not_called()
         provenance.assert_not_called()
 
@@ -201,10 +207,68 @@ class RestoredResultsAndParserTests(unittest.TestCase):
         window.run.assert_called_once_with(parent.resolve(), child.resolve(),
                                            "poc2_seasonal_recovery", None, None)
 
+    def test_prepare_features_is_explicit_and_forwards_profile_or_bound(self):
+        """Optional extraction has its own command and does not alter window preparation."""
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory) / "parent.duckdb"
+            child = Path(directory) / "child.duckdb"
+            parent.touch()
+            child.touch()
+            feature = MagicMock()
+            feature.run.return_value = {"feature_set_id": "fforma_base_v1"}
+            actions = ResearcherActions(feature_action=feature)
+            output = actions.dispatch(self.request([
+                "prepare-features", "--database", str(parent),
+                "--windows-database", str(child), "--local-max-windows", "2",
+            ]), {})
+        self.assertEqual(
+            output["feature_preparation"]["feature_set_id"], "fforma_base_v1"
+        )
+        feature.run.assert_called_once_with(parent.resolve(), child.resolve(), None, 2)
+
+    def test_feature_result_extends_the_existing_window_selector(self):
+        """A named feature set is retrieved only against the selected window identity."""
+        window_type = make_dataclass(
+            "StoredWindow", ["window_id", "dataset_id", "series_id", "window_ordinal"]
+        )
+        feature_type = make_dataclass(
+            "StoredFeatures", ["window_id", "feature_set_id", "feature_values"]
+        )
+        with (
+            patch.object(
+                action_module,
+                "get_prepared_window",
+                return_value=window_type("window/1", "dataset/1", "7", 2),
+            ),
+            patch.object(
+                action_module,
+                "get_prepared_features",
+                return_value=feature_type("window/1", "fforma_base_v1", (1.0,)),
+            ) as provider,
+        ):
+            output = self.actions.dispatch(self.request([
+                "results", "--database", "parent.duckdb",
+                "--windows-database", "child.duckdb", "--dataset-id", "dataset/1",
+                "--series-id", "7", "--window-ordinal", "2",
+                "--feature-set-id", "fforma_base_v1",
+            ]), self.invocation)
+        self.assertEqual(output["prepared_features"]["feature_values"], (1.0,))
+        provider.assert_called_once_with(
+            Path("child.duckdb"),
+            window_id="window/1",
+            feature_set_id="fforma_base_v1",
+        )
+
     def test_unbounded_local_window_preparation_fails_before_io(self):
         """Local preparation requires both explicit focused bounds."""
         with self.assertRaisesRegex(RuntimeError, "local window preparation requires"):
             WindowPreparationAction().run(Path("missing-parent"), Path("missing-child"))
+        self.assertFalse(Path("missing-child").exists())
+
+    def test_unbounded_local_feature_extraction_fails_before_io(self):
+        """Feature calculation is neither implicit nor an unbounded local fallback."""
+        with self.assertRaisesRegex(RuntimeError, "local feature extraction requires"):
+            FeatureExtractionAction().run(Path("missing-parent"), Path("missing-child"))
         self.assertFalse(Path("missing-child").exists())
 
     def test_partial_forecast_combinations_fail_before_database_access(self):

@@ -9,7 +9,8 @@ researcher-facing experiment entry point is:
 
 `--no-sync` is required when using the already prepared locked environments;
 the command does not install or update dependencies. The public actions are
-`plan`, `run`, `prepare-windows`, `status`, `results`, and `test`.
+`plan`, `run`, `prepare-windows`, the opt-in `prepare-features`, `status`,
+`results`, and `test`.
 
 The [working and communication agreement](docs/working-agreement.md) defines
 roles, approvals and effective collaboration. It prioritises productivity and
@@ -134,6 +135,12 @@ configuration is `config/experiments/poc2_m4_daily_100_rolling_windows.json`.
 Configuration v6 corrects R-compatible split rounding, parent/child validation,
 bounded preparation and configurable W/H validation in a fresh experiment:
 `config/experiments/poc2_m4_daily_100_rolling_windows_corrected.json`.
+ID 013 adds strict actual directional labels when an exact original-scale
+prepared reference exists. ID 014 adds optional reusable `fforma_base_v1`
+features through an explicit `prepare-features` command; neither capability
+makes feature extraction mandatory for Mantis or ordinary forecasts. See the
+[directional-label](docs/poc2-directional-labels.md) and
+[optional-feature](docs/poc2-features.md) decisions.
 Completed task state and scientific provenance are stored transactionally, so
 rerunning the same experiment skips completed work without changing experiment,
 task, forecast, or evaluation identity.
@@ -318,3 +325,7 @@ and [local execution contract](docs/local-execution.md).
 [Transformation objects and fable](docs/research-notes-transformations.md)
 records future implementation options and source evidence. It is research only,
 not an approved change, scheduled release item or instruction for current work.
+
+[Historical Table 1 forecast adjustments](docs/poc2-forecast-adjustment-reference.md)
+preserves the Mantis scaling and SMYL–Oracle definitions for later migration,
+including the researcher's clarification about older Mac results.

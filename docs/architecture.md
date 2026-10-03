@@ -210,7 +210,10 @@ at 22e41bb. The final review corrections now enforce the local guard inside the
 coordinator and route bounded complete blocks through tsai in the actual
 preparation path. A fresh 100-series two-host acceptance passed without changing
 the agreed architecture or scientific settings. Features, labels, Mantis
-training and prediction remain outside this increment. See the
+training and prediction remained outside that increment. ID 013 subsequently
+added exact-reference directional labels, and ID 014 adds explicitly requested
+reusable base features without making either capability a mandatory forecast
+dependency. See the
 [acceptance record](poc2-rolling-windows-acceptance.md).
 
 ![ShapeFM research architecture](images/shapefm_research_architecture.png)
@@ -521,6 +524,33 @@ inputs, fitted state, source positions and provenance. It does not duplicate raw
 input or future arrays. Python remains the sole writer. Resume checks parent,
 definition, cohort, membership and tested-source fingerprints and reconciles a
 completed child with an interrupted parent run record without recomputation.
+
+ID 013 extends this independent workflow with `directional_strict_v1`. The R
+input-only cleaning boundary returns the final cleaned value on the original
+scale; the Mac coordinator compares each untouched parent future with that
+explicit reference through the shared Python calculation. Child schema version
+3 stores one compact nullable label vector and its definition/reference lineage
+against the existing window identity. Window arrays, futures and S1 membership
+are not duplicated. Accepted labels are idempotent restart state; compatible
+schema-v2 and inverse-derived children remain readable but report labels
+unavailable because they lack a provenance-established exact reference; they
+are never regenerated or relabelled without explicit approval.
+
+ID 014 adds an independent `prepare-features` flow over those prepared inputs.
+The native R provider calculates the explicit ordered 42-field
+`fforma_base_v1` schema independently per series, preserving internal
+`tsfeatures` scaling even when a neighboring batch member is constant. The Mac
+coordinator stores only compact feature rows and exact provider/dependency,
+source, input, transformation and period provenance against `window_id`.
+Feature tables are created only on request; accepted exact matches are reused,
+failures are explicit, and futures, labels, arrays and S1 membership are not
+copied. The coordinator counts before loading arrays, filters exact accepted
+provenance in DuckDB, and reads only pending inputs in deterministic keyset
+pages bounded by the configured batch and in-flight limits. A fully reused
+restart reads no arrays. Heavy extraction uses the approved 8-Mac/15-Ubuntu CPU
+profile and the existing memory safeguards. The documented ARIMA/ETS directional
+features stay disabled pending a consistent training/prediction policy. See the
+[ID 014 decision](poc2-features.md).
 
 The complete field contract and evolution procedure are documented in
 [`experiment-configuration.md`](experiment-configuration.md). The exhaustive

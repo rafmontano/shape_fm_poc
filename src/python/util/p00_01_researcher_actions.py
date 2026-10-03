@@ -36,6 +36,7 @@ from .shared_experiment_execution import (ExperimentCoordinator, configuration_s
 from .shared_process_storage import ProcessStorage
 from .p00_02_researcher_cli import ROOT
 from .p00_03_researcher_request import ResearcherRequest
+from .feature_extraction import get_prepared_features, run_feature_extraction_flow
 from .window_preparation import get_prepared_window, run_window_preparation_flow
 from .shared_workflow_orchestration import experiment_flow, research_writer_locks, window_preparation_flow
 
@@ -450,13 +451,162 @@ class WindowPreparationAction:
                 "dependency_versions": versions, "source_manifest": manifest}
 
 
+class FeatureExtractionAction:
+    """Run the explicitly requested reusable R feature capability."""
+
+    def run(
+        self,
+        database: Path,
+        windows_database: Path,
+        execution_profile: str | None = None,
+        local_max_windows: int | None = None,
+    ) -> dict[str, Any]:
+        """Execute bounded local work or the approved distributed CPU profile."""
+        if execution_profile is None and local_max_windows is None:
+            raise RuntimeError(
+                "local feature extraction requires --local-max-windows; heavy extraction "
+                "requires --execution-profile " + APPROVED_HEAVY_TUNING_PROFILE
+            )
+        if execution_profile is not None:
+            if local_max_windows is not None:
+                raise ValueError(
+                    "a local feature bound cannot be combined with an execution profile"
+                )
+            if execution_profile != APPROVED_HEAVY_TUNING_PROFILE:
+                raise ValueError(
+                    "distributed feature extraction requires execution profile "
+                    + APPROVED_HEAVY_TUNING_PROFILE
+                )
+        if not database.is_file() or not windows_database.is_file():
+            raise FileNotFoundError(
+                "feature extraction requires existing parent and windows databases"
+            )
+        from .shared_distributed_execution import (
+            feature_provider_description,
+            repository_source_manifest,
+            source_manifest_fingerprint,
+        )
+
+        manifest_rows = repository_source_manifest()
+        manifest = source_manifest_fingerprint(manifest_rows)
+        with research_writer_locks((database, windows_database)):
+            if execution_profile is not None:
+                return self._distributed(
+                    database,
+                    windows_database,
+                    execution_profile,
+                    manifest_rows,
+                    manifest,
+                )
+            configuration = load_database_configuration(database)
+            provider = feature_provider_description(
+                timeout=float(configuration.execution["worker_timeouts_seconds"]["r"]),
+                threads=int(configuration.execution["thread_limits"]["r"]),
+            )
+            result = run_feature_extraction_flow(
+                scheduler_address=None,
+                parent_database=database,
+                windows_database=windows_database,
+                provider_descriptions=[provider],
+                source_manifest_hash=manifest,
+                local_max_windows=local_max_windows,
+                memory_safety=None,
+                execution_profile=None,
+                max_in_flight=1,
+                retries=int(configuration.execution["dask_retries"]),
+            )
+            return {
+                **result,
+                "execution_mode": "bounded_local_focused",
+                "provider_preflight": [provider],
+                "source_manifest": manifest,
+            }
+
+    @staticmethod
+    def _distributed(
+        database: Path,
+        windows_database: Path,
+        profile_name: str,
+        manifest_rows: dict[str, str],
+        manifest: str,
+    ) -> dict[str, Any]:
+        """Validate every worker before using the approved 8-Mac/15-Ubuntu route."""
+        from distributed import Client
+        from .shared_distributed_cluster import ManagedTuningCluster
+        from .shared_distributed_execution import (
+            feature_provider_description,
+            validate_tuning_cluster,
+        )
+
+        profile, _ = resolve_execution_profile(profile_name)
+        cluster = ManagedTuningCluster(profile)
+        try:
+            evidence = cluster.start()
+            client = Client(cluster.scheduler_address, timeout="180s")
+            try:
+                workers = validate_tuning_cluster(
+                    client,
+                    expected_workers=int(profile.dask_mac_cpu_workers or 0)
+                    + int(profile.dask_ubuntu_cpu_workers or 0),
+                    expected_mac_workers=int(profile.dask_mac_cpu_workers or 0),
+                    expected_ubuntu_workers=int(profile.dask_ubuntu_cpu_workers or 0),
+                    expected_tuning_workers=int(profile.dask_mac_tuning_workers or 0)
+                    + int(profile.dask_ubuntu_tuning_workers or 0),
+                    timeout=180,
+                    expected_manifest=manifest_rows,
+                )
+                descriptions_by_worker = client.run(feature_provider_description)
+                safety = {
+                    "mac_hostname": platform.node(),
+                    "mac_minimum_available_gib": profile.dask_mac_memory_min_available_gib,
+                    "ubuntu_minimum_available_gib": profile.dask_ubuntu_memory_min_available_gib,
+                    "fit_budget_gib": profile.dask_ets_fit_budget_gib,
+                    "admission_timeout_seconds": profile.dask_memory_admission_timeout_seconds,
+                    "poll_interval_seconds": profile.dask_memory_poll_interval_seconds,
+                    "breach_grace_seconds": profile.dask_memory_breach_grace_seconds,
+                    "swap_growth_limit_gib": profile.dask_swap_growth_limit_gib,
+                }
+                if any(value is None for value in safety.values()):
+                    raise RuntimeError("approved profile lacks feature memory-safety controls")
+                result = run_feature_extraction_flow(
+                    scheduler_address=cluster.scheduler_address,
+                    parent_database=database,
+                    windows_database=windows_database,
+                    provider_descriptions=list(descriptions_by_worker.values()),
+                    source_manifest_hash=manifest,
+                    local_max_windows=None,
+                    memory_safety=safety,
+                    execution_profile=profile_name,
+                    max_in_flight=int(profile.dask_max_in_flight or 1),
+                    retries=0,
+                )
+            finally:
+                client.close()
+        finally:
+            cluster.stop()
+        return {
+            **result,
+            "execution_mode": "distributed",
+            "execution_profile": profile.to_dict(),
+            "cluster": evidence,
+            "worker_preflight": workers,
+            "provider_preflight": descriptions_by_worker,
+            "source_manifest": manifest,
+        }
+
+
 class ResearcherActions:
     """Dispatch typed requests to command-specific action methods."""
 
-    def __init__(self, process_action: ProcessAction | None = None,
-                 window_action: WindowPreparationAction | None = None):
+    def __init__(
+        self,
+        process_action: ProcessAction | None = None,
+        window_action: WindowPreparationAction | None = None,
+        feature_action: FeatureExtractionAction | None = None,
+    ):
         self.process_action = process_action or ProcessAction()
         self.window_action = window_action or WindowPreparationAction()
+        self.feature_action = feature_action or FeatureExtractionAction()
 
     def dispatch(self, request: ResearcherRequest, invocation: dict[str, Any]) -> dict[str, Any]:
         method = getattr(self, f"_{request.action.replace('-', '_')}")
@@ -485,6 +635,20 @@ class ResearcherActions:
             request.value("execution_profile"), request.value("local_max_series"),
             request.value("local_max_windows"))}
 
+    def _prepare_features(
+        self, request: ResearcherRequest, invocation: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Dispatch only an explicit feature request; ordinary workflows remain unchanged."""
+        return {
+            "invocation": invocation,
+            "feature_preparation": self.feature_action.run(
+                request.database,
+                request.value("windows_database").resolve(),
+                request.value("execution_profile"),
+                request.value("local_max_windows"),
+            ),
+        }
+
     def _status(self, request: ResearcherRequest, invocation: dict[str, Any]) -> dict[str, Any]:
         status = configuration_status(request.database)
         try:
@@ -501,8 +665,28 @@ class ResearcherActions:
         if any(value is not None for value in (windows[0], windows[1], windows[3])):
             if not all(value is not None for value in windows):
                 raise ValueError("--windows-database, --dataset-id, --series-id, and --window-ordinal must be supplied together")
-            return {"invocation": invocation, "prepared_window": asdict(get_prepared_window(
-                request.database, windows[0], dataset_id=windows[1], series_id=windows[2], window_ordinal=windows[3]))}
+            prepared = get_prepared_window(
+                request.database,
+                windows[0],
+                dataset_id=windows[1],
+                series_id=windows[2],
+                window_ordinal=windows[3],
+            )
+            result = {"invocation": invocation, "prepared_window": asdict(prepared)}
+            feature_set_id = request.value("feature_set_id")
+            if feature_set_id is not None:
+                result["prepared_features"] = asdict(
+                    get_prepared_features(
+                        windows[0],
+                        window_id=prepared.window_id,
+                        feature_set_id=feature_set_id,
+                    )
+                )
+            return result
+        if request.value("feature_set_id") is not None:
+            raise ValueError(
+                "--feature-set-id requires the complete prepared-window selectors"
+            )
         selectors = (request.value("variant_id"), request.value("series_id"), request.value("candidate"))
         if any(selectors) and not all(selectors):
             raise ValueError("--variant-id, --series-id, and --candidate must be supplied together")
@@ -537,3 +721,15 @@ def run_window_preparation(database: Path, windows_database: Path,
     """Signature-compatible optional preparation action boundary."""
     return WindowPreparationAction().run(database, windows_database, execution_profile,
                                          local_max_series, local_max_windows)
+
+
+def run_feature_extraction(
+    database: Path,
+    windows_database: Path,
+    execution_profile: str | None = None,
+    local_max_windows: int | None = None,
+) -> dict[str, Any]:
+    """Signature-compatible optional feature action boundary."""
+    return FeatureExtractionAction().run(
+        database, windows_database, execution_profile, local_max_windows
+    )

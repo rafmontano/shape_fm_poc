@@ -11,8 +11,11 @@
 
 from __future__ import annotations
 
+import math
 import socket
 import tempfile
+import time
+import tracemalloc
 import unittest
 import json
 import shutil
@@ -21,6 +24,7 @@ from unittest.mock import patch
 
 import duckdb
 
+from util import shared_distributed_execution
 from util.shared_configuration import (
     json_fingerprint,
     load_experiment_configuration,
@@ -28,6 +32,8 @@ from util.shared_configuration import (
 )
 from util.shared_database import initialize_experiment_database, load_database_configuration
 from util.window_preparation import (
+    EXACT_LABEL_REFERENCE_SOURCE,
+    EXACT_REFERENCE_UNAVAILABLE_REASON,
     WindowPreparationCoordinator,
     _target_content_hash,
     complete_window_count,
@@ -321,8 +327,49 @@ class RollingWindowUnitTests(unittest.TestCase):
         self.assertEqual(window["preprocessing"]["missing_count_after"], 0)
         self.assertTrue(window["transformation_state"]["constant"])
         self.assertEqual(window["transformed_input"], [0.0] * 64)
+        self.assertEqual(window["prepared_reference"], 4.0)
         self.assertIn("memory_safety", response["worker"])
         self.assertEqual(response["worker"]["memory_safety"]["safety_responses"], 0)
+
+    def test_saved_reference_is_the_actual_cleaner_output(self) -> None:
+        """The outlier fixture saves R's final cleaned value, never an inverse estimate."""
+        observed_cleaning = []
+        run_r = shared_distributed_execution._run_r
+
+        def capture_cleaning(*args, **kwargs):
+            """Retain the native R result used by the production worker boundary."""
+            response = run_r(*args, **kwargs)
+            observed_cleaning.append(response["results"][0]["values"])
+            return response
+
+        job = {
+            "id": "series/outlier",
+            "preprocessing_mode": "robust",
+            "transformation": "standardise_sample_v1",
+            "seasonality": 1,
+            "windows": [
+                {
+                    "window_id": "window/outlier",
+                    "window_ordinal": 0,
+                    "input_start": 0,
+                    "input_end": 64,
+                    "future_start": 64,
+                    "future_end": 78,
+                    "input": [9999.0] + [float(value) for value in range(1, 64)],
+                }
+            ],
+        }
+        with patch(
+            "util.shared_distributed_execution._run_r", side_effect=capture_cleaning
+        ):
+            response = shared_distributed_execution.window_preparation_batch(
+                [job], "src/r/02_01_preprocess_series.R", 60, 1
+            )
+        window = response["results"][0]["windows"][0]
+        self.assertEqual(len(observed_cleaning), 1)
+        self.assertIn(observed_cleaning[0][-1], {57, 58})
+        self.assertEqual(window["prepared_reference"], observed_cleaning[0][-1])
+        self.assertEqual(window["cleaned_hash"], json_fingerprint(observed_cleaning[0]))
 
     def test_s1_exact_counts_namespaces_and_placement_independence(self) -> None:
         """Explicit rounding gives disjoint series membership independent of order."""
@@ -382,6 +429,10 @@ class WindowPersistenceTests(unittest.TestCase):
             )
             for index in range(100):
                 values = [float(index + step) for step in range(106)]
+                if index == 0:
+                    values[70] = None
+                elif index == 1:
+                    values = [8.76] * 106
                 connection.execute(
                     """INSERT INTO series VALUES
                     ('dataset/test', ?, ?, ?, 'D', TIMESTAMP '2000-01-01', ?, 106,
@@ -413,7 +464,7 @@ class WindowPersistenceTests(unittest.TestCase):
     def test_preparation_retrieval_and_restart_preserve_membership(self) -> None:
         """A second run skips completed series and preserves every persisted identity."""
         original_generator = rolling_window_inputs
-        changed_input = [9999.0] + [float(value) for value in range(1, 64)]
+        changed_input = [-1.0] + [float(value) for value in range(1, 64)]
 
         def changed_first_tsai_window(*args, **kwargs):
             """Make one tsai result distinctive so persistence provenance is observable."""
@@ -430,16 +481,32 @@ class WindowPersistenceTests(unittest.TestCase):
                 "util.window_preparation.rolling_window_inputs",
                 side_effect=changed_first_tsai_window,
             ) as generate:
-                first = coordinator.run(
-                    source_manifest_hash="fixture-manifest",
-                    local_limits=LOCAL_TEST_LIMITS,
-                )
+                tracemalloc.start()
+                started = time.monotonic()
+                try:
+                    first = coordinator.run(
+                        source_manifest_hash="fixture-manifest",
+                        local_limits=LOCAL_TEST_LIMITS,
+                    )
+                finally:
+                    elapsed = time.monotonic() - started
+                    _, peak_bytes = tracemalloc.get_traced_memory()
+                    tracemalloc.stop()
         self.assertEqual(generate.call_count, 100)
         self.assertEqual(first["eligible"], 100)
         self.assertEqual(first["zero_window"], 0)
         self.assertEqual(first["series_by_partition"], {"train": 81, "test": 19})
         self.assertEqual(first["total_windows"], 100)
+        self.assertEqual(first["directional_labels"], 100)
+        self.assertEqual(first["stored_directional_label_rows"], 100)
+        self.assertTrue(first["directional_labels_complete"])
+        self.assertEqual(first["directional_labels_unavailable"], 0)
+        self.assertIsNone(first["directional_labels_unavailable_reason"])
+        self.assertEqual(first["backfilled_directional_labels"], 0)
+        self.assertEqual(first["label_definition_id"], "directional_strict_v1")
         self.assertEqual(first["periods"]["D"]["r_period"], 1)
+        self.assertLess(elapsed, 120.0)
+        self.assertLess(peak_bytes, 192 * 1024 * 1024)
 
         child = duckdb.connect(str(self.child), read_only=True)
         try:
@@ -451,6 +518,24 @@ class WindowPersistenceTests(unittest.TestCase):
             membership = child.execute(
                 "SELECT series_key, partition FROM series_membership ORDER BY series_key"
             ).fetchall()
+            labels_before = child.execute(
+                """SELECT window_id, definition_id, labels, reference_value, reference_source
+                   FROM window_directional_labels ORDER BY window_id"""
+            ).fetchall()
+            self.assertEqual(len(labels_before), 100)
+            self.assertEqual({row[4] for row in labels_before}, {EXACT_LABEL_REFERENCE_SOURCE})
+            self.assertEqual(
+                child.execute(
+                    """SELECT version, rule, reference_policy, target_policy
+                       FROM directional_label_definitions"""
+                ).fetchone(),
+                (
+                    1,
+                    "1 when value > reference; otherwise 0; missing value unavailable",
+                    "last prepared input value on original scale",
+                    "untouched parent future positions; missing remains unavailable",
+                ),
+            )
             parent = duckdb.connect(str(self.parent), read_only=True)
             try:
                 series_zero_key = parent.execute(
@@ -491,9 +576,124 @@ class WindowPersistenceTests(unittest.TestCase):
                 ).fetchall(),
                 membership,
             )
+            self.assertEqual(
+                child.execute(
+                    """SELECT window_id, definition_id, labels, reference_value, reference_source
+                       FROM window_directional_labels ORDER BY window_id"""
+                ).fetchall(),
+                labels_before,
+            )
         finally:
             child.close()
         self.assertEqual(after, before)
+
+        exact = get_prepared_window(
+            self.parent,
+            self.child,
+            dataset_id="dataset/test",
+            series_id="1",
+            window_ordinal=0,
+        )
+        self.assertEqual(exact.label_reference, exact.future[0])
+        self.assertEqual(exact.directional_labels, (0,) * 14)
+        self.assertIsNone(exact.label_unavailable_reason)
+        inverse_reference = math.nextafter(exact.label_reference, -math.inf)
+
+        # Reproduce the strict-tie failure in an accepted inverse-derived row.
+        # Retrieval and restart must report it, not trust or rewrite it.
+        child = duckdb.connect(str(self.child))
+        try:
+            inverse_row = child.execute(
+                """SELECT window_id, labels FROM window_directional_labels
+                   WHERE reference_value=?""",
+                [exact.label_reference],
+            ).fetchone()
+            manufactured = list(inverse_row[1])
+            manufactured[0] = 1
+            child.execute(
+                """UPDATE window_directional_labels
+                   SET labels=?, reference_value=?, reference_source=? WHERE window_id=?""",
+                [
+                    manufactured,
+                    inverse_reference,
+                    "reconstructed from persisted affine state for schema-v2 compatibility",
+                    inverse_row[0],
+                ],
+            )
+        finally:
+            child.close()
+        unavailable = get_prepared_window(
+            self.parent,
+            self.child,
+            dataset_id="dataset/test",
+            series_id="1",
+            window_ordinal=0,
+        )
+        self.assertIsNone(unavailable.directional_labels)
+        self.assertIsNone(unavailable.label_reference)
+        self.assertEqual(unavailable.label_unavailable_reason, EXACT_REFERENCE_UNAVAILABLE_REASON)
+        with WindowPreparationCoordinator(self.parent, self.child) as coordinator:
+            inverse_restart = coordinator.run(
+                source_manifest_hash="fixture-manifest", local_limits=LOCAL_TEST_LIMITS
+            )
+        self.assertEqual(inverse_restart["directional_labels"], 99)
+        self.assertEqual(inverse_restart["stored_directional_label_rows"], 100)
+        self.assertFalse(inverse_restart["directional_labels_complete"])
+        self.assertEqual(inverse_restart["directional_labels_unavailable"], 1)
+        child = duckdb.connect(str(self.child), read_only=True)
+        try:
+            self.assertEqual(
+                child.execute(
+                    """SELECT labels[1], reference_value, reference_source
+                       FROM window_directional_labels WHERE window_id=?""",
+                    [inverse_row[0]],
+                ).fetchone(),
+                (
+                    1,
+                    inverse_reference,
+                    "reconstructed from persisted affine state for schema-v2 compatibility",
+                ),
+            )
+        finally:
+            child.close()
+
+        # Emulate an accepted schema-v2 child. Resume must preserve every window
+        # and membership while leaving labels unavailable without exact references.
+        child = duckdb.connect(str(self.child))
+        try:
+            child.execute("DROP TABLE window_directional_labels")
+            child.execute("DROP TABLE directional_label_definitions")
+            child.execute("DELETE FROM window_schema_versions WHERE version=3")
+        finally:
+            child.close()
+        with WindowPreparationCoordinator(self.parent, self.child) as coordinator:
+            migrated = coordinator.run(
+                source_manifest_hash="fixture-manifest", local_limits=LOCAL_TEST_LIMITS
+            )
+        self.assertEqual(migrated["backfilled_directional_labels"], 0)
+        self.assertEqual(migrated["directional_labels"], 0)
+        self.assertEqual(migrated["stored_directional_label_rows"], 0)
+        self.assertFalse(migrated["directional_labels_complete"])
+        self.assertEqual(migrated["directional_labels_unavailable"], 100)
+        self.assertEqual(
+            migrated["directional_labels_unavailable_reason"],
+            EXACT_REFERENCE_UNAVAILABLE_REASON,
+        )
+        self.assertEqual(migrated["worker_series_counts"], {})
+        child = duckdb.connect(str(self.child), read_only=True)
+        try:
+            self.assertEqual(
+                child.execute("SELECT count(*) FROM window_directional_labels").fetchone()[0],
+                0,
+            )
+            self.assertEqual(
+                child.execute(
+                    "SELECT series_key, partition FROM series_membership ORDER BY series_key"
+                ).fetchall(),
+                membership,
+            )
+        finally:
+            child.close()
 
         # Simulate interruption after all child commits but before the parent run
         # record was marked complete. Resume must reconcile without reprocessing.
@@ -519,7 +719,16 @@ class WindowPersistenceTests(unittest.TestCase):
         )
         self.assertEqual((selected.input_start, selected.input_end), (0, 64))
         self.assertEqual((selected.future_start, selected.future_end), (64, 78))
-        self.assertEqual(selected.future, tuple(float(value) for value in range(64, 78)))
+        expected_future = [float(value) for value in range(64, 78)]
+        expected_future[6] = None
+        self.assertEqual(selected.future, tuple(expected_future))
+        self.assertIsNone(selected.directional_labels)
+        self.assertEqual(selected.label_definition_id, "directional_strict_v1")
+        self.assertIsNone(selected.label_reference)
+        self.assertEqual(
+            selected.label_unavailable_reason,
+            EXACT_REFERENCE_UNAVAILABLE_REASON,
+        )
         self.assertEqual(len(selected.transformed_input), 64)
         self.assertEqual(
             set(selected.transformation_state),

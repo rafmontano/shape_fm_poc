@@ -793,7 +793,8 @@ def window_preparation_batch(
     Each outer job represents one source series and contains only bounded input
     windows. Future observations are represented by positions and never enter this
     worker. The R boundary applies the configured Gate 2 mode to each input, then
-    Python fits ``standardise_sample_v1`` independently to the cleaned input.
+    Python fits ``standardise_sample_v1`` independently to the cleaned input. The
+    final cleaned value is returned as the original-scale directional reference.
     """
     started = time.monotonic()
     r_jobs = []
@@ -851,6 +852,7 @@ def window_preparation_batch(
                     "input_hash": json_fingerprint(window["input"]),
                     "cleaned_hash": json_fingerprint(prepared["values"]),
                     "transformed_hash": json_fingerprint(transformed.values),
+                    "prepared_reference": float(prepared["values"][-1]),
                     "transformed_input": list(transformed.values),
                     "transformation_state": transformed.parameters,
                     "preprocessing": {
@@ -889,6 +891,85 @@ def window_preparation_batch(
             for job in batch
         ],
         "packages": response["packages"],
+        "runtime_seconds": time.monotonic() - started,
+        "worker": worker,
+    }
+
+
+def feature_provider_description(
+    script: str = "src/r/feature_provider.R",
+    timeout: float = 60.0,
+    threads: int = 1,
+) -> dict[str, Any]:
+    """Return the native R feature contract and dependency identity."""
+    return _run_r({"action": "describe"}, script, timeout, threads)
+
+
+def feature_extraction_batch(
+    batch: list[dict[str, Any]],
+    script: str,
+    timeout: float,
+    threads: int,
+    retry_count: int = 0,
+    memory_safety: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Extract one bounded R feature batch without storage or target values."""
+    started = time.monotonic()
+    monitor_context = nullcontext(None)
+    if memory_safety is not None:
+        is_mac = socket.gethostname() == memory_safety["mac_hostname"]
+        monitor_context = tuning_memory_reservation(
+            minimum_available_gib=float(
+                memory_safety["mac_minimum_available_gib"] if is_mac
+                else memory_safety["ubuntu_minimum_available_gib"]
+            ),
+            fit_budget_gib=float(memory_safety["fit_budget_gib"]),
+            timeout_seconds=float(memory_safety["admission_timeout_seconds"]),
+            poll_interval_seconds=float(memory_safety["poll_interval_seconds"]),
+            breach_grace_seconds=float(memory_safety["breach_grace_seconds"]),
+            swap_growth_limit_gib=float(memory_safety["swap_growth_limit_gib"]),
+        )
+    with monitor_context as memory_monitor:
+        response = _run_r(
+            {
+                "action": "extract",
+                "jobs": [
+                    {
+                        "id": job["window_id"],
+                        "context": job["transformed_input"],
+                        "seasonality": job["period"],
+                    }
+                    for job in batch
+                ],
+            },
+            script,
+            timeout,
+            threads,
+            memory_monitor=memory_monitor,
+        )
+    expected = [job["window_id"] for job in batch]
+    observed = [result.get("id") for result in response.get("results", [])]
+    if observed != expected:
+        raise RuntimeError("feature provider returned mismatched window identities or ordering")
+    metadata = {job["window_id"]: job for job in batch}
+    results = [
+        {**result, **{key: value for key, value in metadata[result["id"]].items()
+                      if key not in {"window_id", "transformed_input"}}}
+        for result in response["results"]
+    ]
+    try:
+        worker = _worker_provenance(retry_count)
+    except ValueError:
+        worker = {
+            "execution_backend": "local",
+            "hostname": socket.gethostname(),
+            "retry_count": retry_count,
+        }
+    if memory_monitor is not None:
+        worker["memory_safety"] = memory_monitor.evidence()
+    return {
+        "provider": response["provider"],
+        "results": results,
         "runtime_seconds": time.monotonic() - started,
         "worker": worker,
     }
