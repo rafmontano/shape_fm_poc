@@ -1,9 +1,33 @@
 # POC2 workflow orchestration acceptance
 
-Status: On 3 October 2026 the researcher approved proceeding from the reviewed
-Stage 2 result to a non-destructive Python file-organisation pass, with a GitHub
-checkpoint first. Objective 2 scientific completion is not claimed. Historical
-implementation reports below remain evidence of their respective snapshots.
+Status: The reviewed Python file-organisation change was published on
+3 October 2026 under the researcher's explicit publication authorisation.
+Objective 2 scientific completion is not claimed. Historical implementation
+reports below remain evidence of their respective snapshots.
+
+## Python organisation publication
+
+Published [0a5c668](https://github.com/rafmontano/shape_fm_poc/commit/0a5c668c20e4a3c80476353eb4627eb2642bfc35)
+by normal push after confirming no remote divergence. Mac, Ubuntu and GitHub
+were verified at this organisation commit; this subsequent documentation-only
+record does not change its source identity. This publication supersedes the
+earlier organisation stop-before-publication statements retained below.
+
+The reviewed 81-script / 31,226-line inventory matched every current source
+hash. All 105 runtime files agreed on both hosts before and after publication,
+with identity `d44d6de442dcd652f54f41a77582bae82942a1d026bc299670de5a57f65898ed`.
+The recorded 210 passing tests per host and 23-worker distributed/restart evidence
+were reused; whitespace, shell syntax and public CLI-help checks passed without
+repeating forecasting or acceptance campaigns. Prior inventories are unchanged.
+
+Only explicit reviewed source, rename endpoints, references and documentation
+were staged. Ubuntu's matching overlay was preserved in the new stash
+`reviewed-python-organisation-before-publication`, then advanced by fast-forward.
+Both earlier Ubuntu stashes remain intact. Mac had no remaining local changes;
+Ubuntu retained only its pre-existing untracked `.amp/` evidence. No databases,
+results, environments, secrets or generated local evidence were published or
+overwritten. No spreadsheet work, ID 012/013 implementation or further refactor
+was performed.
 
 ## Approved organisation follow up
 
