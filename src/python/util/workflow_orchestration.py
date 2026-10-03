@@ -13,8 +13,13 @@ from __future__ import annotations
 
 import fcntl
 import hashlib
+import json
 import os
-from contextlib import contextmanager
+import platform
+import subprocess
+import tempfile
+import time
+from contextlib import contextmanager, nullcontext
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, Iterator
@@ -28,9 +33,13 @@ os.environ.setdefault("PREFECT_SERVER_ANALYTICS_ENABLED", "false")
 os.environ.setdefault("PREFECT_CLOUD_ENABLE_ORCHESTRATION_TELEMETRY", "false")
 os.environ.setdefault("PREFECT_TELEMETRY_ENABLE_RESOURCE_METRICS", "false")
 
+import dask
 from prefect import flow, task
 from prefect.context import get_run_context
+from prefect.futures import as_completed
+from prefect.task_runners import ThreadPoolTaskRunner
 from prefect.tasks import NO_CACHE
+from prefect_dask import DaskTaskRunner
 
 
 GateRunner = Callable[[int], dict[str, Any]]
@@ -40,6 +49,149 @@ PreparationRunner = Callable[[], dict[str, Any]]
 PreparationInspector = Callable[[], dict[str, Any]]
 PreparationValidator = Callable[[dict[str, Any]], dict[str, Any]]
 IdentityRecorder = Callable[[str], None]
+
+
+def _local_worker() -> dict[str, Any]:
+    """Describe coordinator-local compute without exposing storage state."""
+    return {
+        "execution_backend": "Prefect local compute task",
+        "hostname": platform.node(),
+        "retry_count": get_run_context().task_run.run_count - 1,
+    }
+
+
+@task(name="Gate 02 clean batch", persist_result=False, cache_policy=NO_CACHE)
+def compute_clean_batch(
+    batch: list[dict[str, Any]], options: dict[str, Any], distributed: bool
+) -> dict[str, Any]:
+    """Clean one serializable batch locally or on the selected Dask worker."""
+    from .distributed_execution import clean_batch
+
+    return clean_batch(
+        batch, options["script"], options["timeout"], options["threads"],
+        get_run_context().task_run.run_count - 1,
+    )
+
+
+@task(name="Gate 03 transform batch", persist_result=False, cache_policy=NO_CACHE)
+def compute_transform_batch(
+    batch: list[dict[str, Any]], _options: dict[str, Any], distributed: bool
+) -> dict[str, Any]:
+    """Transform one serializable batch in a named Prefect compute task."""
+    from .distributed_execution import transform_batch
+
+    return transform_batch(batch, get_run_context().task_run.run_count - 1)
+
+
+@task(name="Gate 05 combine batch", persist_result=False, cache_policy=NO_CACHE)
+def compute_combine_batch(
+    batch: list[dict[str, Any]], _options: dict[str, Any], distributed: bool
+) -> dict[str, Any]:
+    """Combine one forecast batch in a named Prefect compute task."""
+    from .distributed_execution import combine_batch
+
+    return combine_batch(batch, get_run_context().task_run.run_count - 1)
+
+
+@task(name="Gate 06 official evaluator", persist_result=False, cache_policy=NO_CACHE)
+def compute_evaluation(
+    batch: list[dict[str, Any]], options: dict[str, Any], _distributed: bool
+) -> dict[str, Any]:
+    """Run one official evaluator payload on the Mac without DuckDB access."""
+    item = batch[0]
+    started = time.monotonic()
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as stream:
+        json.dump(item["payload"], stream)
+        payload_path = Path(stream.name)
+    try:
+        completed = subprocess.run(
+            [options["python"], options["bridge"], "evaluate", "--source-root",
+             options["source_root"], "--payload", str(payload_path)],
+            cwd=ROOT, check=True, capture_output=True, text=True,
+            timeout=options["timeout"],
+        )
+    finally:
+        payload_path.unlink(missing_ok=True)
+    return {"results": [{"id": item["task_id"],
+                          "official": json.loads(completed.stdout)}],
+            "runtime_seconds": time.monotonic() - started,
+            "worker": _local_worker()}
+
+
+COMPUTE_TASKS = {
+    2: compute_clean_batch,
+    3: compute_transform_batch,
+    5: compute_combine_batch,
+    6: compute_evaluation,
+}
+
+
+@flow(name="ShapeFM bounded gate compute", persist_result=False)
+def gate_compute_flow(
+    process_id: int, payload_path: str, options: dict[str, Any],
+    distributed: bool, retries: int, max_in_flight: int,
+) -> Iterator[dict[str, Any]]:
+    """Yield completion-order outcomes for immediate Mac commits; drain on failure."""
+    if process_id not in COMPUTE_TASKS or max_in_flight < 1 or retries < 0:
+        raise ValueError("invalid gate compute controls")
+    selected = COMPUTE_TASKS[process_id].with_options(retries=retries)
+    pending = {}
+    # Only this Mac flow reads the temporary payload. Dask tasks receive their
+    # bounded batch, never this coordinator-local path or a database connection.
+    with Path(payload_path).open() as source:
+        remaining = iter(json.load(source))
+    exhausted = False
+    failed = False
+    while pending or not exhausted:
+        while not failed and len(pending) < max_in_flight and not exhausted:
+            try:
+                batch = next(remaining)
+            except StopIteration:
+                exhausted = True
+                break
+            annotation = dask.annotate(resources={"CPU": 1}, retries=0) if distributed else nullcontext()
+            try:
+                with annotation:
+                    pending[selected.submit(batch, options, distributed)] = batch
+            except Exception as exc:
+                failed = True
+                yield {"batch": batch, "error": f"{type(exc).__name__}: {exc}"}
+        if pending:
+            future = next(as_completed(list(pending)))
+            batch = pending.pop(future)
+            try:
+                response = future.result()
+            except Exception as exc:
+                failed = True
+                yield {"batch": batch, "error": f"{type(exc).__name__}: {exc}"}
+            else:
+                yield {"batch": batch, "response": response}
+        elif failed:
+            break
+
+
+def run_gate_compute_flow(
+    *, process_id: int, batches: list[list[dict[str, Any]]],
+    options: dict[str, Any], scheduler_address: str | None, retries: int,
+    max_in_flight: int, local_workers: int,
+) -> Iterator[dict[str, Any]]:
+    """Bind eligible gates to existing Dask or explicit bounded local task workers."""
+    distributed = scheduler_address is not None and process_id in {2, 3, 5}
+    if process_id in {2, 3, 5} and scheduler_address is not None:
+        selected = gate_compute_flow.with_options(
+            task_runner=DaskTaskRunner(address=scheduler_address)
+        )
+    else:
+        selected = gate_compute_flow.with_options(
+            task_runner=ThreadPoolTaskRunner(max_workers=local_workers)
+        )
+    # Prefect persists flow parameters even with result persistence disabled.
+    # Keep scientific arrays out of its API and parameter-size limit. This file
+    # lives only for this generator; DuckDB remains the durable source on resume.
+    with tempfile.TemporaryDirectory(prefix="shapefm-gate-") as directory:
+        payload = Path(directory) / "batches.json"
+        payload.write_text(json.dumps(batches), encoding="utf-8")
+        yield from selected(process_id, str(payload), options, distributed, retries, max_in_flight)
 
 
 @contextmanager
@@ -156,7 +308,9 @@ def gate_flow(
         process_id, inspector
     )
     result = execute_gate.with_options(
-        name=f"Process {process_id:02d}", retries=0 if process_id == 4 else retries
+        # Gate compute tasks own retries; repeating a writer gate would duplicate
+        # invocation/attempt bookkeeping after partially committed results.
+        name=f"Process {process_id:02d}", retries=0 if process_id in {2, 3, 4, 5, 6} else retries
     )(process_id, inspected, runner)
     validated = validate_gate.with_options(name=f"Validate Process {process_id:02d}")(
         process_id, result, validator
@@ -270,7 +424,8 @@ def window_preparation_flow(
     if retries < 0:
         raise ValueError("Prefect preparation retries cannot be negative")
     inspected = inspect_window_preparation(inspector)
-    result = execute_window_preparation.with_options(retries=retries)(runner)
+    # Native compute tasks own retries; never repeat the enclosing writer task.
+    result = execute_window_preparation.with_options(retries=0)(runner)
     validated = validate_window_preparation(result, validator)
     return {
         **result,

@@ -31,8 +31,10 @@ from util.window_preparation import (
     WindowPreparationCoordinator,
     _target_content_hash,
     complete_window_count,
+    compute_window_preparation_batch,
     get_prepared_window,
     rolling_window_inputs,
+    run_window_preparation_flow,
     s1_partition,
 )
 
@@ -45,6 +47,43 @@ LOCAL_TEST_LIMITS = {"max_series": 100, "max_windows": 200}
 
 class RollingWindowUnitTests(unittest.TestCase):
     """Verify frequency settings, tsai boundaries, and deterministic S1 behavior."""
+
+    def test_named_compute_task_passes_continuous_memory_safety(self) -> None:
+        """The Prefect task is a storage-free adapter preserving worker safeguards."""
+        safety = {"minimum_available_bytes": 123, "poll_interval_seconds": 0.25}
+        with patch(
+            "util.window_preparation.window_preparation_batch",
+            return_value={"results": [], "worker": {"hostname": "test"}},
+        ) as worker, patch("util.window_preparation.get_run_context") as context:
+            context.return_value.task_run.run_count = 3
+            response = compute_window_preparation_batch.fn(
+                [{"id": "bounded"}], Path("worker.R"), 30.0, 1, safety
+            )
+        self.assertEqual(response["worker"]["hostname"], "test")
+        worker.assert_called_once_with(
+            [{"id": "bounded"}], Path("worker.R"), 30.0, 1, safety,
+            retry_count=2,
+        )
+        self.assertEqual(compute_window_preparation_batch.name, "compute window-preparation batch")
+
+    def test_flow_runner_requires_explicit_local_bounds(self) -> None:
+        """The migrated entry cannot silently turn distributed work into local work."""
+        arguments = {
+            "scheduler_address": None,
+            "parent_database": Path("parent.duckdb"),
+            "windows_database": Path("windows.duckdb"),
+            "source_manifest_hash": "source",
+            "memory_safety": None,
+            "execution_profile": None,
+            "retries": 1,
+        }
+        with self.assertRaisesRegex(RuntimeError, "explicit local limits"):
+            run_window_preparation_flow(**arguments)
+        with self.assertRaisesRegex(ValueError, "cannot use local limits"):
+            run_window_preparation_flow(
+                **{**arguments, "scheduler_address": "tcp://scheduler:8786"},
+                local_limits=LOCAL_TEST_LIMITS,
+            )
 
     def test_all_frequency_settings_resolve_approved_strides(self) -> None:
         """All ten approved W/H settings derive stride W+H in resolved config."""

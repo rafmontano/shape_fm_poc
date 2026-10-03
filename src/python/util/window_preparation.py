@@ -20,6 +20,7 @@ import struct
 import subprocess
 import time
 import uuid
+from contextlib import nullcontext
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_FLOOR
 from math import floor, isfinite
@@ -27,10 +28,16 @@ from pathlib import Path
 from typing import Any, Iterable
 
 import duckdb
+import dask
+from prefect import flow, task
+from prefect.cache_policies import NO_CACHE
+from prefect.context import get_run_context
+from prefect.futures import as_completed
+from prefect_dask import DaskTaskRunner
 
 from .configuration import ExperimentConfiguration, canonical_json, json_fingerprint
 from .database import load_database_configuration, migrate_database
-from .distributed_execution import run_batches, window_preparation_batch
+from .distributed_execution import window_preparation_batch
 from .execution_profiles import APPROVED_HEAVY_TUNING_PROFILE
 from .import_execution import repository_root
 
@@ -41,6 +48,21 @@ WINDOW_DATABASE_SCHEMA_VERSION = 2
 # never a substitute for the approved two-host profile used by heavy workflows.
 MAX_LOCAL_PREPARATION_SERIES = 100
 MAX_LOCAL_PREPARATION_WINDOWS = 200
+
+
+@task(name="compute window-preparation batch", cache_policy=NO_CACHE, persist_result=False)
+def compute_window_preparation_batch(
+    batch: list[dict[str, Any]],
+    script: Path,
+    timeout: float,
+    threads: int,
+    memory_safety: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Compute one bounded batch without receiving coordinator or storage state."""
+    return window_preparation_batch(
+        batch, script, timeout, threads, memory_safety,
+        retry_count=get_run_context().task_run.run_count - 1,
+    )
 
 
 # Code constant: normalized child schema stores definitions and membership once;
@@ -375,8 +397,8 @@ class WindowPreparationCoordinator:
             raise ValueError("windows database must differ from the parent database")
         self.parent = duckdb.connect(str(self.parent_path))
         self.configuration = load_database_configuration(self.parent_path, self.parent)
-        if self.configuration.version not in {5, 6}:
-            raise ValueError("rolling-window preparation requires configuration version 5 or 6")
+        if self.configuration.version not in {5, 6, 7}:
+            raise ValueError("rolling-window preparation requires configuration version 5, 6 or 7")
         self.definition = self.configuration.resolved["pipeline"]["window_preparation"]
         self.preparation_id = "window-preparation/" + json_fingerprint(
             {
@@ -778,6 +800,58 @@ class WindowPreparationCoordinator:
             self.child.execute("ROLLBACK")
             raise
 
+    def _run_prefect_batches(
+        self,
+        batches: Iterable[list[dict[str, Any]]],
+        *,
+        script: Path,
+        timeout: float,
+        threads: int,
+        memory_safety: dict[str, Any] | None,
+        max_in_flight: int,
+        retries: int,
+        distributed: bool,
+    ) -> dict[str, int]:
+        """Submit bounded named tasks and commit each completed result on the Mac."""
+        if max_in_flight < 1:
+            raise ValueError("window preparation max_in_flight must be positive")
+        pending = iter(batches)
+        exhausted = False
+        submitted: dict[Any, list[dict[str, Any]]] = {}
+        worker_counts: dict[str, int] = {}
+        compute_task = compute_window_preparation_batch.with_options(retries=retries)
+        failure: Exception | None = None
+        while submitted or not exhausted:
+            while failure is None and not exhausted and len(submitted) < max_in_flight:
+                try:
+                    batch = next(pending)
+                except StopIteration:
+                    exhausted = True
+                    break
+                annotation = dask.annotate(resources={"CPU": 1}, retries=0) if distributed else nullcontext()
+                try:
+                    with annotation:
+                        future = compute_task.submit(batch, script, timeout, threads, memory_safety)
+                except Exception as error:
+                    failure = error
+                    break
+                submitted[future] = batch
+            if not submitted:
+                break
+            future = next(as_completed(list(submitted)))
+            submitted.pop(future)
+            try:
+                response = future.result()
+                hostname = response["worker"]["hostname"]
+                worker_counts[hostname] = worker_counts.get(hostname, 0) + len(response["results"])
+                for result in response["results"]:
+                    self._commit_series_result(result, response)
+            except Exception as error:
+                failure = failure or error
+        if failure is not None:
+            raise failure
+        return worker_counts
+
     def run(
         self,
         *,
@@ -787,6 +861,8 @@ class WindowPreparationCoordinator:
         local_limits: dict[str, int] | None = None,
         execution_profile: str | None = None,
         dask_retries: int | None = None,
+        prefect_compute: bool = False,
+        max_in_flight: int | None = None,
     ) -> dict[str, Any]:
         """Create/resume membership and prepare all incomplete selected series.
 
@@ -880,31 +956,35 @@ class WindowPreparationCoordinator:
         timeout = float(self.configuration.execution["worker_timeouts_seconds"]["r"])
         threads = int(self.configuration.execution["thread_limits"]["r"])
         try:
-            if dask_client is None:
+            if prefect_compute:
+                worker_counts = self._run_prefect_batches(
+                    batches,
+                    script=script,
+                    timeout=timeout,
+                    threads=threads,
+                    memory_safety=memory_safety,
+                    max_in_flight=(max_in_flight if max_in_flight is not None
+                                   else int(self.configuration.execution["dask_max_in_flight"])),
+                    retries=(int(self.configuration.execution["dask_retries"])
+                             if dask_retries is None else dask_retries),
+                    distributed=dask_client is not None,
+                )
+            elif dask_client is None:
                 responses = (
                     (batch, window_preparation_batch(batch, script, timeout, threads))
                     for batch in batches
                 )
             else:
-                responses = run_batches(
-                    dask_client,
-                    window_preparation_batch,
-                    batches,
-                    resources={"CPU": 1},
-                    max_in_flight=int(self.configuration.execution["dask_max_in_flight"]),
-                    retries=(
-                        int(self.configuration.execution["dask_retries"])
-                        if dask_retries is None
-                        else dask_retries
-                    ),
-                    extra_arguments=(script, timeout, threads, memory_safety),
+                raise RuntimeError(
+                    "distributed window preparation must use run_window_preparation_flow"
                 )
-            worker_counts: dict[str, int] = {}
-            for _, response in responses:
-                hostname = response["worker"]["hostname"]
-                worker_counts[hostname] = worker_counts.get(hostname, 0) + len(response["results"])
-                for result in response["results"]:
-                    self._commit_series_result(result, response)
+            if not prefect_compute:
+                worker_counts = {}
+                for _, response in responses:
+                    hostname = response["worker"]["hostname"]
+                    worker_counts[hostname] = worker_counts.get(hostname, 0) + len(response["results"])
+                    for result in response["results"]:
+                        self._commit_series_result(result, response)
         except BaseException as exc:
             error = f"{type(exc).__name__}: {exc}"
             self.parent.execute(
@@ -952,6 +1032,63 @@ class WindowPreparationCoordinator:
             [canonical_json(summary), self.preparation_id],
         )
         return summary
+
+
+@flow(name="window-preparation", persist_result=False, validate_parameters=False)
+def window_preparation_flow(
+    parent_database: Path,
+    windows_database: Path,
+    *,
+    source_manifest_hash: str | None,
+    memory_safety: dict[str, Any] | None,
+    execution_profile: str | None,
+    retries: int,
+    distributed: bool,
+    local_limits: dict[str, int] | None,
+    max_in_flight: int | None,
+) -> dict[str, Any]:
+    """Open coordinator-local storage, schedule compute, and commit on the Mac."""
+    with WindowPreparationCoordinator(parent_database, windows_database) as coordinator:
+        return coordinator.run(
+            dask_client=True if distributed else None,
+            source_manifest_hash=source_manifest_hash,
+            memory_safety=memory_safety,
+            local_limits=local_limits,
+            execution_profile=execution_profile,
+            dask_retries=retries,
+            prefect_compute=True,
+            max_in_flight=max_in_flight,
+        )
+
+
+def run_window_preparation_flow(
+    *, scheduler_address: str | None, parent_database: Path, windows_database: Path,
+    source_manifest_hash: str | None, memory_safety: dict[str, Any] | None,
+    execution_profile: str | None, retries: int,
+    local_limits: dict[str, int] | None = None,
+    max_in_flight: int | None = None,
+) -> dict[str, Any]:
+    """Bind window compute explicitly to an existing Dask scheduler."""
+    distributed = scheduler_address is not None
+    if distributed and local_limits is not None:
+        raise ValueError("distributed window preparation cannot use local limits")
+    if not distributed and local_limits is None:
+        raise RuntimeError("local window flow requires explicit local limits")
+    selected = window_preparation_flow
+    if distributed:
+        selected = window_preparation_flow.with_options(
+            task_runner=DaskTaskRunner(address=scheduler_address)
+        )
+    return selected(
+        parent_database, windows_database,
+        source_manifest_hash=source_manifest_hash,
+        memory_safety=memory_safety,
+        execution_profile=execution_profile,
+        retries=retries,
+        distributed=distributed,
+        local_limits=local_limits,
+        max_in_flight=max_in_flight,
+    )
 
 
 def get_prepared_window(

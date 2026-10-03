@@ -443,8 +443,10 @@ branch, or isolated environment within that process use:
 NN_MM_action_subject.ext
 ```
 
-In short, process wrappers use `NN_name`; process substeps use `NN_MM_name`;
-shared utilities are unnumbered and live under `util`.
+Process wrappers use `NN_name`; executable process substeps use `NN_MM_name`.
+Importable Python components under `util` follow the approved
+[utility naming standard](#python-utility-file-organisation) below; shared
+components do not acquire an arbitrary process number.
 
 - `NN` identifies the scientific process.
 - `MM` identifies a real, separately identifiable substep or parallel branch.
@@ -483,11 +485,10 @@ and owns the high-level hand-off to the central coordinator. It does not
 duplicate scientific calculations, database transactions, distributed
 execution, retries, or provenance implemented by shared utilities.
 
-Numbered Python filenames are loaded internally from their explicit repository
-paths by one standard-library loader. Do not rename them to create ordinary
-Python identifiers, add a competing filename convention, or start a new
-subprocess merely to load a wrapper. Loading must preserve the in-process
-coordinator and single-writer DuckDB architecture.
+Existing numbered Python wrappers are loaded internally from their explicit
+repository paths by one standard-library loader. Preserve that wrapper interface;
+do not add a loader or subprocess for the importable utility modules below.
+Loading must preserve the in-process coordinator and single-writer architecture.
 
 Do not create extra wrappers or substeps merely to make a directory appear
 complete. The six Python wrappers exist because they are the six defined
@@ -495,6 +496,73 @@ scientific process boundaries. Further files require a real responsibility.
 
 This convention applies to every programming language and to future research
 projects unless a later approved architecture decision explicitly replaces it.
+
+### Python utility file organisation
+
+Approved by the researcher on 3 October 2026. This is the continuing Python
+file-naming standard for ShapeFM and future projects, not a one-off POC cleanup.
+The purpose is to expose ownership and responsibility through filenames while
+preserving behaviour. The current migration is Python-only; it does not rename
+R workers or change public process wrappers.
+
+Keep `src/python/util/` flat and use ordinary Python imports:
+
+| Responsibility | Naming rule | Example |
+| --- | --- | --- |
+| Helper owned by one process | `pNN_MM_existing_descriptive_name.py` | `p04_02_forecast_provider.py` |
+| Existing coordinating flow within that group | First position, `pNN_01_...` | `p04_01_forecast_flow.py` |
+| Genuinely shared component | `shared_descriptive_name.py` | `shared_configuration.py` |
+| Independent workflow without an approved numeric parent | Retain its descriptive name and document its owning command | `window_preparation.py`, owned by `prepare-windows` |
+
+`NN` is the existing parent process number, including `00` for components owned
+by the researcher entry point. `MM` is a stable two-digit navigation position,
+not a new task identifier or execution order; Prefect still defines dependencies.
+The `p` permits normal Python imports. Do not extend the wrapper loader to helpers.
+Keep assigned positions stable; gaps are harmless and additions do not require
+renumbering every existing file. Keep Python special files such as `__init__.py`
+and established `test_...` discovery names unchanged.
+
+Retain the recognisable current name. Add a purpose word only if needed to make
+its responsibility clear; do not append redundant words such as `script` or
+`helper`. Existing suffixes such as `flow`, `provider` and `storage` already explain
+purpose. Each affected header states its parent or shared role and its purpose,
+inputs, outputs and execution context under the source-documentation standard.
+
+Use the existing coordinating flow as the group's first helper where one exists.
+The numbered process wrapper remains the gate entry. Do not create another
+coordinator solely to fill position 01. If coordination currently lives in a
+cross-gate module, identify that honestly in the process map; renaming does not
+authorise splitting its implementation. In particular, window preparation is not
+assigned to Gate 3 merely because it uses transformations.
+
+Keep cohesive objects and related small functions together. There is no
+one-file-per-object rule, target file count, new package hierarchy or permission
+to rewrite working logic. Renaming and relocating files requires corresponding
+imports, launch commands, tests and documentation to follow the same ownership
+map. Preserve scientific identities and historical experiment definitions.
+
+### Inactive code holding area
+
+During incomplete migration, code confirmed unnecessary to the active supported
+paths may be moved, not deleted, to `tmp/inactive/` at repository root. This is a
+Git-tracked pool available for later reactivation, not permanently retired code,
+generated scratch data or a folder that cleanup/install commands may remove.
+Do not name it `retired`, ignore it, or delete it as routine temporary storage.
+
+Check ordinary and dynamic imports, setup/subprocess/configuration references,
+stored paths, tests and requested manual QA before moving a file. Infrequent use
+or the absence of an import is not proof of inactivity. If usage is uncertain,
+leave it active and identify the question rather than changing a supported path.
+No file has to be moved merely to make this folder nonempty.
+
+When needed, preserve the original relative path below `tmp/inactive/`, retain
+the source contents, and add one short index recording original location,
+purpose, reason for holding and what must be checked before reactivation. Keep
+inactive code out of active runtime discovery and ordinary test collection;
+do not remove active tests to make a dependency appear unused. Restore through
+the then-current naming standard and focused validation when it is needed again.
+Report active and inactive file counts separately without presenting relocation
+as deletion or a reduction in total retained code.
 
 ### Shared foundation code
 
@@ -507,8 +575,10 @@ src/r/util/
 ```
 
 Shared database, configuration, provenance, Dask, restart, task lifecycle, and
-cross-process functions remain under `src/python/util/`. Utility filenames are
-descriptive and never carry a process number. Shared responsibilities include:
+cross-process functions remain under `src/python/util/` with `shared_` names.
+Not every file in `util` is shared: use the ownership rules above for process
+helpers and independent workflows. R utility names remain unchanged by this
+Python-only migration. Foundation responsibilities include:
 
 ```text
 configuration
@@ -535,9 +605,10 @@ or split files solely to reach a line-count target.
 ### Process-to-code map
 
 `src/python/00_main.py` is the single researcher-facing entry point. Shared
-coordinator functions remain unnumbered under `util`; each numbered Python
-wrapper exposes its process boundary, and numbered substeps expose specialised
-execution boundaries.
+coordinators use `shared_` names under `util`; process-owned helpers use `pNN_MM_`.
+Each numbered Python wrapper exposes its process boundary, and numbered substeps
+expose specialised execution boundaries. These naming changes do not move the
+object responsibilities in the map below.
 
 | Process | Python wrapper | Specialised substep | Shared coordinator/utility | Principal DuckDB input → output |
 |---|---|---|---|---|
@@ -628,9 +699,10 @@ src/python/tests/
 
 It is invoked through `00_main.py`; it is not another public entry point.
 
-Obsolete POC1 workflows, console commands, shell entry points, root R wrappers,
-and compatibility packages are removed after replacement coverage. Git
-preserves their history, so no archive copy is created.
+For the current incomplete migration, follow the
+[inactive code holding rule](#inactive-code-holding-area) rather than deleting
+code that is not currently needed. The earlier POC1 cleanup is historical and
+does not authorise deletions in the approved file-organisation pass.
 
 ## Configuration and documentation
 

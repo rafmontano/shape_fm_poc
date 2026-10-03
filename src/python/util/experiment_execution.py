@@ -16,19 +16,16 @@ import math
 import os
 import platform
 import subprocess
-import tempfile
 import time
 import uuid
 import csv
-from collections import deque
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any, Callable
 
 import duckdb
 
-from .configuration import canonical_json, json_fingerprint
+from .configuration import R_MODEL_METHODS, canonical_json, json_fingerprint
 from .database import DEFAULT_DATABASE, load_database_configuration, migrate_database
 from .execution_profiles import (
     GIB,
@@ -41,7 +38,7 @@ from .execution_profiles import (
 )
 from .forecast_combination import combine_equal_weight
 from .import_execution import repository_root
-from .transformations import TransformationResult, inverse, transform
+from .transformations import TransformationResult, inverse
 from .provenance import utc_now
 
 
@@ -180,24 +177,6 @@ class ExperimentForecast:
     actual: tuple[float, ...]
 
 
-def _run_parallel(
-    function: Callable[[Any], Any], values: list[Any], workers: int
-) -> list[Any]:
-    """Purpose: Execute pure scientific jobs with deterministic result ordering.
-
-    Inputs: Picklable callable, ordered job values, and local process count.
-    Outputs: Results aligned to input order; may spawn and close worker processes.
-    """
-    if workers == 1:
-        return [function(value) for value in values]
-    import multiprocessing
-
-    with ProcessPoolExecutor(
-        max_workers=workers, mp_context=multiprocessing.get_context("spawn")
-    ) as executor:
-        return list(executor.map(function, values))
-
-
 def _batches(values: list[Any], batch_size: int) -> list[list[Any]]:
     """Split values in input order into positive, fixed-size chunks."""
     if batch_size < 1:
@@ -220,31 +199,9 @@ def _length_aware_batches(
     ]
 
 
-def _run_external_batches(
-    function: Callable[[Any], Any], batches: list[Any], workers: int
-) -> Iterable[Any]:
-    """Purpose: Schedule bounded bridge batches while preserving single-writer safety.
-
-    Inputs: Batch callable, ordered payload batches, and thread count.
-    Outputs: Ordered batch results; may create a thread pool whose callbacks launch
-    external workers, but grants them no DuckDB connection.
-    """
-    if workers == 1:
-        for batch in batches:
-            yield function(batch)
-        return
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        yield from executor.map(function, batches)
-
-
-def _transform_job(job: tuple[list[float], str]) -> TransformationResult:
-    """Apply the named transformation to one value sequence in a process worker."""
-    return transform(job[0], job[1])
-
-
 def _combine_job(job: dict[str, Any]) -> dict[str, Any]:
-    """Equal-weight one pair of component forecast mappings in a process worker."""
-    return combine_equal_weight(job["left"], job["right"], job["weights"])
+    """Equal-weight the configured component forecasts without storage access."""
+    return combine_equal_weight(job["components"], job["weights"])
 
 
 class ExperimentCoordinator:
@@ -1254,7 +1211,8 @@ class ExperimentCoordinator:
                                      timeout=f"{settings.dask_timeout_seconds}s")
             expected_gpu_name = None
             try:
-                if process == 4 and self.configuration.seasonal_period_tuning is not None:
+                if ("chronos_2" not in self.config["models"] or
+                        process == 4 and self.configuration.seasonal_period_tuning is not None):
                     mac_workers = int(profile.dask_mac_cpu_workers or 0)
                     ubuntu_workers = int(profile.dask_ubuntu_cpu_workers or 0)
                     cluster = validate_tuning_cluster(
@@ -1391,6 +1349,7 @@ class ExperimentCoordinator:
                     rows,
                     attempts,
                     profile.evaluation_workers,
+                    settings,
                 )
         except BaseException as exc:
             execution_error = exc
@@ -1481,62 +1440,28 @@ class ExperimentCoordinator:
                 }
             )
 
-        def invoke(batch: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any], float]:
-            """Purpose: Run one local Process 02 R cleaning batch.
+        from .workflow_orchestration import run_gate_compute_flow
 
-            Inputs: Job mappings containing task IDs, contexts, methods, and seasonality.
-            Outputs: Original batch, decoded worker response, and elapsed seconds;
-            launches the R bridge but does not write DuckDB.
-            """
-            started = time.monotonic()
-            response = self._r_worker(
-                {
-                    "action": "preprocess",
-                    "jobs": [
-                        {
-                            k: v
-                            for k, v in job.items()
-                            if k not in {"instance_id", "official_frequency"}
-                        }
-                        for job in batch
-                    ],
-                }
-            )
-            return batch, response, time.monotonic() - started
-
-        if dask_client is not None:
-            from .distributed_execution import clean_batch, run_batches
-
-            dask_results = run_batches(
-                dask_client,
-                clean_batch,
-                _batches(jobs, batch_size),
-                resources={"CPU": 1},
-                max_in_flight=settings.dask_max_in_flight,
-                retries=settings.dask_retries,
-                extra_arguments=(
-                    self.configuration.execution_paths["r_preprocess_worker"],
-                    float(self.configuration.execution["worker_timeouts_seconds"]["r"]),
-                    int(self.configuration.execution["thread_limits"]["r"]),
-                ),
-            )
-            responses = (
-                (
-                    batch,
-                    {
-                        "results": response["results"],
-                        "packages": response["packages"],
-                        "worker": response["worker"],
-                    },
-                    response["runtime_seconds"],
-                )
-                for batch, response in dask_results
-            )
-        else:
-            responses = _run_external_batches(
-                invoke, _batches(jobs, batch_size), workers
-            )
-        for batch, response, runtime in responses:
+        outcomes = run_gate_compute_flow(
+            process_id=2,
+            batches=_batches(jobs, batch_size),
+            options={
+                "script": self.configuration.execution_paths["r_preprocess_worker"],
+                "timeout": float(self.configuration.execution["worker_timeouts_seconds"]["r"]),
+                "threads": int(self.configuration.execution["thread_limits"]["r"]),
+            },
+            scheduler_address=(dask_client.scheduler.address if dask_client else None),
+            retries=settings.dask_retries if settings else 0,
+            max_in_flight=settings.dask_max_in_flight if settings else workers,
+            local_workers=workers,
+        )
+        errors = []
+        for outcome in outcomes:
+            if "response" not in outcome:
+                errors.append(outcome["error"])
+                continue
+            batch, response = outcome["batch"], outcome["response"]
+            runtime = response["runtime_seconds"]
             result_ids = [item["id"] for item in response["results"]]
             by_id = {item["id"]: item for item in response["results"]}
             if len(result_ids) != len(set(result_ids)) or set(by_id) != {
@@ -1636,6 +1561,8 @@ class ExperimentCoordinator:
                     insert,
                     response.get("worker"),
                 )
+        if errors:
+            raise RuntimeError("; ".join(errors))
 
     def _run_03_transform(
         self,
@@ -1713,27 +1640,28 @@ class ExperimentCoordinator:
                 task_id, attempts[task_id], runtime, insert, resources
             )
 
-        if dask_client is None:
-            results = _run_parallel(_transform_job, prepared, workers)
-            for meta, result in zip(metadata, results, strict=True):
-                commit_result(meta, result, 0.0)
-            return
-
-        from .distributed_execution import run_batches, transform_batch
-
         jobs = [
             {"id": meta[0], "values": values, "method": method}
             for meta, (values, method) in zip(metadata, prepared, strict=True)
         ]
         by_task = {meta[0]: meta for meta in metadata}
-        for batch, response in run_batches(
-            dask_client,
-            transform_batch,
-            _batches(jobs, int(self.configuration.execution["batch_sizes"]["transform"])),
-            resources={"CPU": 1},
-            max_in_flight=settings.dask_max_in_flight,
-            retries=settings.dask_retries,
-        ):
+        from .workflow_orchestration import run_gate_compute_flow
+
+        outcomes = run_gate_compute_flow(
+            process_id=3,
+            batches=_batches(jobs, int(self.configuration.execution["batch_sizes"]["transform"])),
+            options={},
+            scheduler_address=(dask_client.scheduler.address if dask_client else None),
+            retries=settings.dask_retries if settings else 0,
+            max_in_flight=settings.dask_max_in_flight if settings else workers,
+            local_workers=workers,
+        )
+        errors = []
+        for outcome in outcomes:
+            if "response" not in outcome:
+                errors.append(outcome["error"])
+                continue
+            batch, response = outcome["batch"], outcome["response"]
             result_ids = [item["id"] for item in response["results"]]
             expected_ids = {job["id"] for job in batch}
             if len(result_ids) != len(set(result_ids)) or set(result_ids) != expected_ids:
@@ -1750,6 +1678,8 @@ class ExperimentCoordinator:
                     runtime,
                     response["worker"],
                 )
+        if errors:
+            raise RuntimeError("; ".join(errors))
 
     def _run_04_forecast(
         self,
@@ -1802,14 +1732,16 @@ class ExperimentCoordinator:
         execution = self.configuration.execution
         paths = self.configuration.execution_paths
         distributed = dask_client is not None
+        r_settings = {model: self.configuration.r_model_settings(model)
+                      for model in self.config["models"] if model in R_MODEL_METHODS}
         if distributed:
-            chronos = self.config["models"]["chronos_2"]
+            chronos = self.config["models"].get("chronos_2", {})
             safety = ForecastSafetyPolicy.from_profile(profile, platform.node())
             if any(row[3] == "chronos_2" for row in rows) and safety.accelerator["minimum_available_gib"] <= 0:
                 raise RuntimeError("distributed Chronos requires an approved positive GPU headroom policy")
             provider = DistributedForecastProvider(
-                self.configuration.auto_arima_settings,
-                paths["r_auto_arima_worker"],
+                r_settings.get("auto_arima", {}),
+                paths.get("r_forecast_worker", paths["r_auto_arima_worker"]),
                 float(execution["worker_timeouts_seconds"]["r"]),
                 int(execution["thread_limits"]["r"]),
                 chronos,
@@ -1821,13 +1753,14 @@ class ExperimentCoordinator:
                 float(execution["worker_timeouts_seconds"]["chronos_startup"]),
                 float(execution["worker_timeouts_seconds"]["chronos_request"]),
                 safety,
+                r_settings,
             )
             auto_provider = chronos_provider = provider
         else:
             auto_provider = LocalAutoArimaProvider.from_configuration(self.configuration)
             chronos_provider = LocalChronosProvider(
                 self.root,
-                self.config["models"]["chronos_2"],
+                self.config["models"].get("chronos_2", {}),
                 tuple(self.quantiles),
                 device,
                 profile,
@@ -1840,11 +1773,12 @@ class ExperimentCoordinator:
             rows=rows,
             auto_provider=auto_provider,
             chronos_provider=chronos_provider,
-            auto_batch_size=int(execution["batch_sizes"]["auto_arima"]),
+            auto_batch_size=int(execution["batch_sizes"].get("r_forecast", execution["batch_sizes"]["auto_arima"])),
             chronos_batch_size=profile.chronos_inference_batch_size,
             max_in_flight=(settings.dask_max_in_flight if distributed else profile.autoarima_workers),
             autoarima_max_in_flight=(profile.dask_autoarima_max_in_flight
                                     if distributed else profile.autoarima_workers),
+            ets_max_in_flight=profile.dask_ets_max_in_flight if distributed else profile.autoarima_workers,
             cpu_gpu_overlap=profile.cpu_gpu_overlap,
             distributed=distributed,
             retries=settings.dask_retries if settings is not None else int(execution["dask_retries"]),
@@ -1879,15 +1813,13 @@ class ExperimentCoordinator:
                 + ") ORDER BY candidate",
                 [experiment_id, variant_id, instance_id, *model_names],
             ).fetchall()
-            if len(components) != 2:
-                raise RuntimeError("equal-weight combination requires both model forecasts")
+            if len(components) != len(model_names):
+                raise RuntimeError("equal-weight combination requires every configured model forecast")
             mapped = {row[0]: {"mean": row[1], "median": row[2], "quantiles": row[3], "id": row[4]} for row in components}
             jobs.append(
                 {
                     "id": task_id,
-                    "left": mapped[model_names[0]],
-                    "right": mapped[model_names[1]],
-                    "model_names": model_names,
+                    "components": mapped,
                     "weights": self.config["combination"]["weights"],
                 }
             )
@@ -1953,11 +1885,7 @@ class ExperimentCoordinator:
                         ),
                     ],
                 )
-                for name, component in zip(
-                    components["model_names"],
-                    (components["left"], components["right"]),
-                    strict=True,
-                ):
+                for name, component in components["components"].items():
                     self.connection.execute(
                         "INSERT INTO forecast_components VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING",
                         [
@@ -1994,26 +1922,25 @@ class ExperimentCoordinator:
                 },
             )
 
-        if dask_client is None:
-            results = _run_parallel(_combine_job, jobs, workers)
-            for row, job, result in zip(
-                combination_rows, jobs, results, strict=True
-            ):
-                commit_combination(row, result, job)
-            return
-
-        from .distributed_execution import combine_batch, run_batches
-
         rows_by_id = {row[0]: row for row in combination_rows}
         jobs_by_id = {job["id"]: job for job in jobs}
-        for batch, response in run_batches(
-            dask_client,
-            combine_batch,
-            _batches(jobs, int(self.configuration.execution["batch_sizes"]["combine"])),
-            resources={"CPU": 1},
-            max_in_flight=settings.dask_max_in_flight,
-            retries=settings.dask_retries,
-        ):
+        from .workflow_orchestration import run_gate_compute_flow
+
+        outcomes = run_gate_compute_flow(
+            process_id=5,
+            batches=_batches(jobs, int(self.configuration.execution["batch_sizes"]["combine"])),
+            options={},
+            scheduler_address=(dask_client.scheduler.address if dask_client else None),
+            retries=settings.dask_retries if settings else 0,
+            max_in_flight=settings.dask_max_in_flight if settings else workers,
+            local_workers=workers,
+        )
+        errors = []
+        for outcome in outcomes:
+            if "response" not in outcome:
+                errors.append(outcome["error"])
+                continue
+            batch, response = outcome["batch"], outcome["response"]
             result_ids = [item["id"] for item in response["results"]]
             expected_ids = {job["id"] for job in batch}
             if len(result_ids) != len(set(result_ids)) or set(result_ids) != expected_ids:
@@ -2030,6 +1957,8 @@ class ExperimentCoordinator:
                     runtime,
                     response["worker"],
                 )
+        if errors:
+            raise RuntimeError("; ".join(errors))
 
     def _run_06_evaluate(
         self,
@@ -2037,6 +1966,7 @@ class ExperimentCoordinator:
         rows: list[tuple],
         attempts: dict[str, int],
         workers: int,
+        settings: ExecutionSettings | None = None,
     ) -> None:
         """Purpose: Execute Process 06 official evaluation of complete forecast matrices.
 
@@ -2126,35 +2056,36 @@ class ExperimentCoordinator:
                 }
             )
 
-        def invoke(item: dict[str, Any]) -> tuple[dict[str, Any], dict[str, float], float]:
-            """Purpose: Evaluate one complete candidate matrix with GIFT-Eval.
+        from .workflow_orchestration import run_gate_compute_flow
 
-            Inputs: Candidate identity and ordered mean/quantile forecast payload.
-            Outputs: Input item, official metric mapping, and elapsed seconds; creates
-            and removes a temporary JSON file and launches the evaluation subprocess.
-            """
-            started = time.monotonic()
-            with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as stream:
-                json.dump(item["payload"], stream)
-                path = Path(stream.name)
-            try:
-                official = self._gift_bridge(
-                    "evaluate",
-                    "--source-root",
-                    str(source_root),
-                    "--payload",
-                    str(path),
-                    timeout=float(
-                        self.configuration.execution["worker_timeouts_seconds"]["gift_eval"]
-                    ),
-                )
-            finally:
-                path.unlink(missing_ok=True)
-            return item, official, time.monotonic() - started
-
-        for item, official, runtime in _run_external_batches(
-            invoke, prepared, workers
-        ):
+        gift_environment = self.configuration.resolved["evaluation"]["gift_eval"]["environment"]
+        outcomes = run_gate_compute_flow(
+            process_id=6,
+            batches=[[item] for item in prepared],
+            options={
+                "python": str(self.root / gift_environment / "bin/python"),
+                "bridge": str(self.root / "src/python/06_01_evaluate_gift_eval.py"),
+                "source_root": str(source_root),
+                "timeout": float(self.configuration.execution["worker_timeouts_seconds"]["gift_eval"]),
+            },
+            scheduler_address=None,
+            retries=(settings.dask_retries if settings is not None
+                     else int(self.configuration.execution["dask_retries"])),
+            max_in_flight=workers,
+            local_workers=workers,
+        )
+        errors = []
+        for outcome in outcomes:
+            if "response" not in outcome:
+                errors.append(outcome["error"])
+                continue
+            item = outcome["batch"][0]
+            response = outcome["response"]
+            result = response["results"][0]
+            if result.get("id") != item["task_id"]:
+                raise RuntimeError("Process 06 evaluator returned a mismatched task ID")
+            official = result["official"]
+            runtime = response["runtime_seconds"]
             task_id = item["task_id"]
             variant_id = item["variant_id"]
             candidate = item["candidate"]
@@ -2207,8 +2138,10 @@ class ExperimentCoordinator:
                 attempts[task_id],
                 runtime,
                 insert,
-                {"execution_backend": "official GIFT-Eval CPU evaluator"},
+                response["worker"],
             )
+        if errors:
+            raise RuntimeError("; ".join(errors))
 
     def run_all(
         self,
@@ -2512,8 +2445,7 @@ def get_forecast_mean(
             ).fetchone()
         else:
             candidates = {
-                "auto_arima_forec": "auto_arima",
-                "ets_forec": "ets",
+                **{method: model for model, method in R_MODEL_METHODS.items()},
                 "chronos_2": "chronos_2",
             }
             candidate = candidates.get(forecast_id, forecast_id)

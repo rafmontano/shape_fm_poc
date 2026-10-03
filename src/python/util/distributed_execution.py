@@ -69,7 +69,12 @@ def _worker_provenance(
     retry_count: int = 0, worker: Any = None
 ) -> dict[str, Any]:
     """Purpose: Describe one Dask execution attempt. Inputs: ``retry_count`` is the zero-based coordinator retry count; ``worker`` is a Dask Worker-like object, defaulting to the current worker. Outputs: A serializable mapping of backend, host, worker identity, total resource capacities, and retry count; samples current worker state without mutating it."""
-    worker = worker or get_worker()
+    try:
+        worker = worker or get_worker()
+    except ValueError:
+        # The same native adapters also serve explicitly bounded local Prefect tasks.
+        return {"execution_backend": "local", "hostname": socket.gethostname(),
+                "retry_count": retry_count}
     state = getattr(worker, "state", None)
     resources = dict(getattr(state, "total_resources", {}) or {})
     return {
@@ -920,9 +925,10 @@ def autoarima_batch(
             "settings": settings,
             "jobs": [
                 {
-                    key: value
-                    for key, value in job.items()
-                    if key not in {"model", "instance_id", "variant_id"}
+                    **{key: value for key, value in job.items()
+                       if key not in {"instance_id", "variant_id"}},
+                    "model_period": job["seasonality"],
+                    "settings": settings,
                 }
                 for job in batch
             ],
@@ -943,12 +949,12 @@ def autoarima_batch(
 
 
 def combine_batch(batch: list[dict[str, Any]], retry_count: int = 0) -> dict[str, Any]:
-    """Purpose: Combine paired forecasts for a worker batch. Inputs: ``batch`` contains IDs, left/right forecast mappings, and two combination weights from the coordinator; ``retry_count`` is the zero-based Dask attempt. Outputs: Combined forecasts per ID, elapsed seconds, and sampled worker provenance; performs no external writes."""
+    """Combine configured component mappings and weights; return arrays/provenance, never writes."""
     started = time.monotonic()
     results = []
     for job in batch:
         combination = combine_equal_weight(
-            job["left"], job["right"], job["weights"]
+            job["components"], job["weights"]
         )
         results.append(
             {

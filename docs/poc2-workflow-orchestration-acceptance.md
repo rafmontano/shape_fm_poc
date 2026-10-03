@@ -1,9 +1,32 @@
 # POC2 workflow orchestration acceptance
 
-Status: Stage 1 closed and accepted for progression by the researcher on
-3 October 2026, with known limitations carried into Stage 2. Stage 2 and the
-reviewed Stage 1 GitHub checkpoint are authorised. Full migration and scientific
-Objective 2 completion are not claimed.
+Status: On 3 October 2026 the researcher approved proceeding from the reviewed
+Stage 2 result to a non-destructive Python file-organisation pass, with a GitHub
+checkpoint first. Objective 2 scientific completion is not claimed. Historical
+implementation reports below remain evidence of their respective snapshots.
+
+## Approved organisation follow up
+
+The reviewed Stage 2 baseline is 81 R/Python scripts / 31,200 physical lines,
+with 145 Mac and 60 Ubuntu focused tests and the bounded recovery/distribution
+evidence below. The researcher agreed to the recommendation and approved the
+file-naming proposal; no unperformed independent QA is recorded as completed.
+Commit and normal push of that reviewed baseline and these approved documents,
+followed by safe Ubuntu synchronisation, are authorised before source moves.
+This supersedes the earlier Stage 2 publication restriction below. Publication
+has not yet been confirmed for this checkpoint.
+
+Apply the [standing naming and inactive-code rules](code-standards.md#python-utility-file-organisation)
+through the [current AMP instructions](amp-poc2-workflow-orchestration-instructions.md).
+The intended change is names, locations, references and readable navigation only;
+no algorithms, outputs, configuration meaning, workers or stored research results
+change. Use `tmp/inactive/` for confirmed inactive code that may return during
+migration, never `retired` or a deletion/cleanup target. Source moves have not yet
+been implemented. The renamed result returns for review before its own publication.
+
+AMP will add one old-to-new file/ownership map, any inactive-file reasons,
+focused verification and reconciled active/inactive counts here. Preserve the
+historical path/count tables below instead of rewriting past evidence.
 
 ## Researcher acceptance and pragmatic Stage 2 direction
 
@@ -31,8 +54,168 @@ does not manufacture missing evidence or record an unperformed QA procedure.
 Implementation follows the [current AMP instructions](amp-poc2-workflow-orchestration-instructions.md)
 and [pragmatic architecture amendment](poc2-workflow-orchestration-decision.md#pragmatic-stage-2-amendment).
 Commit and normal push of the reviewed checkpoint and approved documentation,
-plus safe Ubuntu synchronisation, are explicitly authorised; publication is
-pending until the implementer reports verified revisions.
+plus safe Ubuntu synchronisation, were explicitly authorised; the verified
+publication is recorded below. Stage 2 publication is not authorised.
+
+## Stage 2 implementation plan and publication evidence
+
+The accepted checkpoint was published as
+[`d032f20`](https://github.com/rafmontano/shape_fm_poc/commit/d032f2011dc0394a19a92cf544483ac61ce9292e).
+Mac, Ubuntu and GitHub main were verified at that revision; the runtime manifest
+remained `9de58e3ba23921fb834773efa4fa5f93cd0339dd8049ad6c43aa06e3a076c4f0`
+(104 files). Ubuntu's matching runtime/older documentation overlay is preserved
+in the named stash `accepted-stage1-overlay-before-published-checkpoint`.
+Generated `.amp` evidence and local environments were not published or copied.
+
+Retain the public entry, configuration authority and single-writer gate flows.
+First connect the approved nine-method R registry through configured planning,
+generic native execution and common storage/retrieval, testing fallback identity
+and legacy AutoARIMA compatibility. Then replace remaining gate, tuning and
+window/S1 custom compute scheduling with named Prefect tasks on the existing
+Dask cluster. Consolidate duplicate dispatch only after replacement coverage;
+retain stored worker paths and useful manual QA. Carry actual CPU distribution
+and scheduler-loss resume into the bounded connected tests of retained work.
+Do not repeat completed scientific experiments. Mantis labels/features/training
+choices absent from the approved window contract remain a next-item decision,
+not implied scientific approval from this orchestration migration.
+
+Stage 2 source changes and its final comparison remain unpublished until review.
+
+## Stage 2 bounded implementation handoff — 3 October 2026
+
+Implementation is ready for ChatGPT technical review and independent researcher
+QA, not accepted or published. Mac, Ubuntu and GitHub still share the published
+Stage 1 commit linked above. Stage 2 changes remain an uncommitted source overlay.
+No spreadsheet, accepted research database, environment or historical experiment
+configuration was changed.
+
+### Retained paths and consolidation
+
+- Gates 2/3/5 use named Prefect compute tasks on the existing Dask scheduler;
+  Gate 6 uses the isolated official evaluator in a local Prefect task. Numbered
+  wrappers now propagate the resolved profile/settings. Gate 1 retains its
+  local import contract. Results commit incrementally through the Mac writer.
+- Tuning's duplicate local algorithm and the coordinator's former parallel and
+  external-batch loops were removed. Distributed tuning and approved local
+  exceptions share the existing scientific group calculation through Prefect.
+  Window/S1 uses bounded Prefect submission, existing resource monitoring and
+  durable membership/window storage. Effective window bounds and attempt
+  provenance, and Gate 6 retry settings, reach their actual consumers.
+- Opt-in v7 integrates all nine approved R methods through configuration,
+  planning, the generic native worker, validated persistence and common retrieval.
+  Native settings/fallbacks remain explicit; versions 1–6 are unchanged.
+  Equal weighting covers the nine stored components, not a learned meta-learner.
+- The normal-route check exposed oversized Prefect flow parameters, not an R
+  calculation problem. Gate compute now uses a temporary coordinator-local JSON
+  input reference; the Mac reads it and sends bounded batches to workers. It is
+  deleted on generator exit. Normal entry reconstructs it from DuckDB on restart;
+  this is not a durable checkpoint for Prefect-UI replay. Ordinary forecasting
+  loads pending IDs/attempts inside its database-path flow instead of serialising
+  the complete task graph as API parameters. A >512 KiB regression verifies this
+  boundary without increasing Prefect's API limit.
+
+Configuration, source, provider and storage objects retain their cohesive roles.
+Thin Prefect callables own orchestration; no replacement scheduler or contract
+framework was introduced. The one-off fixture/evidence scripts use small
+functions because adding classes would not help their bounded diagnostic role.
+
+### Tested source and focused regression
+
+Source sync compared remote bytes against the last verified manifest before
+transferring only authorised changes. Final runtime identity on both hosts is
+`5a2cb21ccb8d29a1ba9b7ae7070827071fbfd3cf9b70345c03db3cbdf34666a9`
+(105 files). Evidence is under `.amp/in/artifacts/workflow-stage2/`.
+`mac-runtime.json` and `ubuntu-runtime.json` include source, tests, configuration
+and locks. Dependencies match: Python 3.12.14, Prefect 3.8.7, prefect-dask 0.3.7,
+Dask/distributed 2026.8.0, DuckDB 1.5.5 and tsai 1.0.1. Actual worker preflight
+also validated R 4.6.1, forecast 8.24.0, jsonlite 2.0.0 and tsfeatures 1.1.1.
+No environments or scientific databases were transferred.
+
+| Check | Evidence and outcome |
+| --- | --- |
+| Mac focused suite | `final-combined-regression.log`: 145 tests passed; configuration, coordinator, workflow, forecast, tuning, window, execution, main and storage contracts |
+| Ubuntu focused suite | `ubuntu-regression.log`: 60 tests passed; configuration, coordinator, tuning and window contracts |
+| Large API payload | `large-payload-test.log`: real local Prefect flow processes >512 KiB scientific input without publishing arrays as flow parameters |
+| Normal import/clean/transform | `entry-gates123-resume.*` preserves successful import; `entry-gates23-payload-fixed.*` completes and validates 200 cleaned and 400 transformed rows |
+| Normal forecasting/combination/evaluation | `entry-resume456.*`: all six processes completed; 3,600 base rows, 400 combinations and 40 official evaluation rows |
+| Native CPU distribution | 49 native forecasts: Mac 21 ETS; Ubuntu 20 ETS plus one per other eight methods; overlapping timestamps recorded in `verification.json` |
+| Actual scheduler loss | `scheduler-loss.json`, `entry-scheduler-loss.log`: terminate only the owned scheduler after five native commits; normal failure reports `scheduler-connection-lost`, leaving 44 retryable jobs |
+| Durable recovery | `post-fault-snapshot.json` versus completed snapshot: all 3,556 existing rows retained with identical hashes/timestamps; normal resume computes missing work |
+| Second resume | `entry-second-resume.*`, `verification.json`: all forecast hashes/timestamps and every task attempt/status unchanged |
+| Retrieval and sequential comparison | Nine `retrieval-*.json` public-entry responses match stored arrays; all means/medians/quantiles match nine sequential Ubuntu references at rtol=atol=1e-5; all mean differences zero |
+| Tuning route | `entry-tuning-one.*`: one missing ETS final fit in a copy of the accepted 800-forecast database, retaining cached fold/selection evidence; output matches accepted reference within tolerance |
+| Window/S1 route | `entry-window-one.*`: one missing window in an isolated copy; all 632 scientific window rows and exact membership match prior evidence after normal preparation |
+
+The nine-method fixture is `.amp/in/workflow-stage2-pool.duckdb`. It contains
+3,551 explicitly labelled synthetic seed rows and 49 native jobs with contexts
+of 97–154 observations. Its combinations and evaluation scores are integration
+evidence, **not scientific accuracy results**. `fixture.json` records selection,
+inputs, seed identities and the test budget; no full model campaign was repeated.
+STL-AR at the preserved period 1 used the documented seasonal-naive fallback
+(`y is not a seasonal ts object`). That is visible fallback evidence, not a
+successful STL-AR fit.
+
+During completed native forecasts, minimum measured available memory was
+3.685 GiB on Mac and 117.279 GiB on Ubuntu; recorded swap growth and safety
+responses were zero. Preserve the 3/16 GiB floors, 12 GiB large-fit and 0.75 GiB
+ETS budgets, eight large-fit and fifteen ETS in-flight limits, and 23 CPU workers.
+No GPU workers were needed; Stage 1 GPU evidence was not repeated or relabelled.
+
+Earlier failed parameter submission retained a 3.24 MB error per affected task
+in this disposable database, causing temporary database/memory growth and about
+1.9 GiB Mac swap use before the corrected run. These failed attempts are retained,
+not hidden as passing checks. Native-fit safety evidence applies to the later
+bounded run, not to the entire earlier diagnostic session.
+
+`optional-fixtures.json` retains hashes of all accepted source databases, verified
+unchanged after testing. Only diagnostic clones were edited. The window clone's
+source-manifest binding was explicitly rebased to current source for this one-job
+test, with the original binding preserved in evidence. This does not prove that
+an old child database automatically accepts a new source hash; the source-mismatch
+guard remains intact. Tuning/window scientific outputs and membership were not
+relabelled as newly computed except for their single missing test job.
+
+### Independent QA and remaining boundaries
+
+Use `00_main.py status --database .amp/in/workflow-stage2-pool.duckdb` and the
+recorded public `results` arguments in `retrieval-*.json`/`fixture.json`. Inspect
+one result per native method, explicit fallback provenance, original-scale values
+and nine-component lineage. Compare `verification.json`, task counts and saved
+snapshots; keep synthetic rows separate from native work. README contains the
+normal-route QA checklist. Fault injectors are for disposable fixtures only.
+
+Retain the AutoARIMA delegating adapter for stored paths/manual QA, the bounded
+direct local window test interface, and calibration/retrieval utilities that still
+have callers. `distributed_tuning_queue_groups` is no longer a production dispatch
+path; its remaining known caller is the legacy queue test in `test_execution.py`.
+It is a specific further-removal candidate, not a second production scheduler.
+
+The Mantis directional-accuracy continuation still needs the item-specific
+approved label definition/horizon, feature or representation inputs, model
+training/prediction settings and scientific comparison target. Existing S1 and
+holdout rules are not replaced. Stage 2 does not invent these choices or claim
+Objective 2 reproduction, a full new tuning campaign, GPU retesting, or human QA.
+
+### Complete Stage 2 script comparison
+
+The full generated per-script comparisons are appended at the end of this record
+under “Stage 2 compared with…”, including unchanged scripts and role/language
+totals. All four earlier manifests and the accepted checkpoint are preserved.
+`workflow-stage2/final-scripts.tsv` uses the same first-party physical-line scope;
+SHA256 `8989aa82e3e4f0edb7ade49d35ae723df202b364291c6299c64efbce48f37674`.
+
+| Scope | Original baseline | Accepted Stage 1 | Stage 2 |
+| --- | ---: | ---: | ---: |
+| Scripts | 67 | 81 | 81 |
+| Physical lines | 28,513 | 31,112 | 31,200 |
+
+Against accepted Stage 1, production/support shrinks by 101 lines, automated tests
+grow by 189, and manual QA is unchanged: net **+88 lines**, not overall reduction.
+There are no added/removed script files. Duplicate execution bodies were merged
+inside existing modules; new integration/safety coverage accounts for test growth.
+Configuration v7 is JSON and is included in source identity, not hidden in the
+R/Python line count. Stop here for technical/researcher review; no Stage 2 commit
+or push is authorised.
 
 The reports and previous approval restrictions below are retained as dated
 history. This acceptance supersedes their Stage 1 pause/publication restrictions,
@@ -1715,3 +1898,205 @@ the findings above rather than treating extracted modules as removed logic.
 | automated test subtotal | 27 | 27 | 9480 | 9937 | +457 |
 | manual QA subtotal | 4 | 4 | 936 | 936 | +0 |
 | All scripts | 81 | 81 | 30341 | 31112 | +771 |
+
+### Stage 2 compared with original 67-script baseline
+
+| Script before | Script after | Language | Role | Lines before | Lines after | Change | Status or reason |
+| --- | --- | --- | --- | ---: | ---: | ---: | --- |
+| scripts/setup_r.R | scripts/setup_r.R | R | production/support | 150 | 150 | +0 | Unchanged |
+| scripts/setup_support.py | scripts/setup_support.py | Python | production/support | 706 | 710 | +4 | Changed; see responsibility map |
+| src/python/00_main.py | src/python/00_main.py | Python | production/support | 763 | 35 | -728 | Changed; see responsibility map |
+| src/python/01_import.py | src/python/01_import.py | Python | production/support | 31 | 30 | -1 | Changed; see responsibility map |
+| src/python/02_preprocess.py | src/python/02_preprocess.py | Python | production/support | 32 | 35 | +3 | Changed; see responsibility map |
+| src/python/03_transform.py | src/python/03_transform.py | Python | production/support | 32 | 35 | +3 | Changed; see responsibility map |
+| src/python/04_02_forecast_chronos.py | src/python/04_02_forecast_chronos.py | Python | production/support | 281 | 281 | +0 | Unchanged |
+| src/python/04_03_forecast_m4_submission.py | src/python/04_03_forecast_m4_submission.py | Python | production/support | 29 | 29 | +0 | Unchanged |
+| src/python/04_forecast.py | src/python/04_forecast.py | Python | production/support | 43 | 43 | +0 | Unchanged |
+| src/python/05_combine.py | src/python/05_combine.py | Python | production/support | 32 | 35 | +3 | Changed; see responsibility map |
+| src/python/06_01_evaluate_gift_eval.py | src/python/06_01_evaluate_gift_eval.py | Python | production/support | 462 | 462 | +0 | Unchanged |
+| src/python/06_evaluate.py | src/python/06_evaluate.py | Python | production/support | 34 | 37 | +3 | Changed; see responsibility map |
+| src/python/tests/__init__.py | src/python/tests/__init__.py | Python | automated test | 10 | 10 | +0 | Unchanged |
+| src/python/tests/acceptance.py | src/python/tests/acceptance.py | Python | automated test | 1784 | 1871 | +87 | Changed; see responsibility map |
+| src/python/tests/integration/__init__.py | src/python/tests/integration/__init__.py | Python | automated test | 10 | 10 | +0 | Unchanged |
+| src/python/tests/integration/test_gift_eval_evaluation.py | src/python/tests/integration/test_gift_eval_evaluation.py | Python | automated test | 189 | 189 | +0 | Unchanged |
+| src/python/tests/integration/test_gift_eval_semantics.py | src/python/tests/integration/test_gift_eval_semantics.py | Python | automated test | 98 | 98 | +0 | Unchanged |
+| src/python/tests/integration/test_import_pipeline.py | src/python/tests/integration/test_import_pipeline.py | Python | automated test | 151 | 151 | +0 | Unchanged |
+| src/python/tests/integration/test_preprocessing_regression.py | src/python/tests/integration/test_preprocessing_regression.py | Python | automated test | 72 | 72 | +0 | Unchanged |
+| src/python/tests/test_acceptance.py | src/python/tests/test_acceptance.py | Python | automated test | 457 | 457 | +0 | Unchanged |
+| src/python/tests/test_configuration.py | src/python/tests/test_configuration.py | Python | automated test | 297 | 318 | +21 | Changed; see responsibility map |
+| src/python/tests/test_execution.py | src/python/tests/test_execution.py | Python | automated test | 893 | 1038 | +145 | Changed; see responsibility map |
+| src/python/tests/test_experiment_execution.py | src/python/tests/test_experiment_execution.py | Python | automated test | 972 | 967 | -5 | Changed; see responsibility map |
+| — | src/python/tests/test_forecast_flow.py | Python | automated test | 0 | 339 | +339 | Added; responsibility split or contract test |
+| — | src/python/tests/test_forecast_safety.py | Python | automated test | 0 | 374 | +374 | Added; responsibility split or contract test |
+| src/python/tests/test_gpu_concurrency_calibration.py | src/python/tests/test_gpu_concurrency_calibration.py | Python | automated test | 197 | 197 | +0 | Unchanged |
+| src/python/tests/test_import.py | src/python/tests/test_import.py | Python | automated test | 400 | 467 | +67 | Changed; see responsibility map |
+| src/python/tests/test_m4_reference.py | src/python/tests/test_m4_reference.py | Python | automated test | 354 | 354 | +0 | Unchanged |
+| src/python/tests/test_main.py | src/python/tests/test_main.py | Python | automated test | 757 | 467 | -290 | Changed; see responsibility map |
+| src/python/tests/test_preprocessing.py | src/python/tests/test_preprocessing.py | Python | automated test | 109 | 109 | +0 | Unchanged |
+| — | src/python/tests/test_process_storage.py | Python | automated test | 0 | 135 | +135 | Added; responsibility split or contract test |
+| src/python/tests/test_seasonal_period_tuning.py | src/python/tests/test_seasonal_period_tuning.py | Python | automated test | 124 | 225 | +101 | Changed; see responsibility map |
+| src/python/tests/test_setup.py | src/python/tests/test_setup.py | Python | automated test | 394 | 394 | +0 | Unchanged |
+| src/python/tests/test_transformations.py | src/python/tests/test_transformations.py | Python | automated test | 258 | 258 | +0 | Unchanged |
+| src/python/tests/test_window_preparation.py | src/python/tests/test_window_preparation.py | Python | automated test | 665 | 704 | +39 | Changed; see responsibility map |
+| — | src/python/tests/test_workflow_orchestration.py | Python | automated test | 0 | 267 | +267 | Added; responsibility split or contract test |
+| src/python/util/__init__.py | src/python/util/__init__.py | Python | production/support | 10 | 10 | +0 | Unchanged |
+| src/python/util/configuration.py | src/python/util/configuration.py | Python | production/support | 1043 | 1061 | +18 | Changed; see responsibility map |
+| src/python/util/database.py | src/python/util/database.py | Python | production/support | 962 | 962 | +0 | Unchanged |
+| src/python/util/distributed_cluster.py | src/python/util/distributed_cluster.py | Python | production/support | 343 | 368 | +25 | Changed; see responsibility map |
+| src/python/util/distributed_execution.py | src/python/util/distributed_execution.py | Python | production/support | 1288 | 1525 | +237 | Changed; see responsibility map |
+| src/python/util/execution_calibration.py | src/python/util/execution_calibration.py | Python | production/support | 1141 | 1141 | +0 | Unchanged |
+| — | src/python/util/execution_event_storage.py | Python | production/support | 0 | 125 | +125 | Added; responsibility split or contract test |
+| src/python/util/execution_profiles.py | src/python/util/execution_profiles.py | Python | production/support | 564 | 605 | +41 | Changed; see responsibility map |
+| src/python/util/experiment_execution.py | src/python/util/experiment_execution.py | Python | production/support | 3126 | 2697 | -429 | Changed; see responsibility map |
+| src/python/util/forecast_combination.py | src/python/util/forecast_combination.py | Python | production/support | 52 | 49 | -3 | Changed; see responsibility map |
+| — | src/python/util/forecast_flow.py | Python | production/support | 0 | 191 | +191 | Added; responsibility split or contract test |
+| — | src/python/util/forecast_provider.py | Python | production/support | 0 | 284 | +284 | Added; responsibility split or contract test |
+| — | src/python/util/forecast_storage.py | Python | production/support | 0 | 156 | +156 | Added; responsibility split or contract test |
+| src/python/util/gift_eval_acquisition.py | src/python/util/gift_eval_acquisition.py | Python | production/support | 294 | 294 | +0 | Unchanged |
+| src/python/util/gift_eval_source.py | src/python/util/gift_eval_source.py | Python | production/support | 150 | 209 | +59 | Changed; see responsibility map |
+| src/python/util/gpu_concurrency_calibration.py | src/python/util/gpu_concurrency_calibration.py | Python | production/support | 1386 | 1386 | +0 | Unchanged |
+| src/python/util/import_execution.py | src/python/util/import_execution.py | Python | production/support | 986 | 1144 | +158 | Changed; see responsibility map |
+| — | src/python/util/import_flow.py | Python | production/support | 0 | 54 | +54 | Added; responsibility split or contract test |
+| src/python/util/m4_submission.py | src/python/util/m4_submission.py | Python | production/support | 121 | 121 | +0 | Unchanged |
+| — | src/python/util/process_storage.py | Python | production/support | 0 | 304 | +304 | Added; responsibility split or contract test |
+| src/python/util/provenance.py | src/python/util/provenance.py | Python | production/support | 55 | 55 | +0 | Unchanged |
+| — | src/python/util/researcher_actions.py | Python | production/support | 0 | 539 | +539 | Added; responsibility split or contract test |
+| — | src/python/util/researcher_cli.py | Python | production/support | 0 | 148 | +148 | Added; responsibility split or contract test |
+| — | src/python/util/researcher_request.py | Python | production/support | 0 | 24 | +24 | Added; responsibility split or contract test |
+| src/python/util/seasonal_period_tuning.py | src/python/util/seasonal_period_tuning.py | Python | production/support | 1614 | 1213 | -401 | Changed; see responsibility map |
+| src/python/util/transformations.py | src/python/util/transformations.py | Python | production/support | 263 | 263 | +0 | Unchanged |
+| src/python/util/window_preparation.py | src/python/util/window_preparation.py | Python | production/support | 1087 | 1235 | +148 | Changed; see responsibility map |
+| — | src/python/util/workflow_orchestration.py | Python | production/support | 0 | 443 | +443 | Added; responsibility split or contract test |
+| src/r/01_02_import_m4comp2018.R | src/r/01_02_import_m4comp2018.R | R | production/support | 209 | 209 | +0 | Unchanged |
+| src/r/02_01_preprocess_series.R | src/r/02_01_preprocess_series.R | R | production/support | 81 | 81 | +0 | Unchanged |
+| src/r/04_01_forecast_auto_arima.R | src/r/04_01_forecast_auto_arima.R | R | production/support | 86 | 86 | +0 | Unchanged |
+| src/r/04_01_forecast_r_methods.R | src/r/04_01_forecast_r_methods.R | R | production/support | 103 | 102 | -1 | Changed; see responsibility map |
+| src/r/qa/get_m4_daily_series.R | src/r/qa/get_m4_daily_series.R | R | manual QA | 300 | 300 | +0 | Unchanged |
+| src/r/qa/inspect_rolling_window.R | src/r/qa/inspect_rolling_window.R | R | manual QA | 277 | 277 | +0 | Unchanged |
+| src/r/qa/inspect_seasonal_period_tuning.R | src/r/qa/inspect_seasonal_period_tuning.R | R | manual QA | 149 | 149 | +0 | Unchanged |
+| src/r/qa/inspect_standardisation.R | src/r/qa/inspect_standardisation.R | R | manual QA | 210 | 210 | +0 | Unchanged |
+| src/r/tests/test_forecast_methods.R | src/r/tests/test_forecast_methods.R | R | automated test | 440 | 440 | +0 | Unchanged |
+| src/r/tests/test_import_m4comp2018.R | src/r/tests/test_import_m4comp2018.R | R | automated test | 97 | 97 | +0 | Unchanged |
+| src/r/tests/test_transformations.R | src/r/tests/test_transformations.R | R | automated test | 118 | 118 | +0 | Unchanged |
+| src/r/util/forecast_methods.R | src/r/util/forecast_methods.R | R | production/support | 797 | 797 | +0 | Unchanged |
+| src/r/util/labels.R | src/r/util/labels.R | R | production/support | 21 | 21 | +0 | Unchanged |
+| src/r/util/seasonal_period.R | src/r/util/seasonal_period.R | R | production/support | 79 | 79 | +0 | Unchanged |
+| src/r/util/time_series_input.R | src/r/util/time_series_input.R | R | production/support | 57 | 57 | +0 | Unchanged |
+| src/r/util/transformations.R | src/r/util/transformations.R | R | production/support | 188 | 188 | +0 | Unchanged |
+| src/r/util/window_preparation.R | src/r/util/window_preparation.R | R | production/support | 30 | 30 | +0 | Unchanged |
+
+| Language and role | Scripts before | Scripts after | Lines before | Lines after | Line change |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Python — production/support | 29 | 39 | 16930 | 18338 | +1408 |
+| Python — automated test | 20 | 24 | 8191 | 9471 | +1280 |
+| Python — manual QA | 0 | 0 | 0 | 0 | +0 |
+| R — production/support | 11 | 11 | 1801 | 1800 | -1 |
+| R — automated test | 3 | 3 | 655 | 655 | +0 |
+| R — manual QA | 4 | 4 | 936 | 936 | +0 |
+| Python subtotal | 49 | 63 | 25121 | 27809 | +2688 |
+| R subtotal | 18 | 18 | 3392 | 3391 | -1 |
+| production/support subtotal | 40 | 50 | 18731 | 20138 | +1407 |
+| automated test subtotal | 23 | 27 | 8846 | 10126 | +1280 |
+| manual QA subtotal | 4 | 4 | 936 | 936 | +0 |
+| All scripts | 67 | 81 | 28513 | 31200 | +2687 |
+
+### Stage 2 compared with accepted Stage 1 checkpoint
+
+| Script before | Script after | Language | Role | Lines before | Lines after | Change | Status or reason |
+| --- | --- | --- | --- | ---: | ---: | ---: | --- |
+| scripts/setup_r.R | scripts/setup_r.R | R | production/support | 150 | 150 | +0 | Unchanged |
+| scripts/setup_support.py | scripts/setup_support.py | Python | production/support | 710 | 710 | +0 | Unchanged |
+| src/python/00_main.py | src/python/00_main.py | Python | production/support | 35 | 35 | +0 | Unchanged |
+| src/python/01_import.py | src/python/01_import.py | Python | production/support | 30 | 30 | +0 | Unchanged |
+| src/python/02_preprocess.py | src/python/02_preprocess.py | Python | production/support | 32 | 35 | +3 | Changed; see responsibility map |
+| src/python/03_transform.py | src/python/03_transform.py | Python | production/support | 32 | 35 | +3 | Changed; see responsibility map |
+| src/python/04_02_forecast_chronos.py | src/python/04_02_forecast_chronos.py | Python | production/support | 281 | 281 | +0 | Unchanged |
+| src/python/04_03_forecast_m4_submission.py | src/python/04_03_forecast_m4_submission.py | Python | production/support | 29 | 29 | +0 | Unchanged |
+| src/python/04_forecast.py | src/python/04_forecast.py | Python | production/support | 43 | 43 | +0 | Unchanged |
+| src/python/05_combine.py | src/python/05_combine.py | Python | production/support | 32 | 35 | +3 | Changed; see responsibility map |
+| src/python/06_01_evaluate_gift_eval.py | src/python/06_01_evaluate_gift_eval.py | Python | production/support | 462 | 462 | +0 | Unchanged |
+| src/python/06_evaluate.py | src/python/06_evaluate.py | Python | production/support | 34 | 37 | +3 | Changed; see responsibility map |
+| src/python/tests/__init__.py | src/python/tests/__init__.py | Python | automated test | 10 | 10 | +0 | Unchanged |
+| src/python/tests/acceptance.py | src/python/tests/acceptance.py | Python | automated test | 1871 | 1871 | +0 | Unchanged |
+| src/python/tests/integration/__init__.py | src/python/tests/integration/__init__.py | Python | automated test | 10 | 10 | +0 | Unchanged |
+| src/python/tests/integration/test_gift_eval_evaluation.py | src/python/tests/integration/test_gift_eval_evaluation.py | Python | automated test | 189 | 189 | +0 | Unchanged |
+| src/python/tests/integration/test_gift_eval_semantics.py | src/python/tests/integration/test_gift_eval_semantics.py | Python | automated test | 98 | 98 | +0 | Unchanged |
+| src/python/tests/integration/test_import_pipeline.py | src/python/tests/integration/test_import_pipeline.py | Python | automated test | 151 | 151 | +0 | Unchanged |
+| src/python/tests/integration/test_preprocessing_regression.py | src/python/tests/integration/test_preprocessing_regression.py | Python | automated test | 72 | 72 | +0 | Unchanged |
+| src/python/tests/test_acceptance.py | src/python/tests/test_acceptance.py | Python | automated test | 457 | 457 | +0 | Unchanged |
+| src/python/tests/test_configuration.py | src/python/tests/test_configuration.py | Python | automated test | 297 | 318 | +21 | Changed; see responsibility map |
+| src/python/tests/test_execution.py | src/python/tests/test_execution.py | Python | automated test | 1038 | 1038 | +0 | Unchanged |
+| src/python/tests/test_experiment_execution.py | src/python/tests/test_experiment_execution.py | Python | automated test | 985 | 967 | -18 | Changed; see responsibility map |
+| src/python/tests/test_forecast_flow.py | src/python/tests/test_forecast_flow.py | Python | automated test | 338 | 339 | +1 | Changed; see responsibility map |
+| src/python/tests/test_forecast_safety.py | src/python/tests/test_forecast_safety.py | Python | automated test | 374 | 374 | +0 | Unchanged |
+| src/python/tests/test_gpu_concurrency_calibration.py | src/python/tests/test_gpu_concurrency_calibration.py | Python | automated test | 197 | 197 | +0 | Unchanged |
+| src/python/tests/test_import.py | src/python/tests/test_import.py | Python | automated test | 467 | 467 | +0 | Unchanged |
+| src/python/tests/test_m4_reference.py | src/python/tests/test_m4_reference.py | Python | automated test | 354 | 354 | +0 | Unchanged |
+| src/python/tests/test_main.py | src/python/tests/test_main.py | Python | automated test | 457 | 467 | +10 | Changed; see responsibility map |
+| src/python/tests/test_preprocessing.py | src/python/tests/test_preprocessing.py | Python | automated test | 109 | 109 | +0 | Unchanged |
+| src/python/tests/test_process_storage.py | src/python/tests/test_process_storage.py | Python | automated test | 135 | 135 | +0 | Unchanged |
+| src/python/tests/test_seasonal_period_tuning.py | src/python/tests/test_seasonal_period_tuning.py | Python | automated test | 124 | 225 | +101 | Changed; see responsibility map |
+| src/python/tests/test_setup.py | src/python/tests/test_setup.py | Python | automated test | 394 | 394 | +0 | Unchanged |
+| src/python/tests/test_transformations.py | src/python/tests/test_transformations.py | Python | automated test | 258 | 258 | +0 | Unchanged |
+| src/python/tests/test_window_preparation.py | src/python/tests/test_window_preparation.py | Python | automated test | 665 | 704 | +39 | Changed; see responsibility map |
+| src/python/tests/test_workflow_orchestration.py | src/python/tests/test_workflow_orchestration.py | Python | automated test | 232 | 267 | +35 | Changed; see responsibility map |
+| src/python/util/__init__.py | src/python/util/__init__.py | Python | production/support | 10 | 10 | +0 | Unchanged |
+| src/python/util/configuration.py | src/python/util/configuration.py | Python | production/support | 1043 | 1061 | +18 | Changed; see responsibility map |
+| src/python/util/database.py | src/python/util/database.py | Python | production/support | 962 | 962 | +0 | Unchanged |
+| src/python/util/distributed_cluster.py | src/python/util/distributed_cluster.py | Python | production/support | 368 | 368 | +0 | Unchanged |
+| src/python/util/distributed_execution.py | src/python/util/distributed_execution.py | Python | production/support | 1519 | 1525 | +6 | Changed; see responsibility map |
+| src/python/util/execution_calibration.py | src/python/util/execution_calibration.py | Python | production/support | 1141 | 1141 | +0 | Unchanged |
+| src/python/util/execution_event_storage.py | src/python/util/execution_event_storage.py | Python | production/support | 125 | 125 | +0 | Unchanged |
+| src/python/util/execution_profiles.py | src/python/util/execution_profiles.py | Python | production/support | 605 | 605 | +0 | Unchanged |
+| src/python/util/experiment_execution.py | src/python/util/experiment_execution.py | Python | production/support | 2765 | 2697 | -68 | Changed; see responsibility map |
+| src/python/util/forecast_combination.py | src/python/util/forecast_combination.py | Python | production/support | 52 | 49 | -3 | Changed; see responsibility map |
+| src/python/util/forecast_flow.py | src/python/util/forecast_flow.py | Python | production/support | 174 | 191 | +17 | Changed; see responsibility map |
+| src/python/util/forecast_provider.py | src/python/util/forecast_provider.py | Python | production/support | 271 | 284 | +13 | Changed; see responsibility map |
+| src/python/util/forecast_storage.py | src/python/util/forecast_storage.py | Python | production/support | 147 | 156 | +9 | Changed; see responsibility map |
+| src/python/util/gift_eval_acquisition.py | src/python/util/gift_eval_acquisition.py | Python | production/support | 294 | 294 | +0 | Unchanged |
+| src/python/util/gift_eval_source.py | src/python/util/gift_eval_source.py | Python | production/support | 209 | 209 | +0 | Unchanged |
+| src/python/util/gpu_concurrency_calibration.py | src/python/util/gpu_concurrency_calibration.py | Python | production/support | 1386 | 1386 | +0 | Unchanged |
+| src/python/util/import_execution.py | src/python/util/import_execution.py | Python | production/support | 1144 | 1144 | +0 | Unchanged |
+| src/python/util/import_flow.py | src/python/util/import_flow.py | Python | production/support | 54 | 54 | +0 | Unchanged |
+| src/python/util/m4_submission.py | src/python/util/m4_submission.py | Python | production/support | 121 | 121 | +0 | Unchanged |
+| src/python/util/process_storage.py | src/python/util/process_storage.py | Python | production/support | 304 | 304 | +0 | Unchanged |
+| src/python/util/provenance.py | src/python/util/provenance.py | Python | production/support | 55 | 55 | +0 | Unchanged |
+| src/python/util/researcher_actions.py | src/python/util/researcher_actions.py | Python | production/support | 534 | 539 | +5 | Changed; see responsibility map |
+| src/python/util/researcher_cli.py | src/python/util/researcher_cli.py | Python | production/support | 148 | 148 | +0 | Unchanged |
+| src/python/util/researcher_request.py | src/python/util/researcher_request.py | Python | production/support | 24 | 24 | +0 | Unchanged |
+| src/python/util/seasonal_period_tuning.py | src/python/util/seasonal_period_tuning.py | Python | production/support | 1614 | 1213 | -401 | Changed; see responsibility map |
+| src/python/util/transformations.py | src/python/util/transformations.py | Python | production/support | 263 | 263 | +0 | Unchanged |
+| src/python/util/window_preparation.py | src/python/util/window_preparation.py | Python | production/support | 1098 | 1235 | +137 | Changed; see responsibility map |
+| src/python/util/workflow_orchestration.py | src/python/util/workflow_orchestration.py | Python | production/support | 288 | 443 | +155 | Changed; see responsibility map |
+| src/r/01_02_import_m4comp2018.R | src/r/01_02_import_m4comp2018.R | R | production/support | 209 | 209 | +0 | Unchanged |
+| src/r/02_01_preprocess_series.R | src/r/02_01_preprocess_series.R | R | production/support | 81 | 81 | +0 | Unchanged |
+| src/r/04_01_forecast_auto_arima.R | src/r/04_01_forecast_auto_arima.R | R | production/support | 86 | 86 | +0 | Unchanged |
+| src/r/04_01_forecast_r_methods.R | src/r/04_01_forecast_r_methods.R | R | production/support | 103 | 102 | -1 | Changed; see responsibility map |
+| src/r/qa/get_m4_daily_series.R | src/r/qa/get_m4_daily_series.R | R | manual QA | 300 | 300 | +0 | Unchanged |
+| src/r/qa/inspect_rolling_window.R | src/r/qa/inspect_rolling_window.R | R | manual QA | 277 | 277 | +0 | Unchanged |
+| src/r/qa/inspect_seasonal_period_tuning.R | src/r/qa/inspect_seasonal_period_tuning.R | R | manual QA | 149 | 149 | +0 | Unchanged |
+| src/r/qa/inspect_standardisation.R | src/r/qa/inspect_standardisation.R | R | manual QA | 210 | 210 | +0 | Unchanged |
+| src/r/tests/test_forecast_methods.R | src/r/tests/test_forecast_methods.R | R | automated test | 440 | 440 | +0 | Unchanged |
+| src/r/tests/test_import_m4comp2018.R | src/r/tests/test_import_m4comp2018.R | R | automated test | 97 | 97 | +0 | Unchanged |
+| src/r/tests/test_transformations.R | src/r/tests/test_transformations.R | R | automated test | 118 | 118 | +0 | Unchanged |
+| src/r/util/forecast_methods.R | src/r/util/forecast_methods.R | R | production/support | 797 | 797 | +0 | Unchanged |
+| src/r/util/labels.R | src/r/util/labels.R | R | production/support | 21 | 21 | +0 | Unchanged |
+| src/r/util/seasonal_period.R | src/r/util/seasonal_period.R | R | production/support | 79 | 79 | +0 | Unchanged |
+| src/r/util/time_series_input.R | src/r/util/time_series_input.R | R | production/support | 57 | 57 | +0 | Unchanged |
+| src/r/util/transformations.R | src/r/util/transformations.R | R | production/support | 188 | 188 | +0 | Unchanged |
+| src/r/util/window_preparation.R | src/r/util/window_preparation.R | R | production/support | 30 | 30 | +0 | Unchanged |
+
+| Language and role | Scripts before | Scripts after | Lines before | Lines after | Line change |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Python — production/support | 39 | 39 | 18438 | 18338 | -100 |
+| Python — automated test | 24 | 24 | 9282 | 9471 | +189 |
+| Python — manual QA | 0 | 0 | 0 | 0 | +0 |
+| R — production/support | 11 | 11 | 1801 | 1800 | -1 |
+| R — automated test | 3 | 3 | 655 | 655 | +0 |
+| R — manual QA | 4 | 4 | 936 | 936 | +0 |
+| Python subtotal | 63 | 63 | 27720 | 27809 | +89 |
+| R subtotal | 18 | 18 | 3392 | 3391 | -1 |
+| production/support subtotal | 50 | 50 | 20239 | 20138 | -101 |
+| automated test subtotal | 27 | 27 | 9937 | 10126 | +189 |
+| manual QA subtotal | 4 | 4 | 936 | 936 | +0 |
+| All scripts | 81 | 81 | 31112 | 31200 | +88 |

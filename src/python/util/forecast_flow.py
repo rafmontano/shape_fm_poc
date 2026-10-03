@@ -8,7 +8,7 @@
 # Run from: Imported; not run directly.
 # ==============================================================================
 
-"""Prefect flow for ordinary AutoARIMA and Chronos forecasting."""
+"""Prefect flow for the configured native R pool and Chronos forecasting."""
 
 from __future__ import annotations
 
@@ -24,13 +24,14 @@ from prefect.futures import as_completed
 from prefect_dask import DaskTaskRunner
 
 from .distributed_execution import AUTOARIMA_R_RESOURCE
+from .configuration import R_MODEL_METHODS
 from .forecast_storage import ForecastStorage
 
 
-@task(name="compute AutoARIMA forecast batch", cache_policy=NO_CACHE, persist_result=False)
+@task(name="compute R forecast batch", cache_policy=NO_CACHE, persist_result=False)
 def compute_autoarima_batch(provider: Any, batch: list[dict[str, Any]]) -> dict[str, Any]:
-    """Compute one bounded AutoARIMA batch without coordinator storage."""
-    return provider.forecast("auto_arima", batch)
+    """Compute one homogeneous registered R batch without coordinator storage."""
+    return provider.forecast(batch[0]["model"], batch)
 
 
 @task(name="compute Chronos forecast batch", cache_policy=NO_CACHE, persist_result=False)
@@ -49,7 +50,8 @@ def _run_submission_phase(*, cpu_batches: list[list[dict[str, Any]]],
                           gpu_batches: list[list[dict[str, Any]]], auto_task: Any,
                           chronos_task: Any, auto_provider: Any, chronos_provider: Any,
                           storage: ForecastStorage, max_in_flight: int,
-                          autoarima_max_in_flight: int, distributed: bool) -> None:
+                          autoarima_max_in_flight: int, distributed: bool,
+                          ets_max_in_flight: int | None = None) -> None:
     """Submit one bounded phase, reserving a slot while CPU work can progress.
 
     Submitted Prefect futures, including futures undergoing Prefect retries, own
@@ -65,9 +67,15 @@ def _run_submission_phase(*, cpu_batches: list[list[dict[str, Any]]],
     while submitted or pending_cpu or pending_gpu:
         while not failures and len(submitted) < max_in_flight:
             model = None
-            if pending_cpu and active_cpu < autoarima_max_in_flight:
-                model = "auto_arima"
-                batch = pending_cpu.popleft()
+            active_ets = sum(name == "ets" for name, _ in submitted.values())
+            eligible = next((i for i, jobs in enumerate(pending_cpu)
+                             if (active_ets < (ets_max_in_flight or autoarima_max_in_flight)
+                                 if jobs[0]["model"] == "ets" else
+                                 active_cpu - active_ets < autoarima_max_in_flight)), None)
+            if eligible is not None:
+                batch = pending_cpu[eligible]
+                del pending_cpu[eligible]
+                model = batch[0]["model"]
             else:
                 cpu_work_remains = bool(pending_cpu) or active_cpu > 0
                 # A blocked GPU future must not consume the last global slot
@@ -86,19 +94,20 @@ def _run_submission_phase(*, cpu_batches: list[list[dict[str, Any]]],
                     break
             # Ordinary protected fits use the same approved large-fit capability
             # as tuning; generic Mac CPU capacity does not imply a12GiB fit fits.
-            resource = ({"CPU": 1, AUTOARIMA_R_RESOURCE: 1}
-                        if model == "auto_arima" else {"CHRONOS_GPU_SLOT": 1})
+            resource = ({"CHRONOS_GPU_SLOT": 1} if model == "chronos_2" else
+                        {"CPU": 1} if model == "ets" else
+                        {"CPU": 1, AUTOARIMA_R_RESOURCE: 1})
             annotation = dask.annotate(resources=resource, retries=0) if distributed else nullcontext()
             try:
                 with annotation:
                     future = (auto_task.submit(auto_provider, batch)
-                              if model == "auto_arima"
+                              if model in R_MODEL_METHODS
                               else chronos_task.submit(chronos_provider, batch))
             except Exception as error:
                 failures.append(error)
                 break
             submitted[future] = (model, batch)
-            active_cpu += model == "auto_arima"
+            active_cpu += model != "chronos_2"
 
         if not submitted:
             if failures:
@@ -109,7 +118,7 @@ def _run_submission_phase(*, cpu_batches: list[list[dict[str, Any]]],
 
         future = next(as_completed(list(submitted)))
         model, batch = submitted.pop(future)
-        active_cpu -= model == "auto_arima"
+        active_cpu -= model != "chronos_2"
         try:
             storage.commit_response(batch, future.result())
         except Exception as error:
@@ -120,13 +129,13 @@ def _run_submission_phase(*, cpu_batches: list[list[dict[str, Any]]],
 
 
 @flow(name="gate-4-ordinary-forecast", persist_result=False, validate_parameters=False)
-def ordinary_forecast_flow(database: Path, experiment_id: str, attempts: dict[str, int],
-                           rows: list[tuple], *, storage_type: type[ForecastStorage],
+def ordinary_forecast_flow(database: Path, experiment_id: str, *, storage_type: type[ForecastStorage],
                            auto_provider: Any, chronos_provider: Any,
                            auto_batch_size: int, chronos_batch_size: int,
                            max_in_flight: int, autoarima_max_in_flight: int,
                            cpu_gpu_overlap: bool,
-                           distributed: bool, retries: int) -> None:
+                           distributed: bool, retries: int,
+                           ets_max_in_flight: int | None = None) -> None:
     """Prepare jobs, submit bounded named compute tasks, commit locally, and verify."""
     from .experiment_execution import ExperimentCoordinator, _length_aware_batches
 
@@ -136,11 +145,17 @@ def ordinary_forecast_flow(database: Path, experiment_id: str, attempts: dict[st
     # Live storage is created inside the coordinator flow, never in its serialized
     # parameters: prefect-dask propagates parent parameters in task context.
     with ExperimentCoordinator(database) as coordinator:
+        rows = coordinator._pending(experiment_id, 4)
+        attempts = dict(coordinator.connection.execute(
+            "SELECT task_id, attempt_count FROM experiment_tasks "
+            "WHERE experiment_id=? AND stage=4 AND status!='completed'",
+            [experiment_id],
+        ).fetchall())
         storage = storage_type(coordinator, experiment_id, attempts)
         jobs = storage.prepare_pending_jobs(rows)
-        auto_batches = _batches(
-            [job for job in jobs if job["model"] == "auto_arima"], auto_batch_size
-        )
+        auto_batches = [batch for model in R_MODEL_METHODS
+                        for batch in _batches([job for job in jobs if job["model"] == model],
+                                              auto_batch_size)]
         chronos_batches = _length_aware_batches(
             [job for job in jobs if job["model"] == "chronos_2"], chronos_batch_size
         )
@@ -156,6 +171,7 @@ def ordinary_forecast_flow(database: Path, experiment_id: str, attempts: dict[st
                 max_in_flight=max_in_flight,
                 autoarima_max_in_flight=autoarima_max_in_flight,
                 distributed=distributed,
+                ets_max_in_flight=ets_max_in_flight,
             )
         storage.verify_completion(jobs)
 
@@ -163,8 +179,9 @@ def ordinary_forecast_flow(database: Path, experiment_id: str, attempts: dict[st
 def run_ordinary_forecast_flow(*, scheduler_address: str | None, **kwargs: Any) -> None:
     """Run locally or bind explicitly to an existing scheduler; never create a cluster."""
     storage = kwargs.pop("storage")
+    kwargs.pop("rows")
     kwargs.update(database=storage.coordinator.database_path,
-                  experiment_id=storage.experiment_id, attempts=storage.attempts,
+                  experiment_id=storage.experiment_id,
                   storage_type=type(storage))
     selected = ordinary_forecast_flow
     if kwargs["distributed"]:

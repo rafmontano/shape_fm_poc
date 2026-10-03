@@ -309,6 +309,16 @@ class RestoredProcessActionTests(unittest.TestCase):
             ProcessAction(registry).run(database, None, (4,))
         registry.load.assert_not_called()
 
+    def test_profile_import_keeps_gate_one_local_contract(self):
+        """A multi-gate profile must not pass compute-only arguments to import."""
+        registry = MagicMock()
+        registry.load.return_value.run = MagicMock(return_value={"series_count": 100})
+        storage = MagicMock()
+        storage.database = Path("bounded.duckdb")
+        ProcessAction(registry)._execute(storage, (object(), {}), object(), 1)
+        registry.load.return_value.run.assert_called_once_with(storage.database)
+        storage.validate.assert_called_once_with(1, {"series_count": 100})
+
     def test_profile_action_propagates_resolved_gpu_topology(self):
         """The normal action starts the approved GPU topology and propagates exact counts."""
         configuration = SimpleNamespace(

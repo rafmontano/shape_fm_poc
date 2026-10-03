@@ -2,7 +2,7 @@
 # forecast_combination.py
 #
 # Purpose: Shared deterministic forecast calculations for coordinator and workers.
-# Inputs: Two forecast mappings with equally shaped mean, median, and quantile arrays.
+# Inputs: Configured forecast mappings with equally shaped mean, median, and quantile arrays.
 # Outputs: Elementwise equal-weight forecast with noncrossing quantiles and a rearrangement flag.
 # Run from: Imported; not run directly.
 # ==============================================================================
@@ -15,27 +15,24 @@ from typing import Any
 
 
 def combine_equal_weight(
-    left: dict[str, Any], right: dict[str, Any], weights: dict[str, float]
+    components: dict[str, dict[str, Any]], weights: dict[str, float]
 ) -> dict[str, Any]:
-    """Purpose: Combine two forecast distributions with the mandated equal weights.
+    """Combine configured distributions with equal weights and strict array shapes.
 
-    Inputs: Forecast mappings containing equally shaped ``mean``, ``median``, and
-    horizon-by-quantile arrays, plus the exact two-model 0.5/0.5 weight mapping.
-    Outputs: Elementwise averages and noncrossing quantiles with a rearrangement flag.
-    Notes: Rearrangement sorts quantiles independently at each forecast horizon.
+    Arrays use levels-by-horizon quantiles. Corresponding means, medians and
+    quantiles are averaged; sorting removes crossings independently per horizon.
+    Two-component arithmetic retains the historical (left + right) / 2 result.
     """
-    if weights != {"auto_arima": 0.5, "chronos_2": 0.5}:
-        raise ValueError("equal-weight combination requires two weights of 0.5")
+    if not components or weights != {name: 1 / len(components) for name in components}:
+        raise ValueError("equal-weight combination requires every configured component")
 
-    def average(a: list[float], b: list[float]) -> list[float]:
-        """Return strict pairwise arithmetic means, rejecting unequal lengths."""
-        return [(x + y) / 2.0 for x, y in zip(a, b, strict=True)]
+    def average(arrays: list[list[float]]) -> list[float]:
+        """Average corresponding values, rejecting unequal lengths."""
+        return [sum(values) / len(arrays) for values in zip(*arrays, strict=True)]
 
     quantiles = [
-        average(left_values, right_values)
-        for left_values, right_values in zip(
-            left["quantiles"], right["quantiles"], strict=True
-        )
+        average(list(level))
+        for level in zip(*(item["quantiles"] for item in components.values()), strict=True)
     ]
     points = list(zip(*quantiles, strict=True))
     rearranged = any(tuple(point) != tuple(sorted(point)) for point in points)
@@ -45,8 +42,8 @@ def combine_equal_weight(
             for values in zip(*(sorted(point) for point in points), strict=True)
         ]
     return {
-        "mean": average(left["mean"], right["mean"]),
-        "median": average(left["median"], right["median"]),
+        "mean": average([item["mean"] for item in components.values()]),
+        "median": average([item["median"] for item in components.values()]),
         "quantiles": quantiles,
         "quantiles_rearranged": rearranged,
     }

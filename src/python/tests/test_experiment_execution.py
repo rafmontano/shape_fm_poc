@@ -23,9 +23,6 @@ from util.experiment_execution import (
     ExperimentCoordinator,
     _batches,
     _combine_job,
-    _run_external_batches,
-    _run_parallel,
-    _transform_job,
     scientific_configuration,
     validated_submission_metadata,
 )
@@ -98,15 +95,6 @@ class TransformationTests(unittest.TestCase):
         self.assertNotIn(max(future), first.parameters.values())
         self.assertEqual(first, second)
 
-    def test_sequential_and_two_worker_transform_paths_are_equal(self):
-        """Sequential and two-process transformation return identical ordered results."""
-        jobs = [([float(i), float(i + 2), float(i - 3)], "minmax_then_standardize") for i in range(8)]
-        self.assertEqual(
-            _run_parallel(_transform_job, jobs, 1),
-            _run_parallel(_transform_job, jobs, 2),
-        )
-
-
 class ExternalBatchTests(unittest.TestCase):
     """Purpose: Verify forecast combination and external batch execution contracts.
 
@@ -117,16 +105,16 @@ class ExternalBatchTests(unittest.TestCase):
         """Equal-weight combination sorts crossed averaged quantiles and flags the repair."""
         result = _combine_job(
             {
-                "left": {
+                "components": {"auto_arima": {
                     "mean": [4.0],
                     "median": [4.0],
                     "quantiles": [[1.0], [3.0], [5.0]],
                 },
-                "right": {
+                "chronos_2": {
                     "mean": [8.0],
                     "median": [8.0],
                     "quantiles": [[9.0], [3.0], [7.0]],
-                },
+                }},
                 "weights": {"auto_arima": 0.5, "chronos_2": 0.5},
             }
         )
@@ -139,50 +127,26 @@ class ExternalBatchTests(unittest.TestCase):
         """Already ordered averaged quantiles remain unflagged."""
         result = _combine_job(
             {
-                "left": {
+                "components": {"auto_arima": {
                     "mean": [2.0],
                     "median": [2.0],
                     "quantiles": [[1.0], [2.0], [3.0]],
                 },
-                "right": {
+                "chronos_2": {
                     "mean": [4.0],
                     "median": [4.0],
                     "quantiles": [[3.0], [4.0], [5.0]],
-                },
+                }},
                 "weights": {"auto_arima": 0.5, "chronos_2": 0.5},
             }
         )
         self.assertEqual(result["quantiles"], [[2.0], [3.0], [4.0]])
         self.assertFalse(result["quantiles_rearranged"])
 
-    def test_batches_are_bounded_and_completed_batches_survive_later_failure(self):
-        """Batching respects capacity and yields completed work before a later failure."""
+    def test_batches_are_bounded(self):
+        """Batching respects configured capacity."""
         batches = _batches(list(range(7)), 3)
         self.assertEqual([len(batch) for batch in batches], [3, 3, 1])
-
-        def fail_second(batch):
-            """Purpose: Simulate a worker failure after one completed batch.
-
-            Inputs: A numeric batch list.
-            Outputs: The unchanged list, or RuntimeError when its first value is three; no state effects.
-            """
-            if batch[0] == 3:
-                raise RuntimeError("worker failed")
-            return batch
-
-        completed = []
-        with self.assertRaisesRegex(RuntimeError, "worker failed"):
-            for result in _run_external_batches(fail_second, batches, workers=1):
-                completed.append(result)
-        self.assertEqual(completed, [[0, 1, 2]])
-
-    def test_external_batches_have_identical_sequential_and_parallel_results(self):
-        """Sequential and two-worker external execution produce the same batch sums."""
-        batches = _batches(list(range(10)), 2)
-        self.assertEqual(
-            list(_run_external_batches(sum, batches, workers=1)),
-            list(_run_external_batches(sum, batches, workers=2)),
-        )
 
 
 class ContractValidationTests(unittest.TestCase):
@@ -390,9 +354,21 @@ class TransactionTests(unittest.TestCase):
                 "packages": {},
             }
 
-        self.coordinator._r_worker = failing_worker
-        with self.assertRaisesRegex(RuntimeError, "Process 2 failed"):
-            self.coordinator.run_process("experiment", 2, workers=1, batch_size=1)
+        def compute_flow(**kwargs):
+            """Adapt the deterministic worker double to the Prefect batch contract."""
+            outcomes = []
+            for batch in kwargs["batches"]:
+                try:
+                    response = failing_worker({"jobs": batch})
+                    outcomes.append({"batch": batch, "response": {
+                        **response, "runtime_seconds": 0.0, "worker": {}}})
+                except RuntimeError as exc:
+                    outcomes.append({"batch": batch, "error": str(exc)})
+            return outcomes
+
+        with patch("util.workflow_orchestration.run_gate_compute_flow", side_effect=compute_flow):
+            with self.assertRaisesRegex(RuntimeError, "Process 2 failed"):
+                self.coordinator.run_process("experiment", 2, workers=1, batch_size=1)
         self.assertEqual(
             connection.execute(
                 "SELECT status FROM experiment_tasks ORDER BY task_id"
@@ -401,7 +377,7 @@ class TransactionTests(unittest.TestCase):
         )
         self.assertEqual(connection.execute("SELECT count(*) FROM preprocessed_series").fetchone()[0], 1)
 
-        self.coordinator._r_worker = lambda payload: {
+        successful_worker = lambda payload: {
             "results": [
                 {
                     "id": job["id"],
@@ -416,13 +392,19 @@ class TransactionTests(unittest.TestCase):
             ],
             "packages": {},
         }
-        result = self.coordinator.run_process(
-            "experiment",
-            2,
-            execution=resolve_execution_profile(
-                "sequential_safe", {"cleaning_workers": 2}
-            ),
-        )
+        def successful_flow(**kwargs):
+            return [{"batch": batch, "response": {
+                **successful_worker({"jobs": batch}), "runtime_seconds": 0.0,
+                "worker": {}}} for batch in kwargs["batches"]]
+
+        with patch("util.workflow_orchestration.run_gate_compute_flow", side_effect=successful_flow):
+            result = self.coordinator.run_process(
+                "experiment",
+                2,
+                execution=resolve_execution_profile(
+                    "sequential_safe", {"cleaning_workers": 2}
+                ),
+            )
         self.assertEqual(result["selected"], 1)
         self.assertEqual(connection.execute("SELECT count(*) FROM preprocessed_series").fetchone()[0], 2)
         provenance = connection.execute(

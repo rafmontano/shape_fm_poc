@@ -46,6 +46,23 @@ Historical `final_acceptance` documents describe past evidence, not a mandatory
 GPU hardware field: ordinary preflight consumes the effective profile and still
 requires CUDA on GPU workers when that historical field is absent.
 
+## Version 7 adds the approved R pool without rewriting history
+
+`config/experiments/poc2_m4_daily_100_r_pool.json` is an opt-in configuration,
+not a replacement default. It preserves the corrected window/S1 contract and
+selects exactly the nine registered R methods with their approved native FFORMA
+settings. AutoARIMA uses `stepwise=false`; ETS uses MAE; other methods use their
+documented native defaults. Versions 1–6 remain unchanged and readable.
+
+All nine forecasts remain individually addressable. The existing equal-weight
+combination applies one ninth to each configured component; it is not learned
+FFORMA weighting or a new meta-learner. `final_acceptance` identifies the R-pool
+workflow and runtime profile v3, not the historical window-only v2 profile.
+This field describes the intended execution contract, not proof of acceptance.
+Use the explicit `--execution-profile poc2_seasonal_recovery` operational override
+for two-host runs. The public override now reaches Gates 2/3/5/6 as well as Gate 4;
+Gate 6 still evaluates locally with the effective retry policy.
+
 ## Versions 1–6
 
 Version 1 coupled `data.benchmark.seasonality = 7` to R preprocessing, R

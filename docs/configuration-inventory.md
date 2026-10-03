@@ -9,6 +9,9 @@ calculated rather than configured.
 The separately approved Gate 3 acceptance uses
 `config/experiments/poc2_m4_daily_100_standardised.json` (version 4); it does
 not replace the production default or reinterpret older experiments.
+The Stage 2 opt-in `poc2_m4_daily_100_r_pool.json` (version 7) connects the
+approved nine-method R pool and inherits corrected v6 window/S1 preparation.
+See the [versioned contract](experiment-configuration.md#version-7-adds-the-approved-r-pool-without-rewriting-history).
 
 ## Experiment globals
 
@@ -18,7 +21,7 @@ not replace the production default or reinterpret older experiments.
 | `reproducibility.seed` | `1234` | scientific identity and future stochastic workers |
 | `data` | pinned GIFT-Eval M4 Daily source; first 100 official series; 14-step, one-window benchmark | import, planning, evaluation |
 | `pipeline` | Processes 01–06; optional R-period override; standard/robust preprocessing; versioned transformations; v4 explicit context length; combination; opt-in v3/v4 period tuning | task planning and Processes 02–05 |
-| `models` | v1/v2 and normal v4 AutoARIMA + Chronos-2; tuning v3/v4 AutoARIMA + ETS | Process 04 workers and provenance |
+| `models` | v1/v2 and normal v4 AutoARIMA + Chronos-2; tuning v3/v4 AutoARIMA + ETS; v7 nine registered R methods | Process 04 workers and provenance |
 | scientific `evaluation` fields | GIFT-Eval revision, method, options, provisional candidate and submission metadata | Process 06 and export validation |
 
 The scientific fingerprint covers the data, scientific pipeline, models,
@@ -71,7 +74,7 @@ remain calibration/test constants. The existing entries in
 `config/execution_profiles.json` include historical setup/calibration settings;
 they are not evidence that the old 2+4 profile is the approved heavy-test profile.
 That file also owns the implemented `poc2_seasonal_recovery` profile. Its current
-version 2 identity records 8 Mac CPU workers, 15 Ubuntu CPU workers and 15
+version 3 identity records 8 Mac CPU workers, 15 Ubuntu CPU workers and 15
 logical Ubuntu GPU slots. For R-only tuning, all 23 CPU workers are eligible;
 AutoARIMA uses the Ubuntu-only capability, while ETS uses the shared capability
 subject to profile-owned memory admission. Runtime configuration does not

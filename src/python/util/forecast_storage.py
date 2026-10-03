@@ -14,7 +14,7 @@ import json
 import math
 from typing import Any
 
-from .configuration import canonical_json, json_fingerprint
+from .configuration import R_MODEL_METHODS, canonical_json, json_fingerprint
 from .transformations import inverse
 
 
@@ -65,6 +65,15 @@ class ForecastStorage:
         runtime = float(response["runtime_seconds"])
         for job in batch:
             result = by_id[job["id"]]
+            if self.coordinator.configuration.version >= 7 and job["model"] in R_MODEL_METHODS:
+                requested = R_MODEL_METHODS[job["model"]]
+                fallback = result.get("fallback_used")
+                executed = result.get("executed_method_id")
+                if (result.get("requested_method_id") != requested
+                        or type(fallback) is not bool
+                        or executed != ("snaive_forec" if fallback else requested)
+                        or (fallback and not result.get("fallback_reason"))):
+                    raise RuntimeError(f"invalid R method/fallback provenance for {job['id']}")
             horizon = job["horizon"]
             raw_arrays = [result.get("mean"), result.get("median")]
             quantiles = result.get("quantiles")

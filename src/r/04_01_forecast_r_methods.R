@@ -2,7 +2,7 @@
 # ==============================================================================
 # 04_01_forecast_r_methods.R
 #
-# Purpose: Serve bounded AutoARIMA/ETS forecasts and shared period diagnostics.
+# Purpose: Serve the approved nine-method R pool and shared period diagnostics.
 # Inputs: JSON stdin with action forecast or diagnose_period and an ordered jobs list.
 # Outputs: JSON results and exact R package versions; never reads or writes DuckDB.
 # Run from: Invoked by the Python Gate 4 coordinator.
@@ -20,12 +20,11 @@ source("src/r/util/seasonal_period.R")
 payload <- jsonlite::fromJSON(file("stdin"), simplifyVector = FALSE)
 
 # Purpose: Map production model IDs to the existing registered R method IDs.
-# Inputs: auto_arima or ets.
+# Inputs: Stable production ID, without the native _forec suffix.
 # Outputs: One allowlisted forecast-pool method ID.
 registered_method_id <- function(model_id) {
-  methods <- c(auto_arima = "auto_arima_forec", ets = "ets_forec")
-  result <- unname(methods[[as.character(model_id)]])
-  if (is.null(result)) {
+  result <- paste0(model_id, "_forec")
+  if (!result %in% names(forecast_method_registry())) {
     stop("Unsupported R model: ", model_id, call. = FALSE)
   }
   result

@@ -15,6 +15,13 @@ The [working and communication agreement](docs/working-agreement.md) defines
 roles, approvals and effective collaboration. It prioritises productivity and
 clarity, not word limits.
 
+The [Python file naming standard](docs/code-standards.md#python-utility-file-organisation)
+links process helpers to their parent with `pNN_MM_` and identifies shared code
+with `shared_`. Its approved migration changes organisation, not results. Any
+code held for possible later reuse goes in tracked `tmp/inactive/`, not disposable
+temporary storage. Follow the [current AMP handoff](docs/amp-poc2-workflow-orchestration-instructions.md)
+for implementation and checkpoint publication status.
+
 Heavy testing must follow the [approved execution policy](docs/execution-policy.md).
 The [execution safeguard instructions](docs/amp-poc2-execution-safeguards-instructions.md)
 record the implemented eight Mac CPU workers and enforcement fixes. The focused
@@ -80,6 +87,24 @@ for fixture limitations and the current acceptance at the top of that record.
 Stage 2 prioritises necessary workflows, already-approved previous-project
 methods and consolidation of utilities under the
 [pragmatic code standard](docs/code-standards.md#pragmatic-implementation).
+
+Stage 2's opt-in `config/experiments/poc2_m4_daily_100_r_pool.json` connects the
+nine native R methods to normal forecasting and retrieval. It does not replace
+the default experiment or alter historical model settings. Review its bounded
+evidence and limitations in the acceptance record before launching a full run.
+The normal `run --processes 2-3` and `5-6` routes now accept the same explicit
+approved execution profile as forecasting. Use inclusive ranges, not comma lists.
+
+For independent Stage 2 QA, inspect the disposable fixture named in the acceptance
+record with `status` and `results`; distinguish its labelled synthetic forecast
+rows from native model evidence. Check one stored result per R method, requested
+versus executed method/fallback metadata, original-scale arrays and component
+lineage. Repeat a completed normal `run` only with the documented approved profile
+and verify that accepted forecast hashes/timestamps and task attempt counts stay
+unchanged. Do not run the fault injector against accepted research databases.
+Window/S1 QA still checks immutable membership and raw-parent ownership; tuning
+QA still checks fold boundaries, policy selection and visible fallback provenance.
+These checks do not establish Mantis training or Objective 2 reproduction.
 
 The six ordered processes are:
 

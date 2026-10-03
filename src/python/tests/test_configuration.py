@@ -48,6 +48,27 @@ class ExperimentConfigurationTests(unittest.TestCase):
     Outputs: Assertions and temporary DuckDB/file mutations owned by individual tests.
     """
 
+    def test_r_pool_contract_preserves_legacy_and_stored_identity(self):
+        """Nine native methods plan separately; v7 never changes old AutoARIMA defaults."""
+        from util.configuration import R_MODEL_METHODS
+        configuration = load_experiment_configuration(
+            REFERENCE_CONFIGURATION.parent / "poc2_m4_daily_100_r_pool.json")
+        self.assertEqual(tuple(configuration.resolved["models"]), tuple(R_MODEL_METHODS))
+        self.assertEqual(configuration.resolved["derived"]["expected_task_counts"]["4"], 3600)
+        self.assertFalse(configuration.r_model_settings("auto_arima")["stepwise"])
+        self.assertTrue(load_experiment_configuration(REFERENCE_CONFIGURATION).auto_arima_settings["stepwise"])
+        self.assertEqual(configuration.r_model_settings("ets"), {"opt_crit": "mae"})
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "pool.duckdb"
+            initialize_experiment_database(
+                database, REFERENCE_CONFIGURATION.parent / "poc2_m4_daily_100_r_pool.json")
+            self.assertEqual(load_database_configuration(database).scientific_hash,
+                             configuration.scientific_hash)
+        invalid = deepcopy(configuration.original)
+        invalid["models"]["nnetar"]["settings"] = {"repeats": 1}
+        with self.assertRaisesRegex(ExperimentConfigurationError, "R pool settings"):
+            resolve_experiment_configuration(invalid)
+
     def test_complete_document_derives_current_cardinalities(self) -> None:
         """The reference contract derives all Process 01–06 and result counts."""
         configuration = load_experiment_configuration(REFERENCE_CONFIGURATION)

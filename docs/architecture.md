@@ -19,7 +19,70 @@ orchestrate their operations. See the retained initial evidence in the
 [AMP-Code instructions](amp-poc2-workflow-orchestration-instructions.md) for the
 implementation boundary and update this map with later workflow changes.
 
-### Stage 1 working implementation boundaries
+### Approved file organisation follow up
+
+On 3 October 2026 the researcher approved the
+[continuing Python naming standard](code-standards.md#python-utility-file-organisation)
+and a behaviour-preserving organisation pass over the reviewed Stage 2 source.
+Process-owned helpers remain under `util` with `pNN_MM_` names; shared components
+use `shared_`. Existing coordinating flows appear first within their groups.
+No new orchestration layer or one-file-per-class fragmentation is introduced.
+Confirmed inactive code remains recoverable in tracked `tmp/inactive/` while
+previous-project migration continues. Current filenames remain valid until AMP
+implements the mapping and updates this document; this is approval, not evidence
+that any source has moved. The software layers and scientific contracts below
+are unchanged.
+
+### Stage 2 retained workflow boundaries
+
+Stage 2 retains the objects below and replaces Gates 2/3/5 compute dispatch with
+named Prefect tasks on the existing Dask scheduler. Completion-order results are
+committed by the Mac before admitting replacement work. Gate 6 uses a bounded
+local Prefect task for the isolated official evaluator; it never dispatches a
+DuckDB connection. The resolved execution settings now cross each numbered
+wrapper, not only Gate 4. Gate 1 retains its local import contract.
+
+Gate compute flows receive a coordinator-local temporary JSON reference rather
+than raw scientific arrays: Prefect persists flow parameters even when result
+persistence is disabled and caps their size. The Mac alone reads this temporary
+file; workers receive only their bounded batch. The generator owns file cleanup,
+and a restart reconstructs inputs from DuckDB. Ordinary forecasting instead reads
+pending identities and attempt counts inside its path-based flow. Neither path
+creates another durable scientific store or sends writable storage to workers.
+
+The tuning flow shares one scientific group calculation between distributed
+execution and explicitly approved local exceptions. The duplicate local tuning
+algorithm and gate executor loops are removed. Window/S1 preparation uses a
+named compute task, profile-owned admission bounds, continuous native-child
+monitoring, and existing incremental membership/window transactions. Prefect
+owns application retries; Dask retries remain zero on these migrated tasks.
+
+Configuration v7 connects all nine registered native R methods to ordinary
+forecast planning, providers, storage and retrieval. ETS uses the existing
+shared CPU capability and 0.75 GiB fit budget; the remaining R methods retain
+the conservative 12 GiB large-fit admission and eight-task cap. This introduces
+no new machine limits. The compatibility name `LocalAutoArimaProvider` remains,
+but its generic R adapter accepts the configured registered method. The old
+AutoARIMA script remains a delegating adapter for stored paths and manual QA.
+
+```text
+researcher entry → Prefect experiment → retained gate / tuning / window flow
+                                             │
+                                   bounded named compute tasks
+                                             │
+                                existing Dask CPU/GPU resources
+                                             │
+                                  native scientific adapters
+                                             │
+                                validate → Mac DuckDB commit
+                                             │
+                                 read-only result retrieval
+```
+
+These are implementation claims, not full migration or Objective 2 acceptance.
+The acceptance record distinguishes test evidence and remaining research choices.
+
+### Accepted Stage 1 working implementation boundaries
 
 The accepted Stage 1 snapshot uses these responsibilities. Verification gaps
 carried into Stage 2 remain in the acceptance record; acceptance is not a claim

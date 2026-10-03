@@ -260,9 +260,10 @@ class ForecastFlowTests(unittest.TestCase):
         invocation = self.coordinator._begin_invocation("experiment", 4, 1, "cpu", 1)
         # Use Prefect's local task runner to test submission/refill deterministically;
         # Dask resource routing is covered separately, not asserted by this test.
+        self.coordinator._start_tasks(rows, invocation)
         ordinary_forecast_flow(
-            self.coordinator.database_path, "experiment", self.coordinator._start_tasks(rows, invocation),
-            rows, storage_type=ForecastStorage, auto_provider=Provider(), chronos_provider=Provider(),
+            self.coordinator.database_path, "experiment",
+            storage_type=ForecastStorage, auto_provider=Provider(), chronos_provider=Provider(),
             auto_batch_size=1, chronos_batch_size=1, max_in_flight=2,
             autoarima_max_in_flight=1,
             cpu_gpu_overlap=overlap, distributed=True, retries=0,

@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from .configuration import R_MODEL_METHODS
 from .execution_profiles import GIB, PersistentChronosWorker, system_hardware, validate_system_memory
 
 
@@ -36,6 +37,7 @@ class ForecastSafetyPolicy:
 
     autoarima: dict[str, Any]
     accelerator: dict[str, Any]
+    ets_fit_budget_gib: float | None = None
 
     @classmethod
     def from_profile(cls, profile: Any, mac_hostname: str) -> "ForecastSafetyPolicy":
@@ -71,6 +73,7 @@ class ForecastSafetyPolicy:
                 "breach_grace_seconds": required["dask_memory_breach_grace_seconds"],
                 "swap_growth_limit_gib": required["dask_swap_growth_limit_gib"],
             },
+            ets_fit_budget_gib=profile.dask_ets_fit_budget_gib,
         )
 
 
@@ -91,6 +94,7 @@ class DistributedForecastProvider:
     chronos_startup_timeout: float
     chronos_request_timeout: float
     safety_policy: ForecastSafetyPolicy | None = None
+    r_settings: dict[str, dict[str, Any]] | None = None
 
     def forecast(self, model: str, batch: list[dict[str, Any]]) -> dict[str, Any]:
         """Run one bounded model batch through its existing native adapter."""
@@ -99,11 +103,15 @@ class DistributedForecastProvider:
 
         started = time.time()
         retry_count = get_run_context().task_run.run_count - 1
-        if model == "auto_arima":
+        if model in R_MODEL_METHODS:
+            safety = self.safety_policy.autoarima if self.safety_policy else None
+            if model == "ets" and safety is not None:
+                safety = {**safety, "fit_budget_gib": self.safety_policy.ets_fit_budget_gib}
             response = autoarima_batch(
-                batch, self.autoarima_settings, self.autoarima_script,
+                batch, self.r_settings[model] if self.r_settings is not None else self.autoarima_settings,
+                self.autoarima_script,
                 self.r_timeout, self.r_threads, retry_count=retry_count,
-                memory_safety=self.safety_policy.autoarima if self.safety_policy else None,
+                memory_safety=safety,
             )
         elif model == "chronos_2":
             settings = self.chronos_settings
@@ -133,10 +141,11 @@ class DistributedForecastProvider:
 
 @dataclass(frozen=True)
 class LocalAutoArimaProvider:
-    """Run local AutoARIMA via the coordinator's established bounded R bridge."""
+    """Run configured R methods; retain the historical provider name for callers."""
 
     worker: Callable[[dict[str, Any]], dict[str, Any]]
     settings: dict[str, Any]
+    r_settings: dict[str, dict[str, Any]] | None = None
 
     @classmethod
     def from_configuration(cls, configuration: Any) -> "LocalAutoArimaProvider":
@@ -150,19 +159,23 @@ class LocalAutoArimaProvider:
             timeout=float(execution["worker_timeouts_seconds"]["r"]),
             threads=int(execution["thread_limits"]["r"]),
         )
-        return cls(bridge, configuration.auto_arima_settings)
+        settings = {model: configuration.r_model_settings(model)
+                    for model in configuration.resolved["models"] if model in R_MODEL_METHODS}
+        return cls(bridge, settings.get("auto_arima", {}), settings)
 
     def forecast(self, model: str, batch: list[dict[str, Any]]) -> dict[str, Any]:
-        """Return a storage-free local AutoARIMA response for one batch."""
-        if model != "auto_arima":
+        """Return a storage-free R response preserving requested/executed method IDs."""
+        if model not in R_MODEL_METHODS:
             raise ValueError(f"LocalAutoArimaProvider does not support {model!r}")
         started = time.monotonic()
+        settings = self.r_settings[model] if self.r_settings is not None else self.settings
         response = self.worker({
             "action": "forecast",
-            "settings": self.settings,
+            "settings": settings,
             "jobs": [
-                {key: value for key, value in job.items()
-                 if key not in {"model", "instance_id", "variant_id"}}
+                {**{key: value for key, value in job.items()
+                    if key not in {"instance_id", "variant_id"}},
+                 "model": model, "model_period": job["seasonality"], "settings": settings}
                 for job in batch
             ],
         })
@@ -170,7 +183,7 @@ class LocalAutoArimaProvider:
         return {
             "results": response["results"],
             "metadata": {
-                "packages": response["packages"], "settings": self.settings,
+                "packages": response["packages"], "settings": settings,
                 "execution_backend": "R/CPU", "runtime_seconds": runtime,
                 "batch_task_count": len(batch),
             },

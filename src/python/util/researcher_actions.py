@@ -36,7 +36,7 @@ from .experiment_execution import (ExperimentCoordinator, configuration_status,
 from .process_storage import ProcessStorage
 from .researcher_cli import ROOT
 from .researcher_request import ResearcherRequest
-from .window_preparation import WindowPreparationCoordinator, get_prepared_window
+from .window_preparation import get_prepared_window, run_window_preparation_flow
 from .workflow_orchestration import experiment_flow, research_writer_locks, window_preparation_flow
 
 # Interface constant: one numbered adapter per scientific gate, resolved from ROOT.
@@ -99,8 +99,8 @@ class ProcessAction:
         storage = ProcessStorage(database)
         execution, settings, cluster, cluster_evidence = self._execution(
             configuration, processes, execution_profile, local_heavy_exception,
-            requires_gpu=storage.forecast_requires_gpu("chronos_2" in configuration.resolved["models"])
-            if execution_profile and processes == (4,) else None,
+            requires_gpu=(4 in processes and storage.forecast_requires_gpu(
+                "chronos_2" in configuration.resolved["models"])) if execution_profile else None,
         )
         try:
             events = ExecutionEventStorage(database)
@@ -201,8 +201,8 @@ class ProcessAction:
             raise ValueError("choose an execution profile or a local-heavy exception, not both")
         if heavy and not profile_name and not exception:
             raise RuntimeError(f"heavy seasonal tuning requires --execution-profile {APPROVED_HEAVY_TUNING_PROFILE}; local execution requires a recorded approval")
-        if (profile_name or exception) and processes != (4,):
-            raise ValueError("an execution override currently requires --processes 4")
+        if exception and processes != (4,):
+            raise ValueError("a local-heavy exception requires --processes 4")
         if not profile_name and not exception:
             return None, None, None, None
         selected = profile_name or "sequential_safe"
@@ -261,7 +261,11 @@ class ProcessAction:
         storage.transition(process_id, "running")
         try:
             wrapper = self.registry.load(process_id)
-            summary = wrapper.run(storage.database, execution=execution, execution_settings=settings) if execution is not None else wrapper.run(storage.database)
+            summary = (
+                wrapper.run(storage.database, execution=execution, execution_settings=settings)
+                if execution is not None and process_id != 1
+                else wrapper.run(storage.database)
+            )
             storage.validate(process_id, summary)
             storage.transition(process_id, "completed", summary)
             return {"process_id": process_id, "status": "completed", "summary": summary}
@@ -350,15 +354,12 @@ class WindowPreparationAction:
                 manifest_rows,
                 manifest,
             )
-        with WindowPreparationCoordinator(database, windows_database) as coordinator:
-            result = coordinator.run(
-                source_manifest_hash=manifest,
-                local_limits={
-                    "max_series": int(local_max_series),
-                    "max_windows": int(local_max_windows),
-                },
-                dask_retries=0,
-            )
+        result = run_window_preparation_flow(
+            scheduler_address=None, parent_database=database, windows_database=windows_database,
+            source_manifest_hash=manifest, memory_safety=None, execution_profile=None,
+            local_limits={"max_series": int(local_max_series), "max_windows": int(local_max_windows)},
+            retries=int(load_database_configuration(database).execution["dask_retries"]),
+        )
         return {
             **result,
             "execution_mode": "bounded_local_focused",
@@ -433,9 +434,13 @@ class WindowPreparationAction:
                 }
                 if any(value is None for value in safety.values()):
                     raise RuntimeError("approved profile lacks window memory-safety controls")
-                with WindowPreparationCoordinator(database, windows_database) as coordinator:
-                    result = coordinator.run(dask_client=client, source_manifest_hash=manifest,
-                        memory_safety=safety, execution_profile=profile_name, dask_retries=0)
+                result = run_window_preparation_flow(
+                    scheduler_address=cluster.scheduler_address, parent_database=database,
+                    windows_database=windows_database, source_manifest_hash=manifest,
+                    memory_safety=safety, execution_profile=profile_name,
+                    retries=0,
+                    max_in_flight=profile.dask_max_in_flight,
+                )
             finally:
                 client.close()
         finally:

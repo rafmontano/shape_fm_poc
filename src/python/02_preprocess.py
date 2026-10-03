@@ -14,13 +14,15 @@ from pathlib import Path
 from typing import Any
 
 from util.experiment_execution import ExperimentCoordinator
+from util.execution_profiles import ExecutionProfile, ExecutionSettings
 
 
 # Code constant: process identity validated by the numbered-wrapper loader.
 PROCESS_NUMBER = 2
 
 
-def run(database: Path) -> dict[str, Any]:
+def run(database: Path, execution: tuple[ExecutionProfile, dict[str, Any]] | None = None,
+        execution_settings: ExecutionSettings | None = None) -> dict[str, Any]:
     """Purpose: Plan when required and run Process 02 preprocessing.
 
     Inputs: Path to an authoritative experiment DuckDB after Process 01.
@@ -29,4 +31,5 @@ def run(database: Path) -> dict[str, Any]:
     """
     with ExperimentCoordinator(database) as coordinator:
         plan = coordinator.plan()
-        return coordinator.run_process(plan.experiment_id, PROCESS_NUMBER)
+        return coordinator.run_process(plan.experiment_id, PROCESS_NUMBER,
+                                       execution=execution, execution_settings=execution_settings)

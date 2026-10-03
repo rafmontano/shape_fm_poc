@@ -106,6 +106,22 @@ Direct seasonal-naïve failure never recurses. If both methods fail, execution
 terminates with one error containing both failures. A fallback result confirms
 that a forecast was produced; it does not claim that the requested model fitted.
 
+## Stage 2 production integration
+
+Configuration v7 (`poc2_m4_daily_100_r_pool.json`) now connects these nine
+methods through the retained normal Gate 4 route. `R_MODEL_METHODS` maps stable
+Python model IDs to the native allowlisted IDs. The generic R worker receives
+the prepared context, resolved period and configured settings for each job.
+The provider returns requested/executed method, fallback reason and provenance;
+`ForecastStorage` validates these before the single-writer commit. Retrieval
+uses the configured model ID and never refits a method.
+
+Historical configurations and their AutoARIMA worker path remain supported.
+The adapter delegates to the same native implementation; it is not a second
+AutoARIMA algorithm. The nine-model equal-weight combination is a transparent
+baseline over stored outputs, not the FFORMA meta-learner. Stage 2 implementation
+and bounded evidence remain subject to review in the workflow acceptance record.
+
 ## Generic example
 
 ```r

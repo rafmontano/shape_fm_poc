@@ -22,7 +22,15 @@ and test evidence are recorded in `docs/poc2-workflow-orchestration-acceptance.m
 Stage 1 was closed by the researcher on 3 October 2026 with documented
 limitations carried into Stage 2. Follow the current pragmatic Stage 2 AMP
 instructions, including their scoped checkpoint publication authorisation.
-Full migration and Objective 2 completion remain open.
+The researcher has since approved checkpointing the reviewed Stage 2 result and
+a non-destructive Python file-organisation pass. Follow the current AMP handoff,
+not historical publication restrictions. Objective 2 completion remains open.
+
+Apply the standing [Python utility naming standard](docs/code-standards.md#python-utility-file-organisation):
+`pNN_MM_` for process-owned helpers, `shared_` for shared components, and no
+artificial gate number for independent workflows. Code held for possible reuse
+belongs in tracked `tmp/inactive/`, not disposable or permanently retired storage.
+The organisation pass changes names/references, not scientific or execution logic.
 
 Object-oriented design with small reusable methods/functions is the standing
 standard for this entire project and all future projects, not only POC2.

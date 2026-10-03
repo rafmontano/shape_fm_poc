@@ -72,8 +72,8 @@ class WorkflowOrchestrationTests(unittest.TestCase):
         )
         self.assertTrue(result["processes"][1]["validation"]["output_validated"])
 
-    def test_transient_gate_failure_retries_only_that_gate(self):
-        """A configured Prefect retry reruns one failed gate before dependants."""
+    def test_compute_owned_gate_failure_is_not_retried_by_outer_writer(self):
+        """An outer writer gate is never repeated after compute owns retries."""
         attempts = {2: 0, 3: 0}
 
         def runner(process_id: int) -> dict:
@@ -83,13 +83,14 @@ class WorkflowOrchestrationTests(unittest.TestCase):
                 raise RuntimeError("transient test fault")
             return {"process_id": process_id, "status": "completed"}
 
-        with prefect_test_harness():
-            result = workflows.experiment_flow(
+        with prefect_test_harness(), self.assertRaisesRegex(
+            RuntimeError, "transient test fault"
+        ):
+            workflows.experiment_flow(
                 (2, 3), (), self._inspect, runner, self._validate, retries=1
             )
 
-        self.assertEqual(attempts, {2: 2, 3: 1})
-        self.assertEqual(len(result["processes"]), 2)
+        self.assertEqual(attempts, {2: 1, 3: 0})
 
     def test_permanent_gate_failure_blocks_downstream_and_parent_success(self):
         """An exhausted required gate prevents its dependant from starting."""
@@ -107,7 +108,37 @@ class WorkflowOrchestrationTests(unittest.TestCase):
                 (2, 3), (), self._inspect, runner, self._validate, retries=1
             )
 
-        self.assertEqual(calls, [2, 2])
+        self.assertEqual(calls, [2])
+
+    def test_bounded_compute_flow_drains_success_and_failure_results(self):
+        """Named framework tasks retain successful batches when another batch fails."""
+        batches = [
+            [{"id": "good", "values": [1.0, 2.0], "method": "identity"}],
+            [{"id": "bad", "values": [1.0, 2.0], "method": "not-a-method"}],
+        ]
+        with prefect_test_harness():
+            outcomes = list(workflows.run_gate_compute_flow(
+                process_id=3, batches=batches, options={}, scheduler_address=None,
+                retries=0, max_in_flight=2, local_workers=2,
+            ))
+        self.assertEqual(len(outcomes), 2)
+        successful = [item for item in outcomes if "response" in item]
+        failed = [item for item in outcomes if "error" in item]
+        self.assertEqual(successful[0]["response"]["results"][0]["id"], "good")
+        self.assertEqual(failed[0]["batch"][0]["id"], "bad")
+
+    def test_large_scientific_batch_stays_out_of_flow_parameters(self):
+        """A payload above Prefect's 512 KiB limit still computes through the flow."""
+        values = [1234.5] * 100_000
+        values[0], values[-1] = -3.0, 17.0
+        with prefect_test_harness():
+            outcomes = list(workflows.run_gate_compute_flow(
+                process_id=3,
+                batches=[[{"id": "large", "values": values, "method": "identity"}]],
+                options={}, scheduler_address=None, retries=0,
+                max_in_flight=1, local_workers=1,
+            ))
+        self.assertEqual(outcomes[0]["response"]["results"][0]["values"], values)
 
     def test_invalid_committed_output_blocks_downstream_gate(self):
         """A failed post-commit contract check prevents downstream execution."""
@@ -208,6 +239,10 @@ class WorkflowOrchestrationTests(unittest.TestCase):
             workflows.inspect_gate,
             workflows.execute_gate,
             workflows.validate_gate,
+            workflows.compute_clean_batch,
+            workflows.compute_transform_batch,
+            workflows.compute_combine_batch,
+            workflows.compute_evaluation,
             workflows.inspect_window_preparation,
             workflows.execute_window_preparation,
             workflows.validate_window_preparation,
