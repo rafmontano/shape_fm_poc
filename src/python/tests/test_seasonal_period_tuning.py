@@ -15,9 +15,9 @@ from unittest.mock import MagicMock, patch
 
 import duckdb
 
-from util.configuration import load_experiment_configuration
-from util.database import SCHEMA_VERSION, initialize_experiment_database
-from util.seasonal_period_tuning import (
+from util.shared_configuration import load_experiment_configuration
+from util.shared_database import SCHEMA_VERSION, initialize_experiment_database
+from util.p04_04_seasonal_period_tuning import (
     _compute_tuning_group,
     _forecast_job,
     _worker_results,
@@ -169,7 +169,7 @@ class SeasonalPeriodTuningTests(unittest.TestCase):
                 "fallback_reason": "bounded mock fallback", "provenance": {"seed": "fixed"},
             }],
         }
-        with patch("util.seasonal_period_tuning._run_tuning_r", return_value=native) as worker:
+        with patch("util.p04_04_seasonal_period_tuning._run_tuning_r", return_value=native) as worker:
             result = _compute_tuning_group(payload, "preprocess.R", "forecast.R", 30.0, 1)
         model = result["models"][0]
         self.assertEqual(worker.call_count, 1)

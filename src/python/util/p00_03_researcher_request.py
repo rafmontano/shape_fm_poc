@@ -1,3 +1,11 @@
+# ==============================================================================
+# p00_03_researcher_request.py
+# Purpose: Carry typed requests from the researcher CLI to action objects.
+# Inputs: One validated public command name and its command-specific values.
+# Outputs: Immutable ResearcherRequest values and convenience accessors.
+# Run from: Imported by the researcher CLI/action layer; not run directly.
+# ==============================================================================
+
 """Typed requests passed from the researcher CLI to action objects."""
 
 from __future__ import annotations

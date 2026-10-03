@@ -1,5 +1,5 @@
 # ==============================================================================
-# forecast_flow.py
+# p04_01_forecast_flow.py
 #
 # Purpose: Readable ordinary Gate 4 Prefect composition.
 # Inputs: Coordinator-local storage, bounded jobs, provider objects, and execution limits.
@@ -23,9 +23,9 @@ from prefect.cache_policies import NO_CACHE
 from prefect.futures import as_completed
 from prefect_dask import DaskTaskRunner
 
-from .distributed_execution import AUTOARIMA_R_RESOURCE
-from .configuration import R_MODEL_METHODS
-from .forecast_storage import ForecastStorage
+from .shared_distributed_execution import AUTOARIMA_R_RESOURCE
+from .shared_configuration import R_MODEL_METHODS
+from .p04_03_forecast_storage import ForecastStorage
 
 
 @task(name="compute R forecast batch", cache_policy=NO_CACHE, persist_result=False)
@@ -137,7 +137,7 @@ def ordinary_forecast_flow(database: Path, experiment_id: str, *, storage_type: 
                            distributed: bool, retries: int,
                            ets_max_in_flight: int | None = None) -> None:
     """Prepare jobs, submit bounded named compute tasks, commit locally, and verify."""
-    from .experiment_execution import ExperimentCoordinator, _length_aware_batches
+    from .shared_experiment_execution import ExperimentCoordinator, _length_aware_batches
 
     if max_in_flight < 1 or autoarima_max_in_flight < 1:
         raise ValueError("forecast in-flight limits must be positive")

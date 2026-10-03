@@ -24,7 +24,7 @@ import duckdb
 import pyarrow as pa
 import pyarrow.ipc as ipc
 
-from util.configuration import (
+from util.shared_configuration import (
     ImportValidationError,
     ExperimentConfiguration,
     dataset_identity,
@@ -33,13 +33,13 @@ from util.configuration import (
     load_experiment_configuration,
     validate_config,
 )
-from util.database import ShapeFMDatabase, initialize_experiment_database, migrate_database
-from util.gift_eval_source import (
+from util.shared_database import ShapeFMDatabase, initialize_experiment_database, migrate_database
+from util.p01_03_gift_eval_source import (
     ConfiguredGiftEvalSource,
     iter_source_series,
     source_fingerprint,
 )
-from util.import_execution import (
+from util.p01_02_import_execution import (
     ImportCoordinator,
     SeriesResult,
     SeriesTask,
@@ -158,7 +158,7 @@ class WorkerTests(unittest.TestCase):
     Outputs: Assertions and mock call state; this class owns no external side effects.
     """
 
-    @patch("util.import_execution.subprocess.run")
+    @patch("util.p01_02_import_execution.subprocess.run")
     def test_optional_provenance_command_times_out(self, run):
         """Optional provenance commands return None after the configured timeout."""
         run.side_effect = TimeoutExpired(["Rscript", "-e", "version"], 0.01)

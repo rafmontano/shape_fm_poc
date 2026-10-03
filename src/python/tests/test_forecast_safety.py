@@ -17,9 +17,9 @@ import time
 import unittest
 from unittest.mock import patch, MagicMock
 
-from util import distributed_execution
-from util.execution_profiles import PersistentChronosWorker, resolve_execution_profile
-from util.forecast_provider import (
+from util import shared_distributed_execution as distributed_execution
+from util.shared_execution_profiles import PersistentChronosWorker, resolve_execution_profile
+from util.p04_02_forecast_provider import (
     DistributedForecastProvider,
     ForecastSafetyPolicy,
     LocalAutoArimaProvider,

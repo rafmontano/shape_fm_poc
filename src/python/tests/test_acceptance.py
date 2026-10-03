@@ -29,8 +29,8 @@ from tests.acceptance import (
     _write_failure_report,
     run_acceptance,
 )
-from util.configuration import load_experiment_configuration
-from util.distributed_execution import CHRONOS_GPU_RESOURCE
+from util.shared_configuration import load_experiment_configuration
+from util.shared_distributed_execution import CHRONOS_GPU_RESOURCE
 
 
 class AcceptanceReadinessTests(unittest.TestCase):
@@ -261,7 +261,7 @@ class AcceptanceReadinessTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[3]
         with tempfile.TemporaryDirectory() as directory:
             database = (Path(directory) / "acceptance.duckdb").resolve()
-            from util.database import initialize_experiment_database
+            from util.shared_database import initialize_experiment_database
 
             initialize_experiment_database(
                 database, root / "config/experiments/poc2_m4_daily_100.json"
@@ -298,7 +298,7 @@ class AcceptanceReadinessTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[3]
         with tempfile.TemporaryDirectory() as directory:
             database = (Path(directory) / "acceptance.duckdb").resolve()
-            from util.database import initialize_experiment_database
+            from util.shared_database import initialize_experiment_database
 
             initialize_experiment_database(
                 database, root / "config/experiments/poc2_m4_daily_100.json"

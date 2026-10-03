@@ -35,11 +35,11 @@ from prefect.context import get_run_context
 from prefect.futures import as_completed
 from prefect_dask import DaskTaskRunner
 
-from .configuration import ExperimentConfiguration, canonical_json, json_fingerprint
-from .database import load_database_configuration, migrate_database
-from .distributed_execution import window_preparation_batch
-from .execution_profiles import APPROVED_HEAVY_TUNING_PROFILE
-from .import_execution import repository_root
+from .shared_configuration import ExperimentConfiguration, canonical_json, json_fingerprint
+from .shared_database import load_database_configuration, migrate_database
+from .shared_distributed_execution import window_preparation_batch
+from .shared_execution_profiles import APPROVED_HEAVY_TUNING_PROFILE
+from .p01_02_import_execution import repository_root
 
 
 # Code constant: child schema is independent of the parent DuckDB migration number.

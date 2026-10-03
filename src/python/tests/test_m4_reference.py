@@ -12,15 +12,15 @@ from unittest.mock import patch
 
 import duckdb
 
-from util.configuration import ImportValidationError
-from util.database import SCHEMA_VERSION, migrate_database
-from util.experiment_execution import (
+from util.shared_configuration import ImportValidationError
+from util.shared_database import SCHEMA_VERSION, migrate_database
+from util.shared_experiment_execution import (
     ExperimentCoordinator,
     get_forecast_mean,
     validate_forecast_capability,
 )
-from util.import_execution import ImportCoordinator
-from util.m4_submission import retrieve_m4_submission
+from util.p01_02_import_execution import ImportCoordinator
+from util.p04_05_m4_submission import retrieve_m4_submission
 
 
 class M4ReferenceTests(unittest.TestCase):
@@ -202,7 +202,7 @@ class M4ReferenceTests(unittest.TestCase):
             },
         }
         response = dict(self.records[0])
-        with patch("util.import_execution.subprocess.run") as run:
+        with patch("util.p01_02_import_execution.subprocess.run") as run:
             run.return_value = subprocess.CompletedProcess(
                 ["Rscript"], 0, json.dumps({"records": [response]}), ""
             )
@@ -314,7 +314,7 @@ class M4ReferenceTests(unittest.TestCase):
         connection.close()
 
     def test_provider_contains_no_fitting_or_fallback(self):
-        source = (Path(__file__).parents[1] / "util/m4_submission.py").read_text()
+        source = (Path(__file__).parents[1] / "util/p04_05_m4_submission.py").read_text()
         self.assertNotIn("forecast::", source)
         self.assertNotIn("fallback_", source.lower())
 

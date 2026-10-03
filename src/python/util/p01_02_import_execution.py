@@ -1,5 +1,5 @@
 # ==============================================================================
-# import_execution.py
+# p01_02_import_execution.py
 #
 # Purpose: Single-writer Process 01 coordinator with sequential and local worker modes.
 # Inputs: Pinned M4 Daily source files, import configuration, source revision, and worker count.
@@ -29,7 +29,7 @@ from typing import Any, Iterable
 
 import duckdb
 
-from .configuration import (
+from .shared_configuration import (
     ImportValidationError,
     ExperimentConfiguration,
     canonical_import_configuration,
@@ -38,14 +38,14 @@ from .configuration import (
     evaluation_window,
     json_fingerprint,
 )
-from .database import load_database_configuration, migrate_database
-from .gift_eval_source import (
+from .shared_database import load_database_configuration, migrate_database
+from .p01_03_gift_eval_source import (
     ConfiguredGiftEvalSource,
     iter_source_series,
     source_fingerprint,
     source_metadata,
 )
-from .provenance import sha256_file, utc_now
+from .shared_provenance import sha256_file, utc_now
 
 
 # Code constant: persistent stage identifier in import run and attempt records.
@@ -992,7 +992,7 @@ class ImportCoordinator:
         Outputs: ``import_m4_daily`` summary after source hashes match stored digests;
         mismatch raises ``ImportValidationError`` before import.
         """
-        from .import_flow import gate1_import_flow
+        from .p01_01_import_flow import gate1_import_flow
 
         return gate1_import_flow(self.database_path)
 

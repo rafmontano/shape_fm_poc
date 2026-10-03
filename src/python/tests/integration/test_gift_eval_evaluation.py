@@ -15,7 +15,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from util.configuration import load_experiment_configuration
+from util.shared_configuration import load_experiment_configuration
 
 
 class OfficialAdapterTests(unittest.TestCase):

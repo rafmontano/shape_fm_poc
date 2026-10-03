@@ -1,5 +1,5 @@
 # ==============================================================================
-# process_storage.py
+# shared_process_storage.py
 #
 # Purpose: Own coordinator-local gate state and independent durable-output checks.
 # Inputs: An initialized experiment DuckDB and its authoritative stored configuration.
@@ -18,8 +18,8 @@ from typing import Any
 
 import duckdb
 
-from .configuration import canonical_json, json_fingerprint
-from .transformations import transform
+from .shared_configuration import canonical_json, json_fingerprint
+from .shared_transformations import transform
 
 
 class ProcessStorage:
@@ -79,7 +79,7 @@ class ProcessStorage:
         connection = duckdb.connect(str(self.database), read_only=True)
         try:
             if process_id == 1:
-                from .database import load_database_configuration
+                from .shared_database import load_database_configuration
 
                 configuration = load_database_configuration(self.database, connection)
                 expected = configuration.series_count
@@ -123,9 +123,9 @@ class ProcessStorage:
     @staticmethod
     def _validate_import(connection: duckdb.DuckDBPyConnection, configuration: Any) -> None:
         """Validate Gate 1 identities, values, hashes and window lineage from configuration."""
-        from .gift_eval_source import ConfiguredGiftEvalSource
-        from .import_execution import SeriesTask, compute_series, repository_root
-        from .configuration import dataset_identity
+        from .p01_03_gift_eval_source import ConfiguredGiftEvalSource
+        from .p01_02_import_execution import SeriesTask, compute_series, repository_root
+        from .shared_configuration import dataset_identity
 
         settings = configuration.import_settings
         horizon = int(settings["benchmark"]["prediction_length"])

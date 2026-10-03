@@ -1,5 +1,5 @@
 # ==============================================================================
-# seasonal_period_tuning.py
+# p04_04_seasonal_period_tuning.py
 #
 # Purpose: Execute leakage-safe Gate 4 period-policy validation for AutoARIMA/ETS.
 # Inputs: Pending Gate 4 tasks, raw official-history contexts, fixed preparation
@@ -32,8 +32,8 @@ from prefect.futures import as_completed
 from prefect.task_runners import ThreadPoolTaskRunner
 from prefect_dask import DaskTaskRunner
 
-from .configuration import canonical_json, json_fingerprint
-from .transformations import inverse, transform
+from .shared_configuration import canonical_json, json_fingerprint
+from .shared_transformations import inverse, transform
 
 
 MODEL_METHODS = {
@@ -189,7 +189,7 @@ def _run_tuning_r(
     memory_monitor: Any = None,
 ) -> dict[str, Any]:
     """Run one bounded R tuning request from a local or Dask worker process."""
-    from .distributed_execution import _run_r
+    from .shared_distributed_execution import _run_r
 
     return _run_r(payload, script, timeout, threads, memory_monitor)
 
@@ -644,7 +644,7 @@ def seasonal_tuning_batch(
     enforce_memory_admission: bool = True,
 ) -> dict[str, Any]:
     """Compute one storage-free group under admission and memory protection."""
-    from .distributed_execution import _worker_provenance, tuning_memory_reservation
+    from .shared_distributed_execution import _worker_provenance, tuning_memory_reservation
 
     if len(batch) != 1:
         raise RuntimeError("a seasonal tuning task must contain exactly one group")
@@ -703,7 +703,7 @@ def distributed_tuning_queue_groups(
     shared tuning capability advertised by every Mac and Ubuntu CPU worker, so
     Dask may continuously use any safe eligible worker.
     """
-    from .distributed_execution import AUTOARIMA_R_RESOURCE, TUNING_R_RESOURCE
+    from .shared_distributed_execution import AUTOARIMA_R_RESOURCE, TUNING_R_RESOURCE
 
     by_model = {
         model: [
@@ -746,7 +746,7 @@ def _execute_tuned_forecasts(
     This Mac coordinator validates returned task IDs and transactionally writes all
     folds, candidates, validations, selections, forecasts, and task completions.
     """
-    from .distributed_execution import AUTOARIMA_R_RESOURCE, TUNING_R_RESOURCE
+    from .shared_distributed_execution import AUTOARIMA_R_RESOURCE, TUNING_R_RESOURCE
 
     tuning = coordinator.configuration.seasonal_period_tuning
     if tuning is None or not tuning["enabled"]:
@@ -1148,7 +1148,7 @@ def seasonal_period_tuning_flow(
     distributed: bool,
 ) -> None:
     """Open coordinator storage locally, schedule named groups, and commit results."""
-    from .experiment_execution import ExperimentCoordinator
+    from .shared_experiment_execution import ExperimentCoordinator
 
     with ExperimentCoordinator(database) as coordinator:
         _execute_tuned_forecasts(

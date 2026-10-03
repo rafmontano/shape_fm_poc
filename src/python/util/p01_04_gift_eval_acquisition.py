@@ -1,10 +1,10 @@
 # ==============================================================================
-# gift_eval_acquisition.py
+# p01_04_gift_eval_acquisition.py
 #
 # Purpose: Acquire and verify the immutable, revision-pinned GIFT-Eval source data.
 # Inputs: Dependency-lock metadata, acquisition scope, and a GIFT-Eval source directory.
 # Outputs: Verified source files and `source-manifest.json`; validation details on stdout.
-# Run from: Developer utility: `.venv/bin/python -m src.python.util.gift_eval_acquisition <m4_daily|complete|verify>` from repository root.
+# Run from: Developer utility: `.venv/bin/python -m util.p01_04_gift_eval_acquisition <m4_daily|complete|verify>` with `PYTHONPATH=src/python`.
 # ==============================================================================
 
 """Acquire and verify the immutable, revision-pinned GIFT-Eval source data."""
@@ -22,8 +22,8 @@ import pyarrow as pa
 import pyarrow.ipc as ipc
 from huggingface_hub import HfApi, snapshot_download
 
-from .configuration import ImportValidationError
-from .provenance import atomic_write_json, sha256_file, utc_now
+from .shared_configuration import ImportValidationError
+from .shared_provenance import atomic_write_json, sha256_file, utc_now
 
 
 # Code constant: acquisition-protocol manifest filename; callers cannot override it.

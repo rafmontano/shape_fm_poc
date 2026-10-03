@@ -1,5 +1,5 @@
 # ==============================================================================
-# database.py
+# shared_database.py
 #
 # Purpose: Versioned DuckDB schema and researcher-facing Stage 1 object interface.
 # Inputs: A DuckDB path plus dataset, series, and stage identifiers.
@@ -20,7 +20,7 @@ from typing import Any
 
 import duckdb
 
-from .configuration import (
+from .shared_configuration import (
     PROCESS_NAMES,
     ExperimentConfiguration,
     canonical_json,

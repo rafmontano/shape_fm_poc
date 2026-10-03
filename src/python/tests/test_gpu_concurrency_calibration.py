@@ -13,12 +13,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from util.distributed_execution import (
+from util.shared_distributed_execution import (
     CHRONOS_GPU_RESOURCE,
     EXPECTED_DASK_VERSION,
     validate_cluster,
 )
-from util.configuration import load_experiment_configuration
+from util.shared_configuration import load_experiment_configuration
 from util.gpu_concurrency_calibration import (
     GIB,
     GpuCalibrationSettings,

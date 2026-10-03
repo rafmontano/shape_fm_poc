@@ -124,7 +124,7 @@ continues beyond POC2 until superseded by such an amendment.
 
 The reviewed baseline is b4da3fc. The
 [main entry point](../src/python/00_main.py) and
-[experiment coordinator](../src/python/util/experiment_execution.py) combine
+[experiment coordinator](../src/python/util/shared_experiment_execution.py) combine
 workflow bookkeeping with research-specific execution. Dask already distributes
 work, but gate sequencing and recovery also depend on custom orchestration.
 

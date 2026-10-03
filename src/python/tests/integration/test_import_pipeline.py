@@ -16,10 +16,10 @@ from pathlib import Path
 
 import duckdb
 
-from util.configuration import load_experiment_configuration
-from util.database import ShapeFMDatabase, initialize_experiment_database
-from util.gift_eval_source import iter_source_series
-from util.import_execution import ImportCoordinator
+from util.shared_configuration import load_experiment_configuration
+from util.shared_database import ShapeFMDatabase, initialize_experiment_database
+from util.p01_03_gift_eval_source import iter_source_series
+from util.p01_02_import_execution import ImportCoordinator
 
 
 class Process01ImportTests(unittest.TestCase):

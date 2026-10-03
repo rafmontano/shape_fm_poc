@@ -29,16 +29,16 @@ import duckdb
 from prefect import flow
 from prefect.context import get_run_context
 
-from util.configuration import ExperimentConfiguration, canonical_json
-from util.database import initialize_experiment_database, load_database_configuration
-from util.distributed_execution import (
+from util.shared_configuration import ExperimentConfiguration, canonical_json
+from util.shared_database import initialize_experiment_database, load_database_configuration
+from util.shared_distributed_execution import (
     CHRONOS_GPU_RESOURCE,
     worker_resource_snapshot,
 )
-from util.execution_profiles import ExecutionProfile, ExecutionSettings
-from util.experiment_execution import ExperimentCoordinator
-from util.import_execution import ImportCoordinator
-from util.workflow_orchestration import gate_flow, research_writer_locks
+from util.shared_execution_profiles import ExecutionProfile, ExecutionSettings
+from util.shared_experiment_execution import ExperimentCoordinator
+from util.p01_02_import_execution import ImportCoordinator
+from util.shared_workflow_orchestration import gate_flow, research_writer_locks
 
 
 # Experiment globals: acceptance scope and expected scientific row/task counts are
@@ -782,7 +782,7 @@ class _TwoMachineCluster:
                 "PYTHONPATH=src/python",
                 str(self.root / paths["project_environment"] / "bin/python"),
                 "-c",
-                "import util.experiment_execution, util.distributed_execution",
+                "import util.shared_experiment_execution, util.shared_distributed_execution",
             ],
             root=self.root,
         )
@@ -818,7 +818,7 @@ class _TwoMachineCluster:
             f"\"$(git -C {shlex.quote(evaluation['source_directory'])} rev-parse HEAD)\" \"$(hostname)\"; "
             "nvidia-smi --query-gpu=name --format=csv,noheader; "
             f"PYTHONPATH=src/python {shlex.quote(paths['project_environment'] + '/bin/python')} -c "
-            "'import util.experiment_execution, util.distributed_execution'; "
+            "'import util.shared_experiment_execution, util.shared_distributed_execution'; "
             f"{shlex.quote(paths['project_environment'] + '/bin/python')} -c {project_script}; "
             f"{shlex.quote(evaluation['environment'] + '/bin/python')} -c {gift_script}; "
             f"{shlex.quote(paths['chronos_environment'] + '/bin/python')} -c {chronos_script}; "
@@ -966,7 +966,7 @@ class _TwoMachineCluster:
         )
         from distributed import Client
 
-        from util.distributed_execution import validate_cluster
+        from util.shared_distributed_execution import validate_cluster
 
         client = Client(self.scheduler_address, timeout=f"{dask_timeout}s")
         try:

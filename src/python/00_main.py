@@ -11,8 +11,8 @@ from typing import Sequence
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src/python"))
 
-from util.researcher_actions import ResearcherActions
-from util.researcher_cli import InvocationProvenance, ResearcherCLI
+from util.p00_01_researcher_actions import ResearcherActions
+from util.p00_02_researcher_cli import InvocationProvenance, ResearcherCLI
 
 
 def main(argv: Sequence[str] | None = None) -> int:

@@ -61,7 +61,7 @@ is always required. Median, quantile levels, and quantiles are all required for
 Researchers use one function without knowing the storage table:
 
 ```python
-from util.experiment_execution import get_forecast_mean
+from util.shared_experiment_execution import get_forecast_mean
 
 auto = get_forecast_mean(
     database, dataset_id, "0", "auto_arima_forec", experiment_id,

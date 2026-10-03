@@ -17,13 +17,13 @@ import subprocess
 import unittest
 from pathlib import Path
 
-from util.configuration import (
+from util.shared_configuration import (
     ExperimentConfigurationError,
     load_experiment_configuration,
     resolve_experiment_configuration,
 )
-from util.seasonal_period_tuning import historical_folds
-from util.transformations import (
+from util.p04_04_seasonal_period_tuning import historical_folds
+from util.shared_transformations import (
     STANDARDISATION_RECIPE,
     apply_steps,
     apply_transformation,

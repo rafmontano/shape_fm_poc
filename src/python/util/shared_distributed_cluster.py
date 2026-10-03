@@ -1,5 +1,5 @@
 # ==============================================================================
-# distributed_cluster.py
+# shared_distributed_cluster.py
 #
 # Purpose: Inspect and manage the approved ShapeFM two-machine Dask CPU cluster.
 # Inputs: An execution profile, verified machine environment, and connected Dask client.
@@ -21,8 +21,8 @@ from typing import Any
 
 from distributed import Client
 
-from .database import load_database_configuration
-from .distributed_execution import (
+from .shared_database import load_database_configuration
+from .shared_distributed_execution import (
     AUTOARIMA_R_RESOURCE,
     MAC_TUNING_R_RESOURCE,
     ROOT,
@@ -30,7 +30,7 @@ from .distributed_execution import (
     UBUNTU_TUNING_R_RESOURCE,
     validate_cluster,
 )
-from .execution_profiles import GIB, ExecutionProfile, system_memory
+from .shared_execution_profiles import GIB, ExecutionProfile, system_memory
 
 
 def _configuration_hash(database: Path) -> str:
@@ -189,7 +189,7 @@ class ManagedTuningCluster:
         remote = self._ssh(
             "set -eu; "
             f"cd {shlex.quote(self.ubuntu_root)}; "
-            "test -x .tools/uv/uv; test -f src/python/util/distributed_execution.py; "
+            "test -x .tools/uv/uv; test -f src/python/util/shared_distributed_execution.py; "
             "test ! -e .amp/in/seasonal-recovery-ubuntu.pid; "
             "printf '%s|%s|%s' \"$(hostname)\" \"$(nproc)\" "
             "\"$(awk '/MemAvailable/ {printf \"%.3f\", $2/1024/1024}' /proc/meminfo)\""
@@ -294,7 +294,7 @@ class ManagedTuningCluster:
             "--no-dashboard >>data/dask/seasonal-recovery.log 2>&1 & "
         )
         if self.topology["requires_gpu"]:
-            from .distributed_execution import CHRONOS_GPU_RESOURCE
+            from .shared_distributed_execution import CHRONOS_GPU_RESOURCE
             remote_workers += (
                 ".tools/uv/uv run --locked --no-sync dask worker "
                 f"{shlex.quote(self.worker_scheduler_address)} "

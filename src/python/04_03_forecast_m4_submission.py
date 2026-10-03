@@ -8,7 +8,7 @@ import json
 import sys
 from pathlib import Path
 
-from util.m4_submission import retrieve_m4_submission
+from util.p04_05_m4_submission import retrieve_m4_submission
 
 
 def main() -> None:

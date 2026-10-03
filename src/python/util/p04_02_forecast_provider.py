@@ -1,5 +1,5 @@
 # ==============================================================================
-# forecast_provider.py
+# p04_02_forecast_provider.py
 #
 # Purpose: Native, storage-free providers for ordinary Gate 4 model batches.
 # Inputs: Serializable forecast jobs and authoritative model/execution settings.
@@ -22,8 +22,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from .configuration import R_MODEL_METHODS
-from .execution_profiles import GIB, PersistentChronosWorker, system_hardware, validate_system_memory
+from .shared_configuration import R_MODEL_METHODS
+from .shared_execution_profiles import GIB, PersistentChronosWorker, system_hardware, validate_system_memory
 
 
 @dataclass(frozen=True)
@@ -98,7 +98,7 @@ class DistributedForecastProvider:
 
     def forecast(self, model: str, batch: list[dict[str, Any]]) -> dict[str, Any]:
         """Run one bounded model batch through its existing native adapter."""
-        from .distributed_execution import autoarima_batch, chronos_batch
+        from .shared_distributed_execution import autoarima_batch, chronos_batch
         from prefect.context import get_run_context
 
         started = time.time()
@@ -150,7 +150,7 @@ class LocalAutoArimaProvider:
     @classmethod
     def from_configuration(cls, configuration: Any) -> "LocalAutoArimaProvider":
         """Bind only native bridge settings, never a live coordinator or connection."""
-        from .distributed_execution import _run_r
+        from .shared_distributed_execution import _run_r
 
         execution = configuration.execution
         paths = configuration.execution_paths

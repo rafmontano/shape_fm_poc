@@ -10,12 +10,12 @@
 
 import unittest
 
-from util.configuration import canonical_json
-from util.experiment_execution import get_forecast
-from util.forecast_flow import run_ordinary_forecast_flow
-from util.forecast_provider import LocalAutoArimaProvider
-from util.forecast_storage import ForecastStorage
-from util.process_storage import ProcessStorage
+from util.shared_configuration import canonical_json
+from util.shared_experiment_execution import get_forecast
+from util.p04_01_forecast_flow import run_ordinary_forecast_flow
+from util.p04_02_forecast_provider import LocalAutoArimaProvider
+from util.p04_03_forecast_storage import ForecastStorage
+from util.shared_process_storage import ProcessStorage
 from tests import test_experiment_execution as fixtures
 
 
@@ -177,7 +177,7 @@ class ForecastFlowTests(unittest.TestCase):
     def test_coordinator_resolves_stored_and_explicit_retry_budget(self):
         """Normal coordinator dispatch must pass the effective rather than stored policy."""
         from unittest.mock import patch
-        from util.execution_profiles import ExecutionSettings
+        from util.shared_execution_profiles import ExecutionSettings
 
         # The historical v1 fixture stores one retry. Explicit zero/two settings
         # must replace it, not add to it or get overwritten by it.
@@ -202,7 +202,7 @@ class ForecastFlowTests(unittest.TestCase):
     def test_refill_does_not_wait_for_blocked_gpu(self, overlap=True):
         """Blocked GPU batches cannot occupy capacity needed by three CPU batches."""
         import threading
-        from util.forecast_flow import ordinary_forecast_flow
+        from util.p04_01_forecast_flow import ordinary_forecast_flow
 
         released = threading.Event()
         gpu_started = threading.Event()
@@ -280,10 +280,10 @@ class ForecastFlowTests(unittest.TestCase):
     def test_coordinator_propagates_profile_autoarima_cap(self):
         """The real coordinator supplies the model cap separately from total slots."""
         from unittest.mock import patch, MagicMock
-        from util.execution_profiles import resolve_execution_profile, ExecutionSettings
+        from util.shared_execution_profiles import resolve_execution_profile, ExecutionSettings
 
         profile, _ = resolve_execution_profile("poc2_seasonal_recovery")
-        with patch("util.forecast_flow.run_ordinary_forecast_flow") as dispatch:
+        with patch("util.p04_01_forecast_flow.run_ordinary_forecast_flow") as dispatch:
             self.coordinator._run_04_forecast("experiment", [], {}, profile, "cuda",
                 MagicMock(), ExecutionSettings(mode="dask", dask_scheduler_address="tcp://fixture",
                                                dask_max_in_flight=23))

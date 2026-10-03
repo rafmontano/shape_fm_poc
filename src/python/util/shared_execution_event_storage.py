@@ -1,5 +1,5 @@
 # ==============================================================================
-# execution_event_storage.py
+# shared_execution_event_storage.py
 #
 # Purpose: Persist coordinator-owned execution lifecycle and Prefect identities.
 # Inputs: One research DuckDB path and JSON-ready execution evidence.
@@ -17,7 +17,7 @@ from typing import Any
 
 import duckdb
 
-from .configuration import PROCESS_NAMES, canonical_json
+from .shared_configuration import PROCESS_NAMES, canonical_json
 
 
 class ExecutionEventStorage:

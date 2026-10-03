@@ -1,5 +1,5 @@
 # ==============================================================================
-# gift_eval_source.py
+# p01_03_gift_eval_source.py
 #
 # Purpose: Bounded, read-only streaming adapter for GIFT-Eval Arrow source data.
 # Inputs: A pinned GIFT-Eval Arrow snapshot directory, expected frequency, and optional row limit.
@@ -20,12 +20,12 @@ from typing import Any, Iterator
 import pyarrow as pa
 import pyarrow.ipc as ipc
 
-from .configuration import (
+from .shared_configuration import (
     ExperimentConfiguration,
     ImportValidationError,
     json_fingerprint,
 )
-from .provenance import sha256_file
+from .shared_provenance import sha256_file
 
 
 # Code constant: Arrow filename required by the pinned GIFT-Eval snapshot protocol.

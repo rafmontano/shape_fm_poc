@@ -8,11 +8,11 @@ from unittest import mock
 
 import duckdb
 
-from util.configuration import canonical_json, json_fingerprint
-from util.database import initialize_experiment_database
-from util.process_storage import ProcessStorage
-from util.researcher_actions import ProcessAction
-from util.transformations import transform
+from util.shared_configuration import canonical_json, json_fingerprint
+from util.shared_database import initialize_experiment_database
+from util.shared_process_storage import ProcessStorage
+from util.p00_01_researcher_actions import ProcessAction
+from util.shared_transformations import transform
 
 ROOT = Path(__file__).resolve().parents[3]
 CONFIGURATION = ROOT / "config/experiments/poc2_m4_daily_100.json"

@@ -1,5 +1,5 @@
 # ==============================================================================
-# forecast_combination.py
+# p05_01_forecast_combination.py
 #
 # Purpose: Shared deterministic forecast calculations for coordinator and workers.
 # Inputs: Configured forecast mappings with equally shaped mean, median, and quantile arrays.

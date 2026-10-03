@@ -1,5 +1,5 @@
 # ==============================================================================
-# provenance.py
+# shared_provenance.py
 #
 # Purpose: Small shared helpers for deterministic provenance and atomic metadata.
 # Inputs: Filesystem paths and JSON-serializable metadata values.

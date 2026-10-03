@@ -14,19 +14,152 @@ file-naming proposal; no unperformed independent QA is recorded as completed.
 Commit and normal push of that reviewed baseline and these approved documents,
 followed by safe Ubuntu synchronisation, are authorised before source moves.
 This supersedes the earlier Stage 2 publication restriction below. Publication
-has not yet been confirmed for this checkpoint.
+was completed as [3ee73d8](https://github.com/rafmontano/shape_fm_poc/commit/3ee73d85537c4eb724021c0d22de8f35e7fe0faa).
+Mac, Ubuntu and `origin/main` were verified at that revision before source moves.
+The reviewed 81-script / 31,200-line manifest matched every source byte. Ubuntu's
+prior overlay was preserved in `reviewed-stage2-overlay-before-published-checkpoint`
+before a fast-forward. Approved documentation additions were inspected separately.
 
 Apply the [standing naming and inactive-code rules](code-standards.md#python-utility-file-organisation)
 through the [current AMP instructions](amp-poc2-workflow-orchestration-instructions.md).
 The intended change is names, locations, references and readable navigation only;
 no algorithms, outputs, configuration meaning, workers or stored research results
 change. Use `tmp/inactive/` for confirmed inactive code that may return during
-migration, never `retired` or a deletion/cleanup target. Source moves have not yet
-been implemented. The renamed result returns for review before its own publication.
+migration, never `retired` or a deletion/cleanup target. The source moves below
+are implemented but uncommitted. The renamed result returns for review before
+its own publication.
 
-AMP will add one old-to-new file/ownership map, any inactive-file reasons,
-focused verification and reconciled active/inactive counts here. Preserve the
-historical path/count tables below instead of rewriting past evidence.
+## Python organisation implementation
+
+All paths below are relative to `src/python/util/`. Every row remains active;
+24 modules were renamed, three independent modules and the package marker retain
+their names. Navigation positions do not change execution order. Existing
+coordinating flows lead the import and forecast groups. Gates 2/3/5/6 continue
+using the cross-gate coordinator; no class extraction or extra layer was added.
+
+| Old filename | New filename | Owner and purpose | Status |
+| --- | --- | --- | --- |
+| researcher_actions.py | p00_01_researcher_actions.py | 00: dispatch commands and compose actions | Active |
+| researcher_cli.py | p00_02_researcher_cli.py | 00: command parsing and presentation | Active |
+| researcher_request.py | p00_03_researcher_request.py | 00: typed command requests | Active |
+| import_flow.py | p01_01_import_flow.py | 01: existing import coordinating flow | Active |
+| import_execution.py | p01_02_import_execution.py | 01: import computation and single-writer storage | Active |
+| gift_eval_source.py | p01_03_gift_eval_source.py | 01: pinned Arrow source adapter | Active |
+| gift_eval_acquisition.py | p01_04_gift_eval_acquisition.py | 01: source acquisition/verification used by setup | Active |
+| forecast_flow.py | p04_01_forecast_flow.py | 04: existing forecasting coordinating flow | Active |
+| forecast_provider.py | p04_02_forecast_provider.py | 04: native storage-free model providers | Active |
+| forecast_storage.py | p04_03_forecast_storage.py | 04: forecast preparation, validation and commit | Active |
+| seasonal_period_tuning.py | p04_04_seasonal_period_tuning.py | 04: opt-in period-policy tuning | Active |
+| m4_submission.py | p04_05_m4_submission.py | 04: archived mean-only retrieval | Active compatibility |
+| forecast_combination.py | p05_01_forecast_combination.py | 05: deterministic combination calculation | Active |
+| configuration.py | shared_configuration.py | Shared: configuration/identity contracts | Active |
+| database.py | shared_database.py | Shared: schema and stored configuration | Active |
+| distributed_cluster.py | shared_distributed_cluster.py | Shared: approved managed cluster lifecycle | Active |
+| distributed_execution.py | shared_distributed_execution.py | Shared: serializable workers and safeguards | Active |
+| execution_event_storage.py | shared_execution_event_storage.py | Shared: execution lifecycle persistence | Active |
+| execution_profiles.py | shared_execution_profiles.py | Shared: effective resource settings | Active |
+| experiment_execution.py | shared_experiment_execution.py | Shared: cross-gate planning/execution/retrieval | Active |
+| process_storage.py | shared_process_storage.py | Shared: process state and durable validation | Active |
+| provenance.py | shared_provenance.py | Shared: hashes and atomic metadata | Active |
+| transformations.py | shared_transformations.py | Shared: transformations and fitted state across gates/windows | Active |
+| workflow_orchestration.py | shared_workflow_orchestration.py | Shared: experiment/gate/preparation Prefect orchestration | Active |
+| window_preparation.py | unchanged | Independent `prepare-windows` workflow | Active |
+| execution_calibration.py | unchanged | Independent bounded execution calibration | Active diagnostic |
+| gpu_concurrency_calibration.py | unchanged | Independent developer GPU calibration | Active diagnostic |
+| __init__.py | unchanged | Python package marker | Active |
+
+No file was confirmed inactive, so `tmp/inactive/` was not created. The archived
+M4 worker bridge remains documented/tested with uncertain external callers;
+its implementation stays active. Calibration utilities have tests/developer
+interfaces, acquisition has a setup launcher, and the retained tuning queue
+function has a test caller inside an otherwise active module. None justifies
+parking a whole file or deleting a function in this naming-only assignment.
+
+All imports, mock targets, remote preflight strings, setup launch references and
+current guidance follow the map. Numbered workers, public commands, test names,
+class/function identifiers, configuration JSON and R sources are unchanged.
+No persisted Python utility path was found in configuration; the existing
+`LEGACY_WORKER_PATHS` adapter still resolves unchanged numbered worker paths.
+No new alias facade is needed. Historical evidence and scratch scripts retain
+their original paths: use their recorded source revision to reproduce them.
+Prefect-UI replay of old module references is not a supported restart path;
+normal entry reloads authoritative DuckDB state. Source-bound child databases
+keep their mismatch guard and were not rebound to new source.
+
+The source-manifest implementation already enumerates Git-visible files, including
+untracked new paths and excluding absent old paths; it required no logic change.
+Before two-host checks, each remote changed path matched the published baseline.
+New bytes were transferred and verified before removing each old path. The final
+105-file runtime identity on both hosts is
+`d44d6de442dcd652f54f41a77582bae82942a1d026bc299670de5a57f65898ed`.
+This is deliberately different from Stage 2's identity; no historical hash changed.
+Evidence is under `.amp/in/artifacts/python-organisation/`.
+
+Parsed syntax comparison of every changed Python file, after reversing only the
+module-name substitutions and equivalent import aliases, found no other executable
+change. Headers document owners and execution contexts. Simple functions in the
+one-off naming diagnostics are a bounded exception where classes add no value.
+
+### Organisation verification and QA
+
+| Check | Evidence and outcome |
+| --- | --- |
+| Behaviour-preserving source comparison | `semantic-equivalence.json`: all 55 changed Python files have identical parsed syntax after reversing module names and equivalent import aliases |
+| Mac focused suites | `mac-tests.log`: 210 tests passed in 213.822 seconds |
+| Ubuntu focused suites | `ubuntu-tests.log`: 210 tests passed in 215.790 seconds |
+| Import/discovery | All 27 non-marker utility modules import on both hosts; test discovery uses the project environment and the documented separate GIFT-Eval environment |
+| Setup/public entry | `bash -n scripts/setup.sh`, renamed acquisition module `--help`, and `00_main.py --help` pass on both hosts; no installs or downloads performed |
+| Normal restart | `normal-restart.json`: normal `00_main.py run --processes 1-6 --execution-profile poc2_seasonal_recovery` validates and skips every completed gate in a disposable clone |
+| Stored outcomes | `connected-verification.json`: exact configuration, forecasts, fitted transformation state, tasks/attempt counts, components and official evaluation rows unchanged; public retrieval before/after identical |
+| Fresh distributed imports | All 23 fresh profile-v3 CPU workers report the same 105-file source manifest; no GPU pool launched |
+| Serialization/computation | Renamed transformation function and result object round-trip on each host; independent expected values use centre 4 and sample scale √30 for `[-2, 1, 7, 10]`; tolerance 1e-12 |
+| Connected Prefect/Dask task | The retained Gate 3 compute flow submits a named transformation task to fresh Dask workers and returns matching values, fitted state and worker provenance |
+
+The normal restart uses `.amp/in/python-organisation-restart.duckdb`, a disposable
+copy of the completed Stage 2 fixture. No missing forecast was introduced or fit
+repeated. The source fixture's SHA256 remains
+`1e918a7c47cd0d740c8317f9b6ca158a2908c14e2ea7a03f4927382bf4848cc1`.
+Accepted tuning and parent/window database hashes also match the preserved
+Stage 2 evidence. Synthetic seed rows remain integration fixtures, not accuracy
+results. This is rename/import/restart verification, not new model, GPU or
+scientific acceptance. The approved worker limits and memory floors are unchanged.
+
+Two initial probe errors are preserved: `connected-checks-initial.log` inspected
+workers before registration, and `connected-checks-local-api.log` used a localhost
+ephemeral Prefect API unavailable to Ubuntu. The corrected diagnostic waits for
+all profile workers and reuses the established private-LAN Prefect service method;
+production code did not change. Completed normal restart evidence was reused,
+not rerun. Initial broad discovery in the project environment cannot import the
+isolated GIFT-Eval semantics dependency; it is checked in its documented locked
+environment instead, without installing packages or modifying environments.
+
+Independent QA can run read-only `00_main.py status --database
+.amp/in/python-organisation-restart.duckdb` and reuse the selectors recorded in
+`retrieval-after.json`. Compare the six skipped gate states, exact result arrays
+and stored transformation parameters with the verification record. Do not rebind
+historical window source hashes or launch a full scientific campaign for naming.
+The ordinary public CLI remains the restart interface, not old Prefect UI tasks.
+
+### Organisation counts
+
+The complete mapped per-script comparison is appended under “Python organisation
+compared with published Stage 2”. The same physical-line scope retains all prior
+manifests, unchanged scripts, R code, tests and manual QA. `final-scripts.tsv`
+SHA256 is `54a07c9ef38e8dfe109d7fa94f585719bd9161b867952af515c4b6b9a252c9bd`.
+
+| Scope | Before files / lines | After files / lines |
+| --- | ---: | ---: |
+| Active production/support | 50 / 20,138 | 50 / 20,164 |
+| Automated tests | 27 / 10,126 | 27 / 10,126 |
+| Manual QA | 4 / 936 | 4 / 936 |
+| Inactive holdings | 0 / 0 | 0 / 0 |
+| Total retained | 81 / 31,200 | 81 / 31,226 |
+
+Python remains 63 files (27,835 lines); R remains 18 files (3,391 lines).
+The net +26 lines are missing module-header/owner documentation, not new runtime
+layers or calculations. No retained code was removed or moved out of the count.
+Stop for technical/researcher review. Only the preceding Stage 2 checkpoint was
+published; these organisation changes are uncommitted and unpublished.
 
 ## Researcher acceptance and pragmatic Stage 2 direction
 
@@ -2100,3 +2233,97 @@ the findings above rather than treating extracted modules as removed logic.
 | automated test subtotal | 27 | 27 | 9937 | 10126 | +189 |
 | manual QA subtotal | 4 | 4 | 936 | 936 | +0 |
 | All scripts | 81 | 81 | 31112 | 31200 | +88 |
+
+### Python organisation compared with published Stage 2
+
+| Script before | Script after | Role | Lines before | Lines after | Change |
+| --- | --- | --- | ---: | ---: | ---: |
+| scripts/setup_r.R | scripts/setup_r.R | production/support | 150 | 150 | +0 |
+| scripts/setup_support.py | scripts/setup_support.py | production/support | 710 | 710 | +0 |
+| src/python/00_main.py | src/python/00_main.py | production/support | 35 | 35 | +0 |
+| src/python/01_import.py | src/python/01_import.py | production/support | 30 | 30 | +0 |
+| src/python/02_preprocess.py | src/python/02_preprocess.py | production/support | 35 | 35 | +0 |
+| src/python/03_transform.py | src/python/03_transform.py | production/support | 35 | 35 | +0 |
+| src/python/04_02_forecast_chronos.py | src/python/04_02_forecast_chronos.py | production/support | 281 | 281 | +0 |
+| src/python/04_03_forecast_m4_submission.py | src/python/04_03_forecast_m4_submission.py | production/support | 29 | 29 | +0 |
+| src/python/04_forecast.py | src/python/04_forecast.py | production/support | 43 | 43 | +0 |
+| src/python/05_combine.py | src/python/05_combine.py | production/support | 35 | 35 | +0 |
+| src/python/06_01_evaluate_gift_eval.py | src/python/06_01_evaluate_gift_eval.py | production/support | 462 | 462 | +0 |
+| src/python/06_evaluate.py | src/python/06_evaluate.py | production/support | 37 | 37 | +0 |
+| src/python/tests/__init__.py | src/python/tests/__init__.py | automated test | 10 | 10 | +0 |
+| src/python/tests/acceptance.py | src/python/tests/acceptance.py | automated test | 1871 | 1871 | +0 |
+| src/python/tests/integration/__init__.py | src/python/tests/integration/__init__.py | automated test | 10 | 10 | +0 |
+| src/python/tests/integration/test_gift_eval_evaluation.py | src/python/tests/integration/test_gift_eval_evaluation.py | automated test | 189 | 189 | +0 |
+| src/python/tests/integration/test_gift_eval_semantics.py | src/python/tests/integration/test_gift_eval_semantics.py | automated test | 98 | 98 | +0 |
+| src/python/tests/integration/test_import_pipeline.py | src/python/tests/integration/test_import_pipeline.py | automated test | 151 | 151 | +0 |
+| src/python/tests/integration/test_preprocessing_regression.py | src/python/tests/integration/test_preprocessing_regression.py | automated test | 72 | 72 | +0 |
+| src/python/tests/test_acceptance.py | src/python/tests/test_acceptance.py | automated test | 457 | 457 | +0 |
+| src/python/tests/test_configuration.py | src/python/tests/test_configuration.py | automated test | 318 | 318 | +0 |
+| src/python/tests/test_execution.py | src/python/tests/test_execution.py | automated test | 1038 | 1038 | +0 |
+| src/python/tests/test_experiment_execution.py | src/python/tests/test_experiment_execution.py | automated test | 967 | 967 | +0 |
+| src/python/tests/test_forecast_flow.py | src/python/tests/test_forecast_flow.py | automated test | 339 | 339 | +0 |
+| src/python/tests/test_forecast_safety.py | src/python/tests/test_forecast_safety.py | automated test | 374 | 374 | +0 |
+| src/python/tests/test_gpu_concurrency_calibration.py | src/python/tests/test_gpu_concurrency_calibration.py | automated test | 197 | 197 | +0 |
+| src/python/tests/test_import.py | src/python/tests/test_import.py | automated test | 467 | 467 | +0 |
+| src/python/tests/test_m4_reference.py | src/python/tests/test_m4_reference.py | automated test | 354 | 354 | +0 |
+| src/python/tests/test_main.py | src/python/tests/test_main.py | automated test | 467 | 467 | +0 |
+| src/python/tests/test_preprocessing.py | src/python/tests/test_preprocessing.py | automated test | 109 | 109 | +0 |
+| src/python/tests/test_process_storage.py | src/python/tests/test_process_storage.py | automated test | 135 | 135 | +0 |
+| src/python/tests/test_seasonal_period_tuning.py | src/python/tests/test_seasonal_period_tuning.py | automated test | 225 | 225 | +0 |
+| src/python/tests/test_setup.py | src/python/tests/test_setup.py | automated test | 394 | 394 | +0 |
+| src/python/tests/test_transformations.py | src/python/tests/test_transformations.py | automated test | 258 | 258 | +0 |
+| src/python/tests/test_window_preparation.py | src/python/tests/test_window_preparation.py | automated test | 704 | 704 | +0 |
+| src/python/tests/test_workflow_orchestration.py | src/python/tests/test_workflow_orchestration.py | automated test | 267 | 267 | +0 |
+| src/python/util/__init__.py | src/python/util/__init__.py | production/support | 10 | 10 | +0 |
+| src/python/util/configuration.py | src/python/util/shared_configuration.py | production/support | 1061 | 1061 | +0 |
+| src/python/util/database.py | src/python/util/shared_database.py | production/support | 962 | 962 | +0 |
+| src/python/util/distributed_cluster.py | src/python/util/shared_distributed_cluster.py | production/support | 368 | 368 | +0 |
+| src/python/util/distributed_execution.py | src/python/util/shared_distributed_execution.py | production/support | 1525 | 1525 | +0 |
+| src/python/util/execution_calibration.py | src/python/util/execution_calibration.py | production/support | 1141 | 1141 | +0 |
+| src/python/util/execution_event_storage.py | src/python/util/shared_execution_event_storage.py | production/support | 125 | 125 | +0 |
+| src/python/util/execution_profiles.py | src/python/util/shared_execution_profiles.py | production/support | 605 | 605 | +0 |
+| src/python/util/experiment_execution.py | src/python/util/shared_experiment_execution.py | production/support | 2697 | 2697 | +0 |
+| src/python/util/forecast_combination.py | src/python/util/p05_01_forecast_combination.py | production/support | 49 | 49 | +0 |
+| src/python/util/forecast_flow.py | src/python/util/p04_01_forecast_flow.py | production/support | 191 | 191 | +0 |
+| src/python/util/forecast_provider.py | src/python/util/p04_02_forecast_provider.py | production/support | 284 | 284 | +0 |
+| src/python/util/forecast_storage.py | src/python/util/p04_03_forecast_storage.py | production/support | 156 | 157 | +1 |
+| src/python/util/gift_eval_acquisition.py | src/python/util/p01_04_gift_eval_acquisition.py | production/support | 294 | 294 | +0 |
+| src/python/util/gift_eval_source.py | src/python/util/p01_03_gift_eval_source.py | production/support | 209 | 209 | +0 |
+| src/python/util/gpu_concurrency_calibration.py | src/python/util/gpu_concurrency_calibration.py | production/support | 1386 | 1386 | +0 |
+| src/python/util/import_execution.py | src/python/util/p01_02_import_execution.py | production/support | 1144 | 1144 | +0 |
+| src/python/util/import_flow.py | src/python/util/p01_01_import_flow.py | production/support | 54 | 55 | +1 |
+| src/python/util/m4_submission.py | src/python/util/p04_05_m4_submission.py | production/support | 121 | 129 | +8 |
+| src/python/util/process_storage.py | src/python/util/shared_process_storage.py | production/support | 304 | 304 | +0 |
+| src/python/util/provenance.py | src/python/util/shared_provenance.py | production/support | 55 | 55 | +0 |
+| src/python/util/researcher_actions.py | src/python/util/p00_01_researcher_actions.py | production/support | 539 | 539 | +0 |
+| src/python/util/researcher_cli.py | src/python/util/p00_02_researcher_cli.py | production/support | 148 | 156 | +8 |
+| src/python/util/researcher_request.py | src/python/util/p00_03_researcher_request.py | production/support | 24 | 32 | +8 |
+| src/python/util/seasonal_period_tuning.py | src/python/util/p04_04_seasonal_period_tuning.py | production/support | 1213 | 1213 | +0 |
+| src/python/util/transformations.py | src/python/util/shared_transformations.py | production/support | 263 | 263 | +0 |
+| src/python/util/window_preparation.py | src/python/util/window_preparation.py | production/support | 1235 | 1235 | +0 |
+| src/python/util/workflow_orchestration.py | src/python/util/shared_workflow_orchestration.py | production/support | 443 | 443 | +0 |
+| src/r/01_02_import_m4comp2018.R | src/r/01_02_import_m4comp2018.R | production/support | 209 | 209 | +0 |
+| src/r/02_01_preprocess_series.R | src/r/02_01_preprocess_series.R | production/support | 81 | 81 | +0 |
+| src/r/04_01_forecast_auto_arima.R | src/r/04_01_forecast_auto_arima.R | production/support | 86 | 86 | +0 |
+| src/r/04_01_forecast_r_methods.R | src/r/04_01_forecast_r_methods.R | production/support | 102 | 102 | +0 |
+| src/r/qa/get_m4_daily_series.R | src/r/qa/get_m4_daily_series.R | manual QA | 300 | 300 | +0 |
+| src/r/qa/inspect_rolling_window.R | src/r/qa/inspect_rolling_window.R | manual QA | 277 | 277 | +0 |
+| src/r/qa/inspect_seasonal_period_tuning.R | src/r/qa/inspect_seasonal_period_tuning.R | manual QA | 149 | 149 | +0 |
+| src/r/qa/inspect_standardisation.R | src/r/qa/inspect_standardisation.R | manual QA | 210 | 210 | +0 |
+| src/r/tests/test_forecast_methods.R | src/r/tests/test_forecast_methods.R | automated test | 440 | 440 | +0 |
+| src/r/tests/test_import_m4comp2018.R | src/r/tests/test_import_m4comp2018.R | automated test | 97 | 97 | +0 |
+| src/r/tests/test_transformations.R | src/r/tests/test_transformations.R | automated test | 118 | 118 | +0 |
+| src/r/util/forecast_methods.R | src/r/util/forecast_methods.R | production/support | 797 | 797 | +0 |
+| src/r/util/labels.R | src/r/util/labels.R | production/support | 21 | 21 | +0 |
+| src/r/util/seasonal_period.R | src/r/util/seasonal_period.R | production/support | 79 | 79 | +0 |
+| src/r/util/time_series_input.R | src/r/util/time_series_input.R | production/support | 57 | 57 | +0 |
+| src/r/util/transformations.R | src/r/util/transformations.R | production/support | 188 | 188 | +0 |
+| src/r/util/window_preparation.R | src/r/util/window_preparation.R | production/support | 30 | 30 | +0 |
+
+| Scope | Before files | After files | Before lines | After lines |
+| --- | ---: | ---: | ---: | ---: |
+| production/support | 50 | 50 | 20138 | 20164 |
+| automated test | 27 | 27 | 10126 | 10126 |
+| manual QA | 4 | 4 | 936 | 936 |
+| Total retained | 81 | 81 | 31200 | 31226 |
+| Inactive holdings | 0 | 0 | 0 | 0 |

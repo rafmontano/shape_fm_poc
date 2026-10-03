@@ -13,10 +13,10 @@ from unittest.mock import MagicMock, patch
 
 import duckdb
 
-import util.researcher_actions as action_module
-from util.database import initialize_experiment_database
-from util.researcher_actions import ProcessAction, ResearcherActions, WindowPreparationAction
-from util.researcher_cli import DEFAULT_DATABASE, InvocationProvenance, ResearcherCLI
+import util.p00_01_researcher_actions as action_module
+from util.shared_database import initialize_experiment_database
+from util.p00_01_researcher_actions import ProcessAction, ResearcherActions, WindowPreparationAction
+from util.p00_02_researcher_cli import DEFAULT_DATABASE, InvocationProvenance, ResearcherCLI
 
 ROOT = Path(__file__).resolve().parents[3]
 SPEC = importlib.util.spec_from_file_location("shapefm_main", ROOT / "src/python/00_main.py")
@@ -329,7 +329,7 @@ class RestoredProcessActionTests(unittest.TestCase):
         cluster = MagicMock()
         cluster.scheduler_address = "tcp://scheduler:8786"
         cluster.start.return_value = {"resolved_topology": {"total_workers": 38}}
-        with patch("util.distributed_cluster.ManagedTuningCluster", return_value=cluster) as factory:
+        with patch("util.shared_distributed_cluster.ManagedTuningCluster", return_value=cluster) as factory:
             execution, settings, selected, evidence = ProcessAction()._execution(
                 configuration, (4,), "poc2_seasonal_recovery", None
             )

@@ -13,8 +13,8 @@
 from pathlib import Path
 from typing import Any
 
-from util.experiment_execution import ExperimentCoordinator, latest_experiment_id
-from util.execution_profiles import ExecutionProfile, ExecutionSettings
+from util.shared_experiment_execution import ExperimentCoordinator, latest_experiment_id
+from util.shared_execution_profiles import ExecutionProfile, ExecutionSettings
 
 
 # Code constant: process identity validated by the numbered-wrapper loader.

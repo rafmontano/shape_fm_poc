@@ -1,9 +1,10 @@
 # ==============================================================================
-# forecast_storage.py
+# p04_03_forecast_storage.py
 #
 # Purpose: Coordinator-local preparation, validation, commit, and verification for Gate 4.
 # Inputs: Authoritative DuckDB state, pending task identities, and worker responses.
 # Outputs: Original-scale forecasts and completed task attempts in the single writer.
+# Run from: Imported by the Gate 4 Prefect flow; not run directly.
 # ==============================================================================
 
 """Single-writer storage boundary for ordinary Gate 4 forecasting."""
@@ -14,8 +15,8 @@ import json
 import math
 from typing import Any
 
-from .configuration import R_MODEL_METHODS, canonical_json, json_fingerprint
-from .transformations import inverse
+from .shared_configuration import R_MODEL_METHODS, canonical_json, json_fingerprint
+from .shared_transformations import inverse
 
 
 class ForecastStorage:
@@ -99,7 +100,7 @@ class ForecastStorage:
             mean = inverse(result["mean"], method, params)
             median = inverse(result["median"], method, params)
             restored_quantiles = [inverse(values, method, params) for values in quantiles]
-            from .experiment_execution import validate_forecast_capability
+            from .shared_experiment_execution import validate_forecast_capability
 
             validate_forecast_capability(
                 mean, median, self.coordinator.quantiles, restored_quantiles, "probabilistic"

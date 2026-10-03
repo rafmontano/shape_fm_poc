@@ -1,3 +1,11 @@
+# ==============================================================================
+# p00_02_researcher_cli.py
+# Purpose: Parse researcher commands and present provenance, JSON results, and errors.
+# Inputs: Public CLI arguments and repository/runtime provenance sources.
+# Outputs: Validated ResearcherRequest values and JSON/error presentation.
+# Run from: Imported by 00_main.py; not run directly.
+# ==============================================================================
+
 """Researcher command parsing, provenance, and JSON/error presentation."""
 
 from __future__ import annotations
@@ -10,8 +18,8 @@ import sys
 from pathlib import Path
 from typing import Any, Sequence
 
-from .configuration import PROCESS_NAMES
-from .researcher_request import ResearcherRequest
+from .shared_configuration import PROCESS_NAMES
+from .p00_03_researcher_request import ResearcherRequest
 
 ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_DATABASE = ROOT / "results/poc2_acceptance.duckdb"

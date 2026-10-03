@@ -21,7 +21,7 @@ from gluonts.dataset.split import split
 from gluonts.ev.metrics import MAE
 from gluonts.model import evaluate_forecasts
 from gluonts.model.forecast import QuantileForecast
-from util.configuration import load_experiment_configuration
+from util.shared_configuration import load_experiment_configuration
 
 
 class GiftEvalSemanticsTests(unittest.TestCase):

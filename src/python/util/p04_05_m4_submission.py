@@ -1,3 +1,11 @@
+# ==============================================================================
+# p04_05_m4_submission.py
+# Purpose: Retrieve validated official M4 point forecasts without fitting a model.
+# Inputs: Experiment DuckDB path and a validated M4 submission request.
+# Outputs: Exact official point forecasts with provider provenance.
+# Run from: Imported by the Gate 4 experiment coordinator; not run directly.
+# ==============================================================================
+
 """Retrieve validated official M4 point forecasts without fitting a model."""
 
 from __future__ import annotations

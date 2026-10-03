@@ -1,5 +1,5 @@
 # ==============================================================================
-# distributed_execution.py
+# shared_distributed_execution.py
 #
 # Purpose: Serializable ShapeFM Dask workers and bounded coordinator submission.
 # Inputs: Serializable job batches, Dask clients/workers, execution settings, and model identities.
@@ -33,9 +33,9 @@ import dask
 import distributed
 from distributed import Client, Future, as_completed, get_worker
 
-from .configuration import json_fingerprint
-from .forecast_combination import combine_equal_weight
-from .transformations import transform
+from .shared_configuration import json_fingerprint
+from .p05_01_forecast_combination import combine_equal_weight
+from .shared_transformations import transform
 
 
 # Code constant: pinned Dask protocol release required on coordinator and workers.
@@ -1005,7 +1005,7 @@ def _get_chronos(
 ) -> tuple[Any, int]:
     """Purpose: Acquire the Dask process's keyed persistent Chronos bridge. Inputs: Model/revision/device/dtype strings, positive internal CPU threads, repository-relative environment and worker paths, and startup/request timeouts in seconds. Outputs: The owned ``PersistentChronosWorker`` and monotonic generation number; under a global lock, starts a subprocess or force-replaces one whose full configuration key differs."""
     global _chronos_worker, _chronos_key, _chronos_generation
-    from .execution_profiles import PersistentChronosWorker
+    from .shared_execution_profiles import PersistentChronosWorker
 
     key = (
         model,

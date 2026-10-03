@@ -1,5 +1,5 @@
 # ==============================================================================
-# experiment_execution.py
+# shared_experiment_execution.py
 #
 # Purpose: Plan M4 Daily tasks, execute preprocessing through official evaluation, and export a candidate.
 # Inputs: Imported M4 series, experiment configuration, execution profile/settings, and process selection.
@@ -25,9 +25,9 @@ from typing import Any, Callable
 
 import duckdb
 
-from .configuration import R_MODEL_METHODS, canonical_json, json_fingerprint
-from .database import DEFAULT_DATABASE, load_database_configuration, migrate_database
-from .execution_profiles import (
+from .shared_configuration import R_MODEL_METHODS, canonical_json, json_fingerprint
+from .shared_database import DEFAULT_DATABASE, load_database_configuration, migrate_database
+from .shared_execution_profiles import (
     GIB,
     ExecutionProfile,
     ExecutionSettings,
@@ -36,10 +36,10 @@ from .execution_profiles import (
     validate_heavy_tuning_execution,
     validate_system_memory,
 )
-from .forecast_combination import combine_equal_weight
-from .import_execution import repository_root
-from .transformations import TransformationResult, inverse
-from .provenance import utc_now
+from .p05_01_forecast_combination import combine_equal_weight
+from .p01_02_import_execution import repository_root
+from .shared_transformations import TransformationResult, inverse
+from .shared_provenance import utc_now
 
 
 # Code constant: process-number to legacy persistent invocation-stage protocol mapping;
@@ -1192,7 +1192,7 @@ class ExperimentCoordinator:
         if settings.mode == "dask" and process != 6:
             from distributed import Client
 
-            from .distributed_execution import (
+            from .shared_distributed_execution import (
                 repository_source_manifest,
                 validate_cluster,
                 validate_tuning_cluster,
@@ -1440,7 +1440,7 @@ class ExperimentCoordinator:
                 }
             )
 
-        from .workflow_orchestration import run_gate_compute_flow
+        from .shared_workflow_orchestration import run_gate_compute_flow
 
         outcomes = run_gate_compute_flow(
             process_id=2,
@@ -1645,7 +1645,7 @@ class ExperimentCoordinator:
             for meta, (values, method) in zip(metadata, prepared, strict=True)
         ]
         by_task = {meta[0]: meta for meta in metadata}
-        from .workflow_orchestration import run_gate_compute_flow
+        from .shared_workflow_orchestration import run_gate_compute_flow
 
         outcomes = run_gate_compute_flow(
             process_id=3,
@@ -1701,7 +1701,7 @@ class ExperimentCoordinator:
         original-scale forecast arrays, provenance, hashes, and task state.
         """
         if self.configuration.seasonal_period_tuning is not None:
-            from .seasonal_period_tuning import (
+            from .p04_04_seasonal_period_tuning import (
                 run_distributed_tuned_forecasts,
                 run_tuned_forecasts,
             )
@@ -1719,14 +1719,14 @@ class ExperimentCoordinator:
                     profile,
                 )
             return
-        from .forecast_flow import run_ordinary_forecast_flow
-        from .forecast_provider import (
+        from .p04_01_forecast_flow import run_ordinary_forecast_flow
+        from .p04_02_forecast_provider import (
             DistributedForecastProvider,
             ForecastSafetyPolicy,
             LocalAutoArimaProvider,
             LocalChronosProvider,
         )
-        from .forecast_storage import ForecastStorage
+        from .p04_03_forecast_storage import ForecastStorage
 
         storage = ForecastStorage(self, experiment_id, attempts)
         execution = self.configuration.execution
@@ -1924,7 +1924,7 @@ class ExperimentCoordinator:
 
         rows_by_id = {row[0]: row for row in combination_rows}
         jobs_by_id = {job["id"]: job for job in jobs}
-        from .workflow_orchestration import run_gate_compute_flow
+        from .shared_workflow_orchestration import run_gate_compute_flow
 
         outcomes = run_gate_compute_flow(
             process_id=5,
@@ -2056,7 +2056,7 @@ class ExperimentCoordinator:
                 }
             )
 
-        from .workflow_orchestration import run_gate_compute_flow
+        from .shared_workflow_orchestration import run_gate_compute_flow
 
         gift_environment = self.configuration.resolved["evaluation"]["gift_eval"]["environment"]
         outcomes = run_gate_compute_flow(

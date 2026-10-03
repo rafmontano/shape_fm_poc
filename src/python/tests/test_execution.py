@@ -29,15 +29,15 @@ from util.execution_calibration import (
     _recommended_setting,
     _scientific_comparison,
 )
-from util.execution_profiles import (
+from util.shared_execution_profiles import (
     ExecutionSettings,
     PersistentChronosWorker,
     resolve_execution_profile,
     system_hardware,
     validate_heavy_tuning_execution,
 )
-from util.configuration import load_experiment_configuration
-from util.experiment_execution import (
+from util.shared_configuration import load_experiment_configuration
+from util.shared_experiment_execution import (
     ExperimentCoordinator,
     _length_aware_batches,
     expected_task_counts,
@@ -136,7 +136,7 @@ class ExecutionProfileTests(unittest.TestCase):
 
     def test_hardware_provenance_records_cpu_model(self) -> None:
         """Hardware provenance includes the CPU model reported by the platform helper."""
-        with patch("util.execution_profiles.cpu_model", return_value="Test CPU"):
+        with patch("util.shared_execution_profiles.cpu_model", return_value="Test CPU"):
             self.assertEqual(system_hardware()["cpu_model"], "Test CPU")
 
     def test_execution_settings_are_invocation_only_and_validated(self) -> None:
@@ -176,11 +176,11 @@ class ExecutionProfileTests(unittest.TestCase):
     def test_managed_cluster_resolves_cpu_only_and_gpu_topology(self) -> None:
         """The managed launcher uses workload topology and rejects missing GPU safety."""
         from dataclasses import replace
-        from util.distributed_cluster import ManagedTuningCluster
+        from util.shared_distributed_cluster import ManagedTuningCluster
 
         profile, _ = resolve_execution_profile("poc2_seasonal_recovery")
         probe = MagicMock(stdout="192.0.2.1\n")
-        with patch("util.distributed_cluster.subprocess.run", return_value=probe):
+        with patch("util.shared_distributed_cluster.subprocess.run", return_value=probe):
             cpu = ManagedTuningCluster(profile)
             gpu = ManagedTuningCluster(profile, requires_gpu=True)
             self.assertEqual(cpu.topology["ubuntu_gpu_workers"], 0)
@@ -195,15 +195,15 @@ class ExecutionProfileTests(unittest.TestCase):
 
     def test_managed_cluster_partial_remote_cleanup_releases_local_processes(self) -> None:
         """A remote cleanup failure cannot strand owned local process groups."""
-        from util.distributed_cluster import ManagedTuningCluster
+        from util.shared_distributed_cluster import ManagedTuningCluster
 
         profile, _ = resolve_execution_profile("poc2_seasonal_recovery")
         process = MagicMock(pid=123)
         process.poll.return_value = None
         probe = MagicMock(stdout="192.0.2.1\n")
         with (
-            patch("util.distributed_cluster.subprocess.run", return_value=probe),
-            patch("util.distributed_cluster.os.killpg") as kill_group,
+            patch("util.shared_distributed_cluster.subprocess.run", return_value=probe),
+            patch("util.shared_distributed_cluster.os.killpg") as kill_group,
         ):
             cluster = ManagedTuningCluster(profile)
             cluster.remote_started = True
@@ -235,14 +235,14 @@ class ExecutionProfileTests(unittest.TestCase):
         with (
             patch("distributed.Client", return_value=client),
             patch(
-                "util.distributed_execution.validate_cluster",
+                "util.shared_distributed_execution.validate_cluster",
                 side_effect=RuntimeError("validation sentinel"),
             ) as validate,
             patch(
-                "util.experiment_execution.subprocess.run",
+                "util.shared_experiment_execution.subprocess.run",
                 return_value=MagicMock(stdout="revision\n"),
             ),
-            patch("util.distributed_execution.repository_source_manifest", return_value={"source": "hash"}),
+            patch("util.shared_distributed_execution.repository_source_manifest", return_value={"source": "hash"}),
             self.assertRaisesRegex(RuntimeError, "validation sentinel"),
         ):
             coordinator.run_process(
@@ -258,7 +258,7 @@ class ExecutionProfileTests(unittest.TestCase):
 
     def test_tuning_preflight_rejects_wrong_topology_and_stale_source(self) -> None:
         """CPU-only tuning checks exact host pools and synchronized dirty-tree content."""
-        from util.distributed_execution import (
+        from util.shared_distributed_execution import (
             EXPECTED_DASK_VERSION,
             source_manifest_fingerprint,
             validate_tuning_cluster,
@@ -291,7 +291,7 @@ class ExecutionProfileTests(unittest.TestCase):
                 },
             },
         }
-        with patch("util.distributed_execution.socket.gethostname", return_value="MacHost"):
+        with patch("util.shared_distributed_execution.socket.gethostname", return_value="MacHost"):
             reports = validate_tuning_cluster(
                 client,
                 expected_workers=2,
@@ -306,7 +306,7 @@ class ExecutionProfileTests(unittest.TestCase):
             **client.run.return_value["worker/ubuntu"],
             "source_mismatches": ["src/example.py"],
         }
-        with patch("util.distributed_execution.socket.gethostname", return_value="MacHost"):
+        with patch("util.shared_distributed_execution.socket.gethostname", return_value="MacHost"):
             with self.assertRaisesRegex(RuntimeError, "stale source"):
                 validate_tuning_cluster(
                     client,
@@ -352,7 +352,7 @@ class ExecutionProfileTests(unittest.TestCase):
 
     def test_tuning_queues_use_all_eligible_ets_work_without_sampling_quota(self) -> None:
         """ETS queue retains every payload and consumes profile-owned limits."""
-        from util.seasonal_period_tuning import distributed_tuning_queue_groups
+        from util.p04_04_seasonal_period_tuning import distributed_tuning_queue_groups
 
         profile, _ = resolve_execution_profile("poc2_seasonal_recovery")
         payloads = [
@@ -374,7 +374,7 @@ class ExecutionProfileTests(unittest.TestCase):
 
     def test_memory_monitor_handles_transient_and_sustained_pressure(self) -> None:
         """Only sustained floor pressure terminates the registered owned process."""
-        from util.distributed_execution import (
+        from util.shared_distributed_execution import (
             ResourceSafetyInterruption,
             TuningMemoryMonitor,
         )
@@ -400,7 +400,7 @@ class ExecutionProfileTests(unittest.TestCase):
             clock=lambda: next(times),
         )
         monitor.register_process(process)
-        with patch("util.distributed_execution.os.killpg") as terminate:
+        with patch("util.shared_distributed_execution.os.killpg") as terminate:
             monitor.sample_once()
             monitor.sample_once()
             monitor.sample_once()
@@ -413,7 +413,7 @@ class ExecutionProfileTests(unittest.TestCase):
 
     def test_memory_monitor_detects_swap_growth_without_unrelated_kill(self) -> None:
         """Sustained swap growth records pressure without killing unowned work."""
-        from util.distributed_execution import (
+        from util.shared_distributed_execution import (
             ResourceSafetyInterruption,
             TuningMemoryMonitor,
         )
@@ -434,7 +434,7 @@ class ExecutionProfileTests(unittest.TestCase):
             probe=lambda: next(snapshots),
             clock=lambda: next(times),
         )
-        with patch("util.distributed_execution.os.killpg") as terminate:
+        with patch("util.shared_distributed_execution.os.killpg") as terminate:
             monitor.sample_once()
             monitor.sample_once()
         terminate.assert_not_called()
@@ -443,7 +443,7 @@ class ExecutionProfileTests(unittest.TestCase):
 
     def test_memory_admission_waits_for_headroom_and_records_throttling(self) -> None:
         """Admission pauses on pressure and proceeds only after budget plus floor fits."""
-        from util import distributed_execution
+        from util import shared_distributed_execution as distributed_execution
 
         memory = [
             MagicMock(available=5 * 1024**3),
@@ -460,7 +460,7 @@ class ExecutionProfileTests(unittest.TestCase):
             ),
             patch("psutil.virtual_memory", side_effect=memory),
             patch("psutil.swap_memory", return_value=MagicMock(used=0)),
-            patch("util.distributed_execution.time.sleep") as sleep,
+            patch("util.shared_distributed_execution.time.sleep") as sleep,
         ):
             with distributed_execution.tuning_memory_reservation(
                 3,
@@ -682,7 +682,7 @@ for line in sys.stdin:
         self.assertNotIn("duckdb", imports)
 
         dask_source = (
-            Path(__file__).parents[3] / "src/python/util/distributed_execution.py"
+            Path(__file__).parents[3] / "src/python/util/shared_distributed_execution.py"
         ).read_text(encoding="utf-8")
         dask_imports = [
             node.names[0].name
@@ -700,8 +700,8 @@ for line in sys.stdin:
         """Dask transformation batches match direct transforms and report CPU resources."""
         from distributed import Client, LocalCluster
 
-        from util.distributed_execution import run_batches, transform_batch
-        from util.transformations import transform
+        from util.shared_distributed_execution import run_batches, transform_batch
+        from util.shared_transformations import transform
 
         jobs = [
             {
@@ -745,7 +745,7 @@ for line in sys.stdin:
         """A retried Dask batch receives the incremented retry count."""
         from distributed import Client, LocalCluster
 
-        from util.distributed_execution import run_batches
+        from util.shared_distributed_execution import run_batches
 
         def succeed_on_retry(batch, retry_count=0):
             """Purpose: Model a Dask task that succeeds only after its initial attempt.
@@ -787,7 +787,7 @@ for line in sys.stdin:
         from distributed import Client, LocalCluster
         from distributed.scheduler import KilledWorker
 
-        from util.distributed_execution import run_batches
+        from util.shared_distributed_execution import run_batches
 
         def survive_worker_loss(batch, retry_count=0):
             """Model one lost worker followed by a successful replacement attempt."""
@@ -964,7 +964,7 @@ class OrdinaryManifestTests(unittest.TestCase):
 
     def test_exact_dirty_manifest_and_mismatch_rejection(self):
         """Retain dependency checks while replacing clean-Git with byte identity."""
-        from util.distributed_execution import validate_cluster, EXPECTED_DASK_VERSION
+        from util.shared_distributed_execution import validate_cluster, EXPECTED_DASK_VERSION
 
         manifest = {"src/python/00_main.py": "approved", "uv.lock": "locked"}
         report = {
@@ -997,7 +997,7 @@ class OrdinaryManifestTests(unittest.TestCase):
 
     def test_normal_preflight_rejects_profile_topology_mismatch(self):
         """Correct totals alone cannot hide a CPU pool on the wrong host."""
-        from util.distributed_execution import validate_cluster, EXPECTED_DASK_VERSION
+        from util.shared_distributed_execution import validate_cluster, EXPECTED_DASK_VERSION
         import socket
 
         report = {

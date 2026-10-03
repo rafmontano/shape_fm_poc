@@ -1,5 +1,5 @@
 # ==============================================================================
-# workflow_orchestration.py
+# shared_workflow_orchestration.py
 #
 # Purpose: Define ShapeFM's Prefect experiment, gate, and preparation workflows.
 # Inputs: Existing DuckDB paths, process IDs, resolved execution controls, and thin callables around established coordinators.
@@ -65,7 +65,7 @@ def compute_clean_batch(
     batch: list[dict[str, Any]], options: dict[str, Any], distributed: bool
 ) -> dict[str, Any]:
     """Clean one serializable batch locally or on the selected Dask worker."""
-    from .distributed_execution import clean_batch
+    from .shared_distributed_execution import clean_batch
 
     return clean_batch(
         batch, options["script"], options["timeout"], options["threads"],
@@ -78,7 +78,7 @@ def compute_transform_batch(
     batch: list[dict[str, Any]], _options: dict[str, Any], distributed: bool
 ) -> dict[str, Any]:
     """Transform one serializable batch in a named Prefect compute task."""
-    from .distributed_execution import transform_batch
+    from .shared_distributed_execution import transform_batch
 
     return transform_batch(batch, get_run_context().task_run.run_count - 1)
 
@@ -88,7 +88,7 @@ def compute_combine_batch(
     batch: list[dict[str, Any]], _options: dict[str, Any], distributed: bool
 ) -> dict[str, Any]:
     """Combine one forecast batch in a named Prefect compute task."""
-    from .distributed_execution import combine_batch
+    from .shared_distributed_execution import combine_batch
 
     return combine_batch(batch, get_run_context().task_run.run_count - 1)
 

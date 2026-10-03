@@ -1,5 +1,5 @@
 # ==============================================================================
-# import_flow.py
+# p01_01_import_flow.py
 #
 # Purpose: Readable Gate 1 Prefect composition over configuration, source, and storage.
 # Inputs: An initialized experiment DuckDB with authoritative stored configuration.
@@ -8,6 +8,7 @@
 # Contracts: Tasks carry SeriesTask and return SeriesResult; failures remain durable/failed.
 # Restart: Completed records are independently checked against the pinned configured source.
 # Authority: Stored ExperimentConfiguration defines source identity, scope, and execution.
+# Run from: Imported by the Process 01 worker interface; not run directly.
 # ==============================================================================
 
 """Gate 1 Prefect composition for configured GIFT-Eval imports."""
@@ -18,9 +19,9 @@ from typing import Any
 from prefect import flow, task
 from prefect.cache_policies import NO_CACHE
 
-from .database import load_database_configuration
-from .gift_eval_source import ConfiguredGiftEvalSource
-from .import_execution import ImportCoordinator, SeriesTask, SeriesResult, compute_series
+from .shared_database import load_database_configuration
+from .p01_03_gift_eval_source import ConfiguredGiftEvalSource
+from .p01_02_import_execution import ImportCoordinator, SeriesTask, SeriesResult, compute_series
 
 
 @task(name="compute-import-series", cache_policy=NO_CACHE, persist_result=False)

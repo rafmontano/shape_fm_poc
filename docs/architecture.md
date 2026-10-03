@@ -27,11 +27,27 @@ and a behaviour-preserving organisation pass over the reviewed Stage 2 source.
 Process-owned helpers remain under `util` with `pNN_MM_` names; shared components
 use `shared_`. Existing coordinating flows appear first within their groups.
 No new orchestration layer or one-file-per-class fragmentation is introduced.
-Confirmed inactive code remains recoverable in tracked `tmp/inactive/` while
-previous-project migration continues. Current filenames remain valid until AMP
-implements the mapping and updates this document; this is approval, not evidence
-that any source has moved. The software layers and scientific contracts below
-are unchanged.
+The organisation implementation is awaiting review: 24 existing utility modules
+have new names, with no implementation split or new compatibility facade.
+No whole file was confirmed inactive; no holding-area move was made. The
+[complete ownership and rename map](poc2-workflow-orchestration-acceptance.md#python-organisation-implementation)
+records retained calibration, setup, compatibility and QA paths.
+
+| Owner | Current modules under `src/python/util/` |
+| --- | --- |
+| 00 entry | `p00_01_researcher_actions.py`, `p00_02_researcher_cli.py`, `p00_03_researcher_request.py` |
+| 01 import | `p01_01_import_flow.py`, `p01_02_import_execution.py`, `p01_03_gift_eval_source.py`, `p01_04_gift_eval_acquisition.py` |
+| 04 forecast | `p04_01_forecast_flow.py`, `p04_02_forecast_provider.py`, `p04_03_forecast_storage.py`, `p04_04_seasonal_period_tuning.py`, `p04_05_m4_submission.py` |
+| 05 combine | `p05_01_forecast_combination.py` |
+| Cross-gate coordination | `shared_experiment_execution.py`, `shared_workflow_orchestration.py`; these retain Gates 2/3/5/6 coordination without artificial per-gate extraction |
+| Foundation | `shared_configuration.py`, `shared_database.py`, `shared_distributed_cluster.py`, `shared_distributed_execution.py`, `shared_execution_profiles.py`, `shared_execution_event_storage.py`, `shared_process_storage.py`, `shared_provenance.py`, `shared_transformations.py` |
+| Independent workflows | `window_preparation.py` (`prepare-windows`), `execution_calibration.py` (execution calibration), `gpu_concurrency_calibration.py` (developer GPU calibration) |
+
+Numbered executable wrappers and workers remain stable. New runs record the new
+operational source identity; historical source hashes and stored configurations
+are unchanged. An existing child database bound to old source still follows its
+source-mismatch guard, not an implicit rebind. The software layers and scientific
+contracts below are unchanged.
 
 ### Stage 2 retained workflow boundaries
 

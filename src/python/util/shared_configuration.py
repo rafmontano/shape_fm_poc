@@ -1,5 +1,5 @@
 # ==============================================================================
-# configuration.py
+# shared_configuration.py
 #
 # Purpose: Validate the complete experiment contract and derive stable identities and windows.
 # Inputs: Experiment JSON, stored resolved configuration, source metadata, and observation counts.

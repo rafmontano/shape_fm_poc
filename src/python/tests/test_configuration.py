@@ -17,12 +17,12 @@ from pathlib import Path
 
 import duckdb
 
-from util.configuration import (
+from util.shared_configuration import (
     ExperimentConfigurationError,
     load_experiment_configuration,
     resolve_experiment_configuration,
 )
-from util.database import (
+from util.shared_database import (
     initialize_experiment_database,
     load_database_configuration,
 )
@@ -50,7 +50,7 @@ class ExperimentConfigurationTests(unittest.TestCase):
 
     def test_r_pool_contract_preserves_legacy_and_stored_identity(self):
         """Nine native methods plan separately; v7 never changes old AutoARIMA defaults."""
-        from util.configuration import R_MODEL_METHODS
+        from util.shared_configuration import R_MODEL_METHODS
         configuration = load_experiment_configuration(
             REFERENCE_CONFIGURATION.parent / "poc2_m4_daily_100_r_pool.json")
         self.assertEqual(tuple(configuration.resolved["models"]), tuple(R_MODEL_METHODS))

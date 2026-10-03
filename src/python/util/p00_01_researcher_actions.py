@@ -1,5 +1,5 @@
 # ==============================================================================
-# researcher_actions.py
+# p00_01_researcher_actions.py
 # Purpose: Dispatch validated researcher requests through their owning workflow.
 # Inputs: ResearcherRequest, stored configuration and explicit operational overrides.
 # Outputs: JSON-ready results or visible failures; append-only execution evidence.
@@ -25,19 +25,19 @@ from typing import Any
 import duckdb
 
 from tests.acceptance import run_acceptance
-from .configuration import PROCESS_NAMES
-from .database import initialize_experiment_database, load_database_configuration
-from .execution_event_storage import ExecutionEventStorage
-from .execution_profiles import (APPROVED_HEAVY_TUNING_PROFILE, ExecutionSettings,
+from .shared_configuration import PROCESS_NAMES
+from .shared_database import initialize_experiment_database, load_database_configuration
+from .shared_execution_event_storage import ExecutionEventStorage
+from .shared_execution_profiles import (APPROVED_HEAVY_TUNING_PROFILE, ExecutionSettings,
                                  resolve_execution_profile, validate_heavy_tuning_execution)
-from .experiment_execution import (ExperimentCoordinator, configuration_status,
+from .shared_experiment_execution import (ExperimentCoordinator, configuration_status,
                                    experiment_status, get_forecast,
                                    latest_experiment_id, official_results)
-from .process_storage import ProcessStorage
-from .researcher_cli import ROOT
-from .researcher_request import ResearcherRequest
+from .shared_process_storage import ProcessStorage
+from .p00_02_researcher_cli import ROOT
+from .p00_03_researcher_request import ResearcherRequest
 from .window_preparation import get_prepared_window, run_window_preparation_flow
-from .workflow_orchestration import experiment_flow, research_writer_locks, window_preparation_flow
+from .shared_workflow_orchestration import experiment_flow, research_writer_locks, window_preparation_flow
 
 # Interface constant: one numbered adapter per scientific gate, resolved from ROOT.
 PROCESS_WRAPPER_PATHS = {
@@ -213,7 +213,7 @@ class ProcessAction:
                          "execution_profile_fingerprint": profile.fingerprint})
             return execution, ExecutionSettings(mode="sequential", dask_max_in_flight=1,
                 dask_retries=0, dask_timeout_seconds=float(configuration.execution["dask_timeout_seconds"])), None, None
-        from .distributed_cluster import ManagedTuningCluster
+        from .shared_distributed_cluster import ManagedTuningCluster
         if requires_gpu is None:
             requires_gpu = "chronos_2" in configuration.resolved["models"]
         topology = profile.distributed_topology(requires_gpu)
@@ -299,7 +299,7 @@ class WindowPreparationAction:
                 raise ValueError("local preparation bounds cannot be combined with an execution profile")
             if execution_profile != APPROVED_HEAVY_TUNING_PROFILE:
                 raise ValueError("distributed window preparation requires execution profile " + APPROVED_HEAVY_TUNING_PROFILE)
-        from .distributed_execution import repository_source_manifest, source_manifest_fingerprint
+        from .shared_distributed_execution import repository_source_manifest, source_manifest_fingerprint
         manifest_rows = repository_source_manifest()
         manifest = source_manifest_fingerprint(manifest_rows)
         with research_writer_locks((database, windows_database)):
@@ -402,8 +402,8 @@ class WindowPreparationAction:
                      manifest_rows: dict[str, str], manifest: str) -> dict[str, Any]:
         """Run the retained approved-profile distributed preparation boundary."""
         from distributed import Client
-        from .distributed_cluster import ManagedTuningCluster
-        from .distributed_execution import package_version_probe, validate_tuning_cluster
+        from .shared_distributed_cluster import ManagedTuningCluster
+        from .shared_distributed_execution import package_version_probe, validate_tuning_cluster
 
         profile, _ = resolve_execution_profile(profile_name)
         cluster = ManagedTuningCluster(profile)

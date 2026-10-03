@@ -37,15 +37,15 @@ sys.path.insert(0, str(ROOT / "src/python"))
 import duckdb
 from distributed import Client, Future, as_completed
 
-from util.configuration import load_experiment_configuration
-from util.distributed_execution import (
+from util.shared_configuration import load_experiment_configuration
+from util.shared_distributed_execution import (
     CHRONOS_GPU_RESOURCE,
     chronos_batch,
     validate_cluster,
 )
 from util.execution_calibration import _scientific_comparison
-from util.experiment_execution import _length_aware_batches
-from util.transformations import inverse
+from util.shared_experiment_execution import _length_aware_batches
+from util.shared_transformations import inverse
 
 
 # Test/calibration value: accepted baseline revision fixed by the calibration protocol.

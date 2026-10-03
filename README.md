@@ -21,6 +21,10 @@ with `shared_`. Its approved migration changes organisation, not results. Any
 code held for possible later reuse goes in tracked `tmp/inactive/`, not disposable
 temporary storage. Follow the [current AMP handoff](docs/amp-poc2-workflow-orchestration-instructions.md)
 for implementation and checkpoint publication status.
+The naming pass is implemented for review; see the
+[old-to-new map and verification](docs/poc2-workflow-orchestration-acceptance.md#python-organisation-implementation).
+Public commands and stored experiment definitions are unchanged. Historical
+source-bound window databases are not automatically rebound to renamed source.
 
 Heavy testing must follow the [approved execution policy](docs/execution-policy.md).
 The [execution safeguard instructions](docs/amp-poc2-execution-safeguards-instructions.md)
@@ -260,8 +264,12 @@ src/python/04_02_forecast_chronos.py     Chronos forecasting substep
 src/python/05_combine.py                 Process 05 wrapper
 src/python/06_evaluate.py                Process 06 wrapper
 src/python/06_01_evaluate_gift_eval.py   official evaluation substep
-src/python/util/                         shared Python implementation
-src/python/util/workflow_orchestration.py Prefect flows, tasks, and writer locks
+src/python/util/p00_01_researcher_actions.py researcher action dispatch
+src/python/util/p01_01_import_flow.py     import coordinating flow
+src/python/util/p04_01_forecast_flow.py   forecasting coordinating flow
+src/python/util/p05_01_forecast_combination.py combination calculation
+src/python/util/shared_experiment_execution.py cross-gate coordinator
+src/python/util/shared_workflow_orchestration.py Prefect flows, tasks, writer locks
 src/python/util/window_preparation.py    rolling-window/S1 coordinator and retrieval
 src/python/tests/                        unit, integration, and acceptance tests
 src/r/02_01_preprocess_series.R          R preprocessing substep

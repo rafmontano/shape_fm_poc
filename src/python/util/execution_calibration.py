@@ -28,14 +28,14 @@ from typing import Any
 
 import duckdb
 
-from .database import DEFAULT_DATABASE, load_database_configuration
-from .execution_profiles import (
+from .shared_database import DEFAULT_DATABASE, load_database_configuration
+from .shared_execution_profiles import (
     GIB,
     ExecutionProfile,
     PersistentChronosWorker,
     system_memory,
 )
-from .import_execution import repository_root
+from .p01_02_import_execution import repository_root
 
 
 # Test/calibration value: developer-owned search grids; calibration code changes them,
@@ -619,7 +619,7 @@ class _DistributedResourceSampler:
         """Purpose: Capture one distributed resource observation. Inputs: The retained Dask client and current coordinator/worker state. Outputs: None; remotely invokes worker probes, samples coordinator CPU/RAM/swap, records collection seconds, and appends the combined mapping."""
         import psutil
 
-        from .distributed_execution import worker_resource_snapshot
+        from .shared_distributed_execution import worker_resource_snapshot
 
         started = time.monotonic()
         workers = self.client.run(worker_resource_snapshot)
@@ -840,7 +840,7 @@ def calibrate_dask_profile(
     """Purpose: Calibrate an end-to-end Dask execution profile. Inputs: Canonical DuckDB path; scheduler address; positive worker, per-host CPU, Chronos batch, and in-flight counts; profile name; required output path; and optional baseline JSON path. Outputs: A report containing throughput, retries, failures, scientific equivalence, task contributions, sampled byte/percent telemetry, and safety verdict; opens canonical data read-only, creates/closes a Dask client, submits/retries pipeline tasks, launches remote R/Chronos work, creates then removes an isolated measurement DB, and creates the JSON report and parent directories."""
     from distributed import Client
 
-    from .distributed_execution import (
+    from .shared_distributed_execution import (
         CHRONOS_GPU_RESOURCE,
         autoarima_batch,
         chronos_batch,

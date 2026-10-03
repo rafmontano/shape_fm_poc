@@ -1,5 +1,5 @@
 # ==============================================================================
-# transformations.py
+# shared_transformations.py
 #
 # Purpose: Fit, apply, compose, and invert versioned leakage-safe transformations.
 # Inputs: Finite numeric values, registered recipe names, and portable fitted state.

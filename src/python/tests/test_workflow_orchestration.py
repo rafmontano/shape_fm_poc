@@ -15,7 +15,7 @@ from pathlib import Path
 
 from prefect.testing.utilities import prefect_test_harness
 
-from util import workflow_orchestration as workflows
+from util import shared_workflow_orchestration as workflows
 
 
 class WorkflowOrchestrationTests(unittest.TestCase):

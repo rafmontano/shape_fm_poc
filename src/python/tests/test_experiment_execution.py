@@ -16,17 +16,17 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from util.configuration import json_fingerprint
-from util.database import initialize_experiment_database
-from util.execution_profiles import resolve_execution_profile
-from util.experiment_execution import (
+from util.shared_configuration import json_fingerprint
+from util.shared_database import initialize_experiment_database
+from util.shared_execution_profiles import resolve_execution_profile
+from util.shared_experiment_execution import (
     ExperimentCoordinator,
     _batches,
     _combine_job,
     scientific_configuration,
     validated_submission_metadata,
 )
-from util.transformations import inverse, transform
+from util.shared_transformations import inverse, transform
 
 
 # Test/calibration value: expected rows derived from the committed 100-series fixture;
@@ -366,7 +366,7 @@ class TransactionTests(unittest.TestCase):
                     outcomes.append({"batch": batch, "error": str(exc)})
             return outcomes
 
-        with patch("util.workflow_orchestration.run_gate_compute_flow", side_effect=compute_flow):
+        with patch("util.shared_workflow_orchestration.run_gate_compute_flow", side_effect=compute_flow):
             with self.assertRaisesRegex(RuntimeError, "Process 2 failed"):
                 self.coordinator.run_process("experiment", 2, workers=1, batch_size=1)
         self.assertEqual(
@@ -397,7 +397,7 @@ class TransactionTests(unittest.TestCase):
                 **successful_worker({"jobs": batch}), "runtime_seconds": 0.0,
                 "worker": {}}} for batch in kwargs["batches"]]
 
-        with patch("util.workflow_orchestration.run_gate_compute_flow", side_effect=successful_flow):
+        with patch("util.shared_workflow_orchestration.run_gate_compute_flow", side_effect=successful_flow):
             result = self.coordinator.run_process(
                 "experiment",
                 2,
@@ -506,7 +506,7 @@ class TransactionTests(unittest.TestCase):
             }
 
         self.coordinator._r_worker = worker
-        from util.forecast_provider import LocalAutoArimaProvider
+        from util.p04_02_forecast_provider import LocalAutoArimaProvider
 
         provider_patch = patch.object(
             LocalAutoArimaProvider, "from_configuration",
@@ -624,7 +624,7 @@ class TransactionTests(unittest.TestCase):
                 "packages": {"forecast": "stub"},
             }
 
-        from util.forecast_provider import LocalAutoArimaProvider
+        from util.p04_02_forecast_provider import LocalAutoArimaProvider
 
         with patch.object(LocalAutoArimaProvider, "from_configuration", return_value=
                           LocalAutoArimaProvider(stub_worker, self.coordinator.configuration.auto_arima_settings)):
@@ -772,7 +772,7 @@ class TransactionTests(unittest.TestCase):
             "sequential_safe", {"chronos_inference_batch_size": 2}
         )
         with patch(
-            "util.forecast_provider.PersistentChronosWorker", OOMThenSuccessWorker
+            "util.p04_02_forecast_provider.PersistentChronosWorker", OOMThenSuccessWorker
         ):
             result = self.coordinator.run_process("experiment", 4, execution=execution)
         self.assertEqual(result["counts"], {"completed": 2})

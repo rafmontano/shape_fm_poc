@@ -1,5 +1,5 @@
 # ==============================================================================
-# execution_profiles.py
+# shared_execution_profiles.py
 #
 # Purpose: Hardware-aware local execution profiles and resource provenance.
 # Inputs: Named profile JSON, per-run overrides, host metrics, and Chronos bridge requests.
@@ -24,7 +24,7 @@ from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
 
-from .import_execution import repository_root
+from .p01_02_import_execution import repository_root
 
 
 # Code constant: IEC bytes per gibibyte used by memory-limit calculations.

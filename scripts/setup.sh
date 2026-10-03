@@ -213,7 +213,7 @@ acquire_assets() {
       HF_HUB_DOWNLOAD_TIMEOUT="$DOWNLOAD_TIMEOUT" \
       HF_HUB_ETAG_TIMEOUT="$DOWNLOAD_TIMEOUT" \
       "$UV" run --project "$REPOSITORY_ROOT" --locked --no-sync \
-      python -B -m util.gift_eval_acquisition m4_daily
+      python -B -m util.p01_04_gift_eval_acquisition m4_daily
   download_model "environments/chronos-2" "chronos_2"
   download_model "environments/mantis" "mantis"
 }

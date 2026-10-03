@@ -21,12 +21,12 @@ from unittest.mock import patch
 
 import duckdb
 
-from util.configuration import (
+from util.shared_configuration import (
     json_fingerprint,
     load_experiment_configuration,
     resolve_experiment_configuration,
 )
-from util.database import initialize_experiment_database, load_database_configuration
+from util.shared_database import initialize_experiment_database, load_database_configuration
 from util.window_preparation import (
     WindowPreparationCoordinator,
     _target_content_hash,
@@ -278,7 +278,7 @@ class RollingWindowUnitTests(unittest.TestCase):
 
     def test_constant_and_missing_inputs_are_cleaned_then_standardised(self) -> None:
         """The real worker keeps fitted state finite for risky constant/missing inputs."""
-        from util.distributed_execution import window_preparation_batch
+        from util.shared_distributed_execution import window_preparation_batch
 
         context = [4.0] * 64
         context[3] = None

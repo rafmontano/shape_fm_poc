@@ -8,7 +8,7 @@ import subprocess
 import unittest
 from pathlib import Path
 
-from util.gift_eval_source import iter_source_series
+from util.p01_03_gift_eval_source import iter_source_series
 
 
 class RobustPreprocessingRegressionTests(unittest.TestCase):
