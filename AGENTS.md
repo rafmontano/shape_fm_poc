@@ -36,6 +36,10 @@ The FFORMA method parity correction was approved on 5 October 2026. Follow
 and point mean, restore STL-AR's fixed `auto.arima(d=0,D=0)` fallback, and do
 not substitute seasonal naive or another model for methods without a supplied
 fallback.
+ID 018 was closed by the researcher on 5 October 2026 after accepting
+`docs/poc2-fforma-method-parity-execution-evidence.md`. Preserve that scientific
+and execution boundary; ID 021 is the next approved work item and remains a
+separate implementation checkpoint.
 
 Apply the standing [Python utility naming standard](docs/code-standards.md#python-utility-file-organisation):
 `pNN_MM_` for process-owned helpers, `shared_` for shared components, and no

@@ -1,6 +1,9 @@
 # POC2 FFORMA method parity decision
 
-Status: Approved by the researcher on 5 October 2026.
+Status: Approved and implemented. ID 018 was closed by the researcher on
+5 October 2026 after the
+[two-machine execution evidence](poc2-fforma-method-parity-execution-evidence.md)
+was accepted.
 
 ## Purpose
 

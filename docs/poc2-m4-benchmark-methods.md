@@ -4,7 +4,9 @@ Status: ID 018 approved by the researcher on 4 October 2026. Its first increment
 authorised a bounded extension of the existing R forecast-method library. A
 same-day activation addendum now authorises Naive2, SES, Holt and Damped in one
 new experiment configuration and the official M4 Comb in Process 05. Existing
-experiment definitions and accepted evidence remain unchanged.
+experiment definitions and accepted evidence remain unchanged. The completed
+implementation, FFORMA parity correction and two-machine evidence were accepted,
+and ID 018 was closed by the researcher on 5 October 2026.
 
 ## Purpose
 
