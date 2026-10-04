@@ -101,8 +101,11 @@ class ForecastStorage:
                 requested = job["model_id"]
                 fallback = result.get("fallback_used")
                 executed = result.get("executed_model_id")
-                if (type(fallback) is not bool
-                        or executed != ("snaive" if fallback else requested)
+                expected_executed = (
+                    "auto_arima" if requested == "stlm_ar" and fallback else requested
+                )
+                if (type(fallback) is not bool or executed != expected_executed
+                        or (fallback and requested != "stlm_ar")
                         or (fallback and not result.get("fallback_reason"))):
                     raise RuntimeError(f"invalid R method/fallback provenance for {job['task_id']}")
             if job["model_id"] in R_POINT_METHODS and result["fallback_used"]:

@@ -297,8 +297,9 @@ Gate 3 owns fitted transformations and their inversion state. The R forecast
 pool receives an already prepared numeric series at Gate 4 and returns
 independent probabilistic base forecasts; it does not interpret transformation
 expressions, combine forecasts, evaluate them, or write to DuckDB. The common
-request, result, probabilistic assumptions, and visible seasonal-naive fallback
-are documented in [`forecast-methods.md`](forecast-methods.md).
+request, result, probabilistic assumptions, FFORMA parity and method-specific
+fallback policy are documented in [`forecast-methods.md`](forecast-methods.md)
+and [`poc2-fforma-method-parity.md`](poc2-fforma-method-parity.md).
 Gate 1 missingness preservation, Gate 2 modes, and evaluation masking are
 documented in [`preprocessing.md`](preprocessing.md).
 
@@ -313,15 +314,13 @@ they are not relabelled or migrated.
 
 ### Current forecast-pool integration boundary
 
-The approved R library registers the nine original FFORMA-derived forecast
-methods in `src/r/util/forecast_methods.R`, with common validation and visible
-seasonal-naive fallback. The current production experiment does not yet plan
-all nine methods: configuration and Process 04 orchestration select only
-AutoARIMA and Chronos-2, and `src/r/04_01_forecast_auto_arima.R` invokes the R
-pool for AutoARIMA. Connecting the other eight registered R methods to model
-selection, task planning, execution, persistence and retrieval remains
-outstanding approved forecast-pool integration work. It is documented rather
-than implemented in this closure task.
+The R library registers the nine original FFORMA-derived forecast methods in
+`src/r/util/forecast_methods.R` with common validation. Configuration v9 and
+Process 04 can plan and execute all nine through the common R worker. Their
+scientific definitions are governed by the approved FFORMA parity decision:
+only STL-AR has the supplied fixed-order AutoARIMA fallback, and there is no
+pool-wide seasonal-naive substitution. Historical v8/v9 evidence predates this
+correction and remains evidence of execution rather than final method parity.
 
 The approved [ID 018 M4 benchmark-method decision](poc2-m4-benchmark-methods.md)
 keeps one R forecast pool and adds Naive2, SES, Holt and Damped there as

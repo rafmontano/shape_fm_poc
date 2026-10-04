@@ -140,8 +140,22 @@ class ForecastContract:
         if type(result["fallback_used"]) is not bool:
             raise ValueError("fallback_used must be boolean")
         if result["fallback_used"]:
-            if result["executed_model_id"] == result["requested_model_id"] or not result["fallback_reason"]:
-                raise ValueError("fallback result requires a different model and reason")
+            provenance = result["provenance"]
+            if (
+                result["requested_model_id"] != "stlm_ar"
+                or result["executed_model_id"] != "auto_arima"
+                or not result["fallback_reason"]
+                or not isinstance(provenance, dict)
+                or provenance.get("original_stl_error") != result["fallback_reason"]
+                or provenance.get("settings") != {
+                    "selected_branch": "auto_arima_d0_D0", "d": 0, "D": 0,
+                }
+                or not isinstance(provenance.get("package_version"), str)
+                or not provenance["package_version"]
+            ):
+                raise ValueError(
+                    "only stlm_ar may use the recorded fixed auto_arima fallback"
+                )
         elif (result["executed_model_id"] != result["requested_model_id"]
               or result["fallback_reason"] is not None):
             raise ValueError("non-fallback result has inconsistent provenance")

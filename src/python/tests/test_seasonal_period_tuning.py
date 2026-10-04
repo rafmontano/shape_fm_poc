@@ -124,7 +124,7 @@ class SeasonalPeriodTuningTests(unittest.TestCase):
             None, 0, False,
         )
 
-    def test_shared_compute_reuses_stored_evidence_and_preserves_fallback_identity(self) -> None:
+    def test_shared_compute_reuses_stored_evidence_and_preserves_method_identity(self) -> None:
         """Cached folds/scores drive selection while only the bounded final native call runs."""
         folds = []
         candidates = {"ets": {}}
@@ -165,8 +165,8 @@ class SeasonalPeriodTuningTests(unittest.TestCase):
             "results": [{
                 "id": "task/final", "mean": [9.0], "median": [8.0],
                 "quantiles": [[7.0], [10.0]], "requested_method_id": "ets_forec",
-                "executed_method_id": "naive_forec", "fallback_used": True,
-                "fallback_reason": "bounded mock fallback", "provenance": {"seed": "fixed"},
+                "executed_method_id": "ets_forec", "fallback_used": False,
+                "fallback_reason": None, "provenance": {"seed": "fixed"},
             }],
         }
         with patch("util.p04_04_seasonal_period_tuning._run_tuning_r", return_value=native) as worker:
@@ -178,8 +178,8 @@ class SeasonalPeriodTuningTests(unittest.TestCase):
         self.assertEqual(model["selection"]["selected_policy"], "baseline")
         self.assertEqual(model["selection"]["status"], "inconclusive")
         self.assertEqual(model["forecast"]["mean"], [9.0])
-        self.assertEqual(model["forecast"]["forecast_method"]["executed_method_id"], "naive_forec")
-        self.assertTrue(model["forecast"]["forecast_method"]["fallback_used"])
+        self.assertEqual(model["forecast"]["forecast_method"]["executed_method_id"], "ets_forec")
+        self.assertFalse(model["forecast"]["forecast_method"]["fallback_used"])
 
     def test_models_select_independently_and_worker_payload_excludes_actuals(self) -> None:
         """Model policies may differ while the R request contains training input only."""

@@ -6,6 +6,11 @@ The researcher approved the M4 benchmark extension in
 R pool. Configuration v9 activates them through a separate capability-aware
 allowlist without altering the established nine-method registry.
 
+The researcher approved the [FFORMA method parity decision](poc2-fforma-method-parity.md)
+on 5 October 2026. The supplied scientific arguments, method-specific fallback
+and point mean are authoritative; ShapeFM's common envelope and probabilistic
+fields are additions around those calculations.
+
 ## Scope and boundary
 
 Gate 4 has an allowlisted R forecast pool in
@@ -29,7 +34,8 @@ The initial method order preserves the original FFORMA pool:
 
 `M4_forec_methods()` returns this order. `forecast_method_registry()` returns
 the same identifiers mapped to explicit function objects. The generic runner
-indexes only this validated registry; JSON cannot supply executable R code.
+indexes only this validated registry; JSON cannot supply executable R code or
+change the approved scientific definitions.
 
 ## M4 point methods
 
@@ -116,7 +122,7 @@ the point forecast as the median and q0.5.
 | ETS | package point forecast; input-scale mean = median | `forecast()` central intervals; `opt.crit = "mae"` |
 | NNETAR | standard `forecast(fit, h)$mean`; empirical predictive median | empirical type-8 quantiles simulated from the same single fit |
 | TBATS | package point forecast used as q0.5 and median | `forecast()` central intervals from `tbats(x, use.parallel = FALSE)` |
-| STL-AR | package point forecast; input-scale mean = median | `forecast()` central intervals from `stlm(..., modelfunction = stats::ar)` |
+| STL-AR | point forecast from STL-AR or its approved fixed-order AutoARIMA fallback | `forecast()` central intervals from the same selected model |
 | Random walk with drift | Gaussian mean = median | `rwf()` central intervals |
 | Theta | package point forecast; symmetric mean = median | `thetaf()` central intervals |
 | Naïve | Gaussian mean = median | `naive()` central intervals |
@@ -127,33 +133,32 @@ median. The adapter fits once under a local deterministic seed and preserves the
 standard fitted-model point forecast as `mean`; simulations from that same fit
 provide the predictive median and requested quantiles.
 Defaults are seed 1234, 20 fits, 1,000 paths, and non-bootstrap innovations;
-all are recorded in provenance. The caller may supply reviewed settings.
+all are recorded in provenance. The experiment seed is supplied through the
+common request; changing the other baseline settings requires a separately
+approved model-variant identity.
 
-The forecast-pool profile preserves the original FFORMA scientific defaults:
-AutoARIMA uses `stepwise = FALSE` and `approximation = FALSE`, while TBATS keeps
-its automatic internal component selection. The existing configured POC worker
-may explicitly request its historical `stepwise = TRUE` AutoARIMA profile; that
-choice is recorded in result provenance and does not change the pool default.
+The forecast-pool profile preserves the supplied FFORMA scientific defaults.
+AutoARIMA uses `stepwise = FALSE` and `approximation = FALSE`; ETS uses
+`opt.crit = "mae"`; TBATS uses `use.parallel = FALSE`; and the other methods
+retain their supplied defaults. An alternative setting requires a separate
+model-variant identity and must not silently redefine the FFORMA baseline.
 
-The old FFORMA STL-AR function silently changed to AutoARIMA on failure. This
-implementation removes that hidden model substitution: every fitting,
-forecasting, or output-validation error enters the common visible fallback.
+## Method-specific fallback
 
-## Seasonal-naïve fallback
+STL-AR first executes `stlm(..., modelfunction = stats::ar)`. A fitting error
+executes the supplied method-specific `auto.arima(d=0, D=0)` fallback. ShapeFM
+records the selected branch and original error without changing its values.
 
-If a requested method fails, `run_forecast_method()` captures the original
-error and tries `snaive_forec` once with the same scientific input. A successful
-fallback emits a warning and returns one result with the original method in
-`requested_method_id`, `snaive_forec` in `executed_method_id`,
-`fallback_used = true`, and the original error in `fallback_reason`.
+There is no pool-wide seasonal-naive substitution. Methods without a supplied
+fallback fail visibly; output-validation errors also fail rather than changing
+the requested model. Infrastructure retry remains separate and cannot change
+scientific identity or settings.
 
-Direct seasonal-naïve failure never recurses. If both methods fail, execution
-terminates with one error containing both failures. A fallback result confirms
-that a forecast was produced; it does not claim that the requested model fitted.
-The [version-8 execution evidence](poc2-all-model-execution-evidence.md) is a
-concrete example: all 100 period-1 STL-AR requests stored valid seasonal-naïve
-fallbacks, so those candidate rows must not be reported as successful STL-AR
-fits.
+The [version-8 execution evidence](poc2-all-model-execution-evidence.md) and
+[version-9 evidence](poc2-forecast-contract-m4-combination-execution-evidence.md)
+remain accurate historical records: their period-1 STL-AR requests used the
+then-current seasonal-naive substitution. They are not acceptance evidence for
+the approved parity policy.
 
 ## Stage 2 production integration
 

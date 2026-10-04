@@ -586,7 +586,7 @@ class PersistentWorkerTests(unittest.TestCase):
         forecast_payload = {
             "action": "forecast",
             "settings": load_experiment_configuration(
-                root / "config/experiments/poc2_m4_daily_100.json"
+                root / "config/experiments/poc2_m4_daily_100_r_pool.json"
             ).workflow["models"]["auto_arima"]["settings"],
             "jobs": [
                 {

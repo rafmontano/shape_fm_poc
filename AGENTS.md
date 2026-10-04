@@ -31,6 +31,11 @@ were approved on 4 October 2026. Implement them from
 `docs/poc2-m4-benchmark-methods.md`: activate Naive2, SES, Holt and Damped in a
 new experiment, calculate official point-only M4 Comb from stored components in
 Process 05, and do not add or use `forecastHybrid` for that benchmark.
+The FFORMA method parity correction was approved on 5 October 2026. Follow
+`docs/poc2-fforma-method-parity.md`: preserve every supplied model configuration
+and point mean, restore STL-AR's fixed `auto.arima(d=0,D=0)` fallback, and do
+not substitute seasonal naive or another model for methods without a supplied
+fallback.
 
 Apply the standing [Python utility naming standard](docs/code-standards.md#python-utility-file-organisation):
 `pNN_MM_` for process-owned helpers, `shared_` for shared components, and no

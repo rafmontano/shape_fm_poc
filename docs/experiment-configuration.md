@@ -85,9 +85,12 @@ recipe.
 
 The [initial execution evidence](poc2-all-model-execution-evidence.md) completed
 and stored this graph. It also records that all period-1 STL-AR requests used
-the existing visible seasonal-naïve fallback, so the result is not evidence
-that the STL-AR implementation fitted. A period-7 rerun would be a distinct
-scientific experiment and is not implied by version 8.
+the then-current seasonal-naïve substitution. The approved
+[FFORMA parity decision](poc2-fforma-method-parity.md) replaces that policy with
+STL-AR's supplied `auto.arima(d=0,D=0)` method-specific fallback and prohibits
+pool-wide model substitution. Version 8 remains immutable historical evidence,
+not acceptance evidence for the corrected method policy. A period-7 rerun is a
+distinct scientific experiment and is not implied by version 8.
 
 ## Version 7 adds the approved R pool without rewriting history
 

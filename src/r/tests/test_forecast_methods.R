@@ -138,7 +138,7 @@ test_settings <- function(method_id) {
     ))
   }
   if (identical(method_id, "nnetar_forec")) {
-    return(list(seed = 1234L, repeats = 20L, npaths = 100L, bootstrap = FALSE))
+    return(list(seed = 1234L))
   }
   list()
 }
@@ -514,6 +514,22 @@ for (method_id in APPROVED_METHODS) {
   })
 }
 
+check("every registered method matches FFORMA on a short period-one history", function() {
+  values <- c(8, 11, 9, 15, 12, 18, 14, 21, 17, 24, 19, 27, 23, 30)
+  series <- stats::ts(values, frequency = 1L)
+  for (method_id in APPROVED_METHODS) {
+    request <- test_request(method_id, test_settings(method_id))
+    request$context <- values
+    request$frequency <- 1L
+    observed <- run_forecast_method(request)
+    expected <- original_fforma_mean(method_id, series, request$horizon)
+    assert_true(
+      isTRUE(all.equal(observed$mean, expected, tolerance = M4_R_TOLERANCE)),
+      sprintf("%s disagrees with FFORMA on the short period-one fixture", method_id)
+    )
+  }
+})
+
 check("central interval bounds map to the approved quantile rows", function() {
   request <- test_request("naive_forec")
   expected <- forecast::naive(
@@ -555,72 +571,118 @@ check("NNETAR simulation is deterministic and records its method", function() {
   )
 })
 
-check("requested-model failure produces one visible seasonal-naive fallback", function() {
+check("method failure remains visible and never executes seasonal naive", function() {
   registry <- forecast_method_registry()
   registry[["auto_arima_forec"]] <- function(request) stop("controlled model failure")
-  warning_text <- NULL
-  result <- withCallingHandlers(
-    run_forecast_methods(test_request("auto_arima_forec"), registry = registry),
-    warning = function(warning) {
-      warning_text <<- conditionMessage(warning)
-      invokeRestart("muffleWarning")
-    }
+  seasonal_naive_called <- FALSE
+  registry[["snaive_forec"]] <- function(request) {
+    seasonal_naive_called <<- TRUE
+    synthetic_result(request)
+  }
+  assert_error(
+    function() run_forecast_methods(test_request("auto_arima_forec"), registry = registry),
+    "controlled model failure",
+    "method failure was hidden by another model"
   )
-  assert_identical(length(result), 1L, "fallback changed one-request/one-result ordering")
-  result <- result[[1L]]
-  assert_identical(result$requested_method_id, "auto_arima_forec", "fallback lost requested method")
-  assert_identical(result$executed_method_id, "snaive_forec", "fallback execution not recorded")
-  assert_identical(result$fallback_used, TRUE, "fallback flag is false")
-  assert_true(grepl("controlled model failure", result$fallback_reason), "original error missing")
-  assert_true(grepl("executed snaive_forec fallback", warning_text), "fallback warning missing")
+  assert_identical(seasonal_naive_called, FALSE, "failure executed seasonal naive")
 })
 
-check("invalid requested-model output is eligible for fallback", function() {
+check("invalid model output remains failed and never executes another model", function() {
   registry <- forecast_method_registry()
+  seasonal_naive_called <- FALSE
   registry[["ets_forec"]] <- function(request) {
     result <- synthetic_result(request)
     result$quantiles <- result$quantiles[, -1L, drop = FALSE]
     result
   }
-  result <- suppressWarnings(run_forecast_method(test_request("ets_forec"), registry))
-  assert_identical(result$executed_method_id, "snaive_forec", "invalid output did not fallback")
-  assert_true(grepl("quantile dimensions", result$fallback_reason), "validation error not retained")
-})
-
-check("direct seasonal-naive failure never recurses", function() {
-  registry <- forecast_method_registry()
-  registry[["snaive_forec"]] <- function(request) stop("controlled snaive failure")
+  registry[["snaive_forec"]] <- function(request) {
+    seasonal_naive_called <<- TRUE
+    synthetic_result(request)
+  }
   assert_error(
-    function() run_forecast_method(test_request("snaive_forec"), registry),
-    "no recursive fallback attempted: controlled snaive failure",
-    "direct seasonal-naive failure recursed or lost its error"
+    function() run_forecast_method(test_request("ets_forec"), registry),
+    "quantile dimensions",
+    "invalid output was replaced by another model"
+  )
+  assert_identical(seasonal_naive_called, FALSE, "invalid output executed seasonal naive")
+})
+
+check("period-one STL uses only the fixed AutoARIMA fitting fallback", function() {
+  request <- test_request("stlm_ar_forec")
+  request$frequency <- 1L
+  result <- run_forecast_method(request)
+  series <- stats::ts(request$context, frequency = 1L)
+  fit <- forecast::auto.arima(series, d = 0, D = 0)
+  expected <- forecast::forecast(fit, h = request$horizon)$mean
+  assert_true(
+    isTRUE(all.equal(result$mean, as.numeric(expected), tolerance = M4_R_TOLERANCE)),
+    "STL fallback changed the fixed AutoARIMA point mean"
+  )
+  assert_identical(result$requested_method_id, "stlm_ar_forec", "STL request identity changed")
+  assert_identical(result$executed_method_id, "auto_arima_forec", "wrong STL fallback executed")
+  assert_identical(result$fallback_used, TRUE, "STL fitting fallback was not recorded")
+  assert_true(grepl("seasonal", result$fallback_reason), "original STL error was not retained")
+  assert_identical(
+    result$provenance$settings,
+    list(selected_branch = "auto_arima_d0_D0", d = 0L, D = 0L),
+    "fixed STL fallback settings changed"
+  )
+  assert_identical(
+    result$provenance$original_stl_error,
+    result$fallback_reason,
+    "fallback provenance lost the original STL error"
+  )
+  assert_true(
+    identical(result$provenance$package_version, as.character(utils::packageVersion("forecast"))),
+    "STL fallback provenance lost the forecast package version"
+  )
+  assert_true(
+    isTRUE(all.equal(result$quantiles[5L, ], result$median, tolerance = 0)),
+    "fallback q0.5 and median differ"
   )
 })
 
-check("double failure reports both model and fallback errors", function() {
-  registry <- forecast_method_registry()
-  registry[["tbats_forec"]] <- function(request) stop("controlled TBATS failure")
-  registry[["snaive_forec"]] <- function(request) stop("controlled fallback failure")
-  error <- assert_error(
-    function() run_forecast_method(test_request("tbats_forec"), registry),
-    "controlled TBATS failure.*controlled fallback failure",
-    "double failure did not report both errors"
-  )
-  assert_true(grepl("seasonal-naive fallback also failed", conditionMessage(error)), "terminal context missing")
+check("successful period-seven STL records the STL branch without fallback", function() {
+  result <- run_forecast_method(test_request("stlm_ar_forec"))
+  assert_identical(result$executed_method_id, "stlm_ar_forec", "STL success changed identity")
+  assert_identical(result$fallback_used, FALSE, "STL success recorded a fallback")
+  assert_identical(result$provenance$settings$selected_branch, "stlm_ar", "STL branch missing")
 })
 
-check("JSON round trip preserves values, dimensions, and fallback metadata", function() {
-  registry <- forecast_method_registry()
-  registry[["rw_drift_forec"]] <- function(request) stop("round-trip fallback")
-  result <- suppressWarnings(run_forecast_method(test_request("rw_drift_forec"), registry))
+check("JSON round trip preserves fixed STL fallback identity and reason", function() {
+  request <- test_request("stlm_ar_forec")
+  request$frequency <- 1L
+  result <- run_forecast_method(request)
   decoded <- jsonlite::fromJSON(forecast_result_to_json(result), simplifyVector = TRUE)
   assert_identical(dim(decoded$quantiles), c(9L, 3L), "JSON changed quantile orientation")
   assert_true(isTRUE(all.equal(decoded$mean, result$mean, tolerance = 0)), "JSON changed means")
   assert_true(isTRUE(all.equal(decoded$quantiles, result$quantiles, tolerance = 0)), "JSON changed quantiles")
-  assert_identical(decoded$requested_method_id, "rw_drift_forec", "JSON lost requested method")
-  assert_identical(decoded$executed_method_id, "snaive_forec", "JSON lost executed method")
+  assert_identical(decoded$requested_method_id, "stlm_ar_forec", "JSON lost requested method")
+  assert_identical(decoded$executed_method_id, "auto_arima_forec", "JSON lost executed method")
   assert_identical(decoded$fallback_used, TRUE, "JSON lost fallback flag")
-  assert_true(grepl("round-trip fallback", decoded$fallback_reason), "JSON lost fallback reason")
+  assert_identical(decoded$fallback_reason, result$fallback_reason, "JSON lost fallback reason")
+  assert_identical(
+    decoded$provenance$settings$selected_branch,
+    "auto_arima_d0_D0",
+    "JSON lost fallback settings"
+  )
+})
+
+check("FFORMA baseline rejects incompatible scientific overrides", function() {
+  cases <- list(
+    list(method = "auto_arima_forec", settings = list(stepwise = TRUE)),
+    list(method = "ets_forec", settings = list(opt_crit = "lik")),
+    list(method = "nnetar_forec", settings = list(repeats = 1L)),
+    list(method = "tbats_forec", settings = list(use_parallel = TRUE)),
+    list(method = "stlm_ar_forec", settings = list(d = 1L))
+  )
+  for (case in cases) {
+    assert_error(
+      function() run_forecast_method(test_request(case$method, case$settings)),
+      "approved|separately approved",
+      sprintf("%s accepted an incompatible baseline override", case$method)
+    )
+  }
 })
 
 check("invalid request fields fail before model fallback", function() {

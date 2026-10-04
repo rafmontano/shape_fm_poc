@@ -73,6 +73,10 @@ forecast_one <- function(job) {
     if (!identical(job$required_capability, "probabilistic")) {
       stop("unsupported R forecast capability", call. = FALSE)
     }
+    settings <- job$model_settings
+    if (identical(method_id, "nnetar_forec")) {
+      settings$seed <- as.integer(job$seed)
+    }
     result <- run_forecast_method(list(
       task_id = job$task_id,
       dataset_id = job$dataset_id,
@@ -81,7 +85,7 @@ forecast_one <- function(job) {
       horizon = job$horizon,
       frequency = job$seasonal_period,
       method_id = method_id,
-      settings = job$model_settings,
+      settings = settings,
       quantile_levels = job$quantile_levels
     ))
   }

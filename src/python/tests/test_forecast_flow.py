@@ -8,6 +8,7 @@
 
 """Bounded forecast flow contracts using the real storage and retrieval path."""
 
+import json
 import unittest
 
 from util.shared_configuration import canonical_json
@@ -86,6 +87,25 @@ class ForecastContractTests(unittest.TestCase):
         self.assertIs(contract.validate_result(request, error), error)
         with self.assertRaisesRegex(ValueError, "exactly"):
             contract.validate_result(request, {**error, "extra": True})
+
+    def test_only_stlm_accepts_the_fixed_autoarima_fallback_identity(self):
+        """The common envelope rejects the removed pool-wide seasonal-naive fallback."""
+        contract = ForecastContract()
+        request = {**self.request(), "model_id": "stlm_ar"}
+        result = fixtures.forecast_result(
+            request, [4.0, 8.0], fallback=True, executed_model="auto_arima"
+        )
+        result["provenance"] = {
+            "package": "forecast", "package_version": "fixture",
+            "settings": {"selected_branch": "auto_arima_d0_D0", "d": 0, "D": 0},
+            "original_stl_error": result["fallback_reason"],
+        }
+        self.assertIs(contract.validate_result(request, result), result)
+        with self.assertRaisesRegex(ValueError, "only stlm_ar"):
+            contract.validate_result(
+                {**request, "model_id": "ets"},
+                {**result, "requested_model_id": "ets", "executed_model_id": "snaive"},
+            )
 
     def test_chronos_adapter_rearranges_crossings_per_horizon(self):
         """Provider-side rearrangement preserves ordered columns and reports changes."""
@@ -168,16 +188,22 @@ class ForecastFlowTests(unittest.TestCase):
     def test_retry_budget_and_stored_values(self):
         """Two retries permit three attempts, not two or a multiplied gate budget."""
         calls = []
+        requests = []
 
         def transient(payload):
             """Bounded functional fault injector needs no reusable state object."""
             calls.append(payload["jobs"][0]["task_id"])
+            requests.append(payload["jobs"][0].copy())
             if len(calls) <= 2:
                 raise RuntimeError("injected transient")
             return self.response(payload)
 
         self.run_flow(LocalAutoArimaProvider(transient, {}), retries=2)
         self.assertEqual(calls, ["task-0", "task-0", "task-0", "task-1"])
+        self.assertEqual(requests[0], requests[1])
+        self.assertEqual(requests[1], requests[2])
+        self.assertEqual(requests[0]["model_id"], "auto_arima")
+        self.assertEqual(requests[0]["model_settings"], requests[2]["model_settings"])
         self.assertEqual(self.coordinator.connection.execute(
             "SELECT mean FROM forecasts ORDER BY forecast_instance_id"
         ).fetchall(), [([3.0, 8.0],), ([3.0, 8.0],)])
@@ -186,6 +212,50 @@ class ForecastFlowTests(unittest.TestCase):
         self.assertEqual(ProcessStorage(path).validate(4)["expected_task_count"], 2)
         self.assertEqual(get_forecast(path, "experiment", "variant", "0", "auto_arima").mean,
                          (3.0, 8.0))
+
+    def test_stlm_fallback_identity_and_reason_survive_storage_json(self):
+        """Coordinator storage retains the selected fixed fallback and original STL error."""
+        job = ForecastContractTests.request()
+        job.update({
+            "experiment_id": "experiment", "task_id": "task-0",
+            "forecast_instance_id": "instance-0", "variant_id": "variant",
+            "dataset_id": "dataset", "series_id": "0", "model_id": "stlm_ar",
+        })
+        result = fixtures.forecast_result(
+            job, [3.0, 8.0], fallback=True, executed_model="auto_arima"
+        )
+        result["provenance"] = {
+            "package": "forecast", "package_version": "fixture",
+            "settings": {"selected_branch": "auto_arima_d0_D0", "d": 0, "D": 0},
+            "original_stl_error": "y is not a seasonal ts object",
+        }
+        result["fallback_reason"] = "y is not a seasonal ts object"
+        self.coordinator.config["models"]["stlm_ar"] = {"package": "forecast"}
+        self.coordinator.connection.execute(
+            "UPDATE experiment_tasks SET candidate='stlm_ar' WHERE task_id='task-0'"
+        )
+        row = next(item for item in self.coordinator._pending("experiment", 4)
+                   if item[0] == "task-0")
+        invocation = self.coordinator._begin_invocation("experiment", 4, 1, "cpu", 1)
+        attempts = self.coordinator._start_tasks([row], invocation)
+        storage = ForecastStorage(self.coordinator, "experiment", attempts)
+        storage.commit_response([job], {
+            "results": [result], "metadata": {"packages": {"forecast": "fixture"}},
+            "runtime_seconds": 0.1,
+        })
+        stored = self.coordinator.connection.execute(
+            "SELECT candidate, execution_metadata FROM forecasts"
+        ).fetchone()
+        contract = json.loads(stored[1])["forecast_contract"]
+        self.assertEqual(stored[0], "stlm_ar")
+        self.assertEqual(contract["requested_model_id"], "stlm_ar")
+        self.assertEqual(contract["executed_model_id"], "auto_arima")
+        self.assertTrue(contract["fallback_used"])
+        self.assertEqual(contract["fallback_reason"], "y is not a seasonal ts object")
+        self.assertEqual(
+            contract["provenance"]["settings"],
+            {"D": 0, "d": 0, "selected_branch": "auto_arima_d0_D0"},
+        )
 
     def test_missing_task_and_result_are_rejected(self):
         """Deleting both rows cannot hide missing work behind surviving task counts."""

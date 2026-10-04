@@ -93,6 +93,62 @@ M4_forec_methods <- function() {
   .positive_integer(settings[[name]] %||% default, sprintf("settings.%s", name))
 }
 
+# Purpose: Lock each registered method to the approved FFORMA baseline settings.
+# Inputs: Registered method identifier and candidate settings mapping.
+# Outputs: Settings unchanged; unknown or scientifically incompatible values fail.
+.validate_fforma_settings <- function(method_id, settings) {
+  allowed <- switch(
+    method_id,
+    auto_arima_forec = c(
+      "stepwise", "approximation", "allowdrift", "allowmean", "parallel",
+      "num_cores", "interval_levels"
+    ),
+    ets_forec = c("opt_crit", "interval_levels"),
+    nnetar_forec = c("seed", "repeats", "npaths", "bootstrap"),
+    "interval_levels"
+  )
+  unknown <- setdiff(names(settings), allowed)
+  if (length(unknown) > 0L) {
+    stop(
+      sprintf(
+        "%s settings require a separately approved model variant: %s",
+        method_id, paste(unknown, collapse = ", ")
+      ),
+      call. = FALSE
+    )
+  }
+  if (identical(method_id, "auto_arima_forec")) {
+    required <- list(
+      stepwise = FALSE, approximation = FALSE, allowdrift = TRUE,
+      allowmean = TRUE, parallel = FALSE, num_cores = 1L
+    )
+    for (name in names(required)) {
+      if (!is.null(settings[[name]]) && !identical(settings[[name]], required[[name]])) {
+        stop(
+          sprintf("settings.%s changes the approved auto_arima_forec baseline", name),
+          call. = FALSE
+        )
+      }
+    }
+  } else if (
+    identical(method_id, "ets_forec") && !is.null(settings$opt_crit) &&
+      !identical(settings$opt_crit, "mae")
+  ) {
+    stop("settings.opt_crit changes the approved ets_forec baseline", call. = FALSE)
+  } else if (identical(method_id, "nnetar_forec")) {
+    required <- list(repeats = 20L, npaths = 1000L, bootstrap = FALSE)
+    for (name in names(required)) {
+      if (!is.null(settings[[name]]) && !identical(settings[[name]], required[[name]])) {
+        stop(
+          sprintf("settings.%s changes the approved nnetar_forec baseline", name),
+          call. = FALSE
+        )
+      }
+    }
+  }
+  settings
+}
+
 #' Validate and normalise one forecast-method request.
 #'
 #' Purpose: Enforce the common Gate 4 input contract before model execution.
@@ -147,6 +203,7 @@ validate_forecast_request <- function(request, expected_method_id = NULL) {
   if (!is.list(settings)) {
     stop("settings must be a list", call. = FALSE)
   }
+  settings <- .validate_fforma_settings(method_id, settings)
 
   list(
     task_id = if (is.null(request$task_id)) NULL else .identity_value(request$task_id, "task_id"),
@@ -329,10 +386,18 @@ validate_forecast_result <- function(result) {
     stop("forecast result provenance must be a list", call. = FALSE)
   }
   if (isTRUE(result$fallback_used)) {
+    fallback_settings <- result$provenance$settings
     if (
-      !identical(result$executed_method_id, "snaive_forec") ||
-        identical(result$requested_method_id, result$executed_method_id) ||
-        !is.character(result$fallback_reason) || !nzchar(result$fallback_reason)
+      !identical(result$requested_method_id, "stlm_ar_forec") ||
+        !identical(result$executed_method_id, "auto_arima_forec") ||
+        !is.character(result$fallback_reason) || !nzchar(result$fallback_reason) ||
+        !identical(result$provenance$original_stl_error, result$fallback_reason) ||
+        !identical(
+          fallback_settings,
+          list(selected_branch = "auto_arima_d0_D0", d = 0L, D = 0L)
+        ) ||
+        !is.character(result$provenance$package_version) ||
+        !nzchar(result$provenance$package_version)
     ) {
       stop("fallback forecast result has inconsistent provenance", call. = FALSE)
     }
@@ -679,19 +744,69 @@ tbats_forec <- function(request) {
 #' Forecast an STL decomposition with an autoregressive remainder model.
 #'
 #' Inputs: One common forecast request whose method_id is stlm_ar_forec.
-#' Outputs: Common result using symmetric central intervals. Unlike the old FFORMA
-#'   function, fitting errors remain visible to the pool-level seasonal-naive fallback.
+#' Outputs: Common result from STL-AR or, only when STL fitting fails, the supplied
+#'   fixed auto.arima(d=0,D=0) branch with transparent fallback provenance.
 stlm_ar_forec <- function(request) {
-  .run_interval_adapter(
-    request,
-    "stlm_ar_forec",
-    function(series, horizon, levels, unused_settings) {
-      fit <- forecast::stlm(series, modelfunction = stats::ar, lambda = NULL)
-      forecast::forecast(fit, h = horizon, level = levels, lambda = NULL)
-    },
-    "forecast central intervals without Box-Cox; symmetric q0.5 equals point mean",
-    list(model_function = "stats::ar", lambda = NULL)
+  request <- validate_forecast_request(request, "stlm_ar_forec")
+  if (!requireNamespace("forecast", quietly = TRUE)) {
+    stop("R package 'forecast' is required", call. = FALSE)
+  }
+  levels <- .validated_interval_levels(
+    request$settings,
+    .central_interval_levels(request$quantile_levels)
   )
+  series <- time_series_from_values(
+    request$context, request$frequency, allow_missing = FALSE
+  )
+  stl_error <- NULL
+  fit <- tryCatch(
+    forecast::stlm(series, modelfunction = stats::ar),
+    error = function(error) {
+      stl_error <<- conditionMessage(error)
+      forecast::auto.arima(series, d = 0, D = 0)
+    }
+  )
+  predicted <- forecast::forecast(fit, h = request$horizon, level = levels)
+  distribution <- .distribution_from_intervals(
+    predicted, request$quantile_levels, request$horizon
+  )
+  if (is.null(stl_error)) {
+    return(.normal_result(
+      request,
+      "stlm_ar_forec",
+      distribution,
+      .forecast_provenance(
+        "stlm_ar_forec",
+        "forecast central intervals from the selected STL-AR model",
+        list(selected_branch = "stlm_ar", model_function = "stats::ar")
+      )
+    ))
+  }
+  provenance <- .forecast_provenance(
+    "stlm_ar_forec",
+    "forecast central intervals from the fixed AutoARIMA STL fitting fallback",
+    list(selected_branch = "auto_arima_d0_D0", d = 0L, D = 0L)
+  )
+  provenance$original_stl_error <- stl_error
+  provenance$r_period <- request$frequency
+  validate_forecast_result(list(
+    task_id = request$task_id,
+    run_id = request$run_id,
+    dataset_id = request$dataset_id,
+    series_id = request$series_id,
+    requested_method_id = "stlm_ar_forec",
+    executed_method_id = "auto_arima_forec",
+    horizon = request$horizon,
+    r_period = request$frequency,
+    mean = as.numeric(distribution$mean),
+    median = as.numeric(distribution$median),
+    quantile_levels = as.numeric(request$quantile_levels),
+    quantiles = unname(as.matrix(distribution$quantiles)),
+    fallback_used = TRUE,
+    fallback_reason = stl_error,
+    provenance = provenance,
+    status = "success"
+  ))
 }
 
 #' Forecast with a random walk including drift.
@@ -703,10 +818,13 @@ rw_drift_forec <- function(request) {
     request,
     "rw_drift_forec",
     function(series, horizon, levels, unused_settings) {
-      forecast::rwf(series, drift = TRUE, h = horizon, level = levels, lambda = NULL)
+      fit <- forecast::rwf(
+        series, drift = TRUE, h = length(series), level = levels
+      )
+      forecast::forecast(fit, h = horizon)
     },
     "Gaussian random-walk central intervals; q0.5 equals point mean",
-    list(drift = TRUE, lambda = NULL)
+    list(drift = TRUE, initial_horizon = "length(x)")
   )
 }
 
@@ -735,27 +853,53 @@ naive_forec <- function(request) {
     request,
     "naive_forec",
     function(series, horizon, levels, unused_settings) {
-      forecast::naive(series, h = horizon, level = levels, lambda = NULL)
+      fit <- forecast::naive(series, h = length(series), level = levels)
+      forecast::forecast(fit, h = horizon)
     },
     "Gaussian naive central intervals; q0.5 equals point mean",
-    list(lambda = NULL)
+    list(initial_horizon = "length(x)")
   )
 }
 
 #' Forecast with the seasonal-naïve method.
 #'
 #' Inputs: One common forecast request whose method_id is snaive_forec.
-#' Outputs: Common result using symmetric Gaussian central intervals. This callable
-#'   is also the one explicit, non-recursive pool fallback.
+#' Outputs: Common result whose authoritative mean repeats the final seasonal cycle;
+#'   probabilistic fields come from the same seasonal-naive method.
 snaive_forec <- function(request) {
-  .run_interval_adapter(
+  request <- validate_forecast_request(request, "snaive_forec")
+  if (!requireNamespace("forecast", quietly = TRUE)) {
+    stop("R package 'forecast' is required", call. = FALSE)
+  }
+  levels <- .validated_interval_levels(
+    request$settings,
+    .central_interval_levels(request$quantile_levels)
+  )
+  series <- time_series_from_values(
+    request$context, request$frequency, allow_missing = FALSE
+  )
+  predicted <- forecast::snaive(series, h = request$horizon, level = levels)
+  distribution <- .distribution_from_intervals(
+    predicted, request$quantile_levels, request$horizon
+  )
+  point_mean <- as.numeric(utils::tail(series, stats::frequency(series))[
+    ((seq_len(request$horizon) - 1L) %% stats::frequency(series)) + 1L
+  ])
+  distribution$mean <- point_mean
+  distribution$median <- point_mean
+  median_row <- which(abs(request$quantile_levels - 0.5) < 1e-12)
+  if (length(median_row) == 1L) {
+    distribution$quantiles[median_row, ] <- point_mean
+  }
+  .normal_result(
     request,
     "snaive_forec",
-    function(series, horizon, levels, unused_settings) {
-      forecast::snaive(series, h = horizon, level = levels, lambda = NULL)
-    },
-    "Gaussian seasonal-naive central intervals; q0.5 equals point mean",
-    list(lambda = NULL)
+    distribution,
+    .forecast_provenance(
+      "snaive_forec",
+      "manual seasonal-cycle point mean with seasonal-naive Gaussian intervals",
+      list(point_mean = "tail_frequency_cycle")
+    )
   )
 }
 
@@ -794,65 +938,17 @@ forecast_method_registry <- function() {
   registry
 }
 
-#' Execute one registered forecast method with visible seasonal-naive fallback.
+#' Execute one registered forecast method without pool-wide model substitution.
 #'
 #' Purpose: Provide generic allowlisted Gate 4 dispatch and validate every result.
 #' Inputs: Common request and, for controlled tests, a complete approved registry.
-#' Outputs: One successful common result. Requested-model failures attempt snaive once,
-#'   emit a warning, and retain the original error; direct or failed fallback errors
-#'   terminate clearly and never recurse.
+#' Outputs: One validated result. Model and output-validation failures propagate;
+#'   STL-AR owns its sole approved fitting fallback inside its method adapter.
 run_forecast_method <- function(request, registry = forecast_method_registry()) {
   registry <- .validated_registry(registry)
   request <- validate_forecast_request(request)
   method_id <- request$method_id
-
-  result <- tryCatch(
-    validate_forecast_result(registry[[method_id]](request)),
-    error = function(error) error
-  )
-  if (!inherits(result, "error")) {
-    return(result)
-  }
-
-  original_error <- conditionMessage(result)
-  if (identical(method_id, "snaive_forec")) {
-    stop(
-      sprintf(
-        "forecast method 'snaive_forec' failed; no recursive fallback attempted: %s",
-        original_error
-      ),
-      call. = FALSE
-    )
-  }
-
-  fallback_request <- request
-  fallback_request$method_id <- "snaive_forec"
-  fallback <- tryCatch(
-    validate_forecast_result(registry[["snaive_forec"]](fallback_request)),
-    error = function(error) error
-  )
-  if (inherits(fallback, "error")) {
-    stop(
-      sprintf(
-        "forecast method '%s' failed: %s; seasonal-naive fallback also failed: %s",
-        method_id, original_error, conditionMessage(fallback)
-      ),
-      call. = FALSE
-    )
-  }
-
-  fallback$requested_method_id <- method_id
-  fallback$executed_method_id <- "snaive_forec"
-  fallback$fallback_used <- TRUE
-  fallback$fallback_reason <- original_error
-  warning(
-    sprintf(
-      "forecast method '%s' failed; executed snaive_forec fallback: %s",
-      method_id, original_error
-    ),
-    call. = FALSE
-  )
-  validate_forecast_result(fallback)
+  validate_forecast_result(registry[[method_id]](request))
 }
 
 #' Execute selected registered methods in deterministic caller order.

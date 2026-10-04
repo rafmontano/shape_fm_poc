@@ -146,6 +146,15 @@ class ExperimentConfigurationTests(unittest.TestCase):
             configuration.resolved["models"]["chronos_2"]["quantile_levels"],
             [0.025, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.975],
         )
+        for model, settings in (
+            ("stlm_ar", {"d": 0, "D": 0}),
+            ("tbats", {"use_parallel": True}),
+            ("nnetar", {"repeats": 1}),
+        ):
+            incompatible = deepcopy(configuration.original)
+            incompatible["models"][model]["settings"] = settings
+            with self.assertRaisesRegex(ExperimentConfigurationError, "R pool settings"):
+                resolve_experiment_configuration(incompatible)
 
     def test_complete_document_derives_current_cardinalities(self) -> None:
         """The reference contract derives all Process 01–06 and result counts."""

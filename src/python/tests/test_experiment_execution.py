@@ -542,9 +542,7 @@ class TransactionTests(unittest.TestCase):
             job = payload["jobs"][0]
             values = [3.0, 3.0]
             return {
-                "results": [forecast_result(
-                    job, values, fallback=True, executed_model="snaive"
-                )],
+                "results": [forecast_result(job, values)],
                 "packages": {"forecast": "test"},
             }
 
@@ -566,9 +564,9 @@ class TransactionTests(unittest.TestCase):
             connection.execute("SELECT execution_metadata FROM forecasts").fetchone()[0]
         )["forecast_contract"]
         self.assertEqual(provenance["requested_model_id"], "auto_arima")
-        self.assertEqual(provenance["executed_model_id"], "snaive")
-        self.assertTrue(provenance["fallback_used"])
-        self.assertEqual(provenance["fallback_reason"], "controlled model-fit failure")
+        self.assertEqual(provenance["executed_model_id"], "auto_arima")
+        self.assertFalse(provenance["fallback_used"])
+        self.assertIsNone(provenance["fallback_reason"])
         self.assertTrue(received_settings)
         self.assertTrue(all(
             settings == self.coordinator.configuration.auto_arima_settings
