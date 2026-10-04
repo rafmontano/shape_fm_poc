@@ -318,7 +318,8 @@ class M4ReferenceTests(unittest.TestCase):
         self.assertNotIn("forecast::", source)
         self.assertNotIn("fallback_", source.lower())
 
-    def test_full_gift_eval_rejects_mean_only_forecast(self):
+    def test_mean_only_forecast_uses_eight_mean_metrics(self):
+        """Process 06 selects the mean profile and stores finite point metrics."""
         connection = duckdb.connect(str(self.database))
         connection.execute(
             """INSERT INTO experiment_tasks
@@ -338,15 +339,54 @@ class M4ReferenceTests(unittest.TestCase):
         coordinator = ExperimentCoordinator.__new__(ExperimentCoordinator)
         coordinator.connection = connection
         coordinator.root = Path(self.temp.name)
-        coordinator.configuration = SimpleNamespace(source_directory=Path("source"))
+        coordinator.configuration = SimpleNamespace(
+            source_directory=Path("source"),
+            resolved={"data": {"dataset_name": "m4_daily",
+                               "benchmark": {"term": "short"}},
+                      "evaluation": {"gift_eval": {"environment": "gift-env"}}},
+            evaluation_options={"axis": None, "mask_invalid_label": True,
+                                "allow_nan_forecast": False,
+                                "seasonality": "pinned GluonTS benchmark seasonality",
+                                "batch_size": 16},
+            execution={"worker_timeouts_seconds": {"gift_eval": 60}, "dask_retries": 0},
+        )
+        coordinator.config = {"benchmark": {"gift_eval_revision": "revision"}}
         coordinator.quantiles = (0.1, 0.5, 0.9)
-        with self.assertRaisesRegex(RuntimeError, "does not support mean-only"):
+        coordinator._commit_task = lambda task_id, attempt, runtime, insert, *_: insert()
+        captured = []
+        metrics = {
+            name: float(index) for index, name in enumerate(
+                ("MSE[mean]", "MAE[mean]", "MASE[mean]", "MAPE[mean]",
+                 "sMAPE[mean]", "RMSE[mean]", "NRMSE[mean]", "ND[mean]"), 1
+            )
+        }
+
+        def evaluate(**kwargs):
+            """Capture the prepared profile while emulating a finite bridge result."""
+            captured.extend(kwargs["batches"])
+            item = kwargs["batches"][0][0]
+            return [{"batch": [item], "response": {
+                "results": [{"id": item["task_id"], "official": metrics}],
+                "runtime_seconds": 0.1, "worker": {"hostname": "fixture"},
+            }}]
+
+        with patch("util.shared_workflow_orchestration.run_gate_compute_flow",
+                   side_effect=evaluate):
             coordinator._run_06_evaluate(
                 "experiment",
                 [("task", None, "robust-variant", "mean-only-eval")],
                 {"task": 1},
                 1,
             )
+        item = captured[0][0]
+        self.assertEqual(item["evaluation_profile"], "mean_based_v1")
+        self.assertEqual(item["forecast_capability"], "mean_only")
+        self.assertIsNone(item["payload"]["quantile_levels"])
+        stored = connection.execute(
+            "SELECT options, metrics FROM official_evaluations"
+        ).fetchone()
+        self.assertEqual(json.loads(stored[0])["evaluation_profile"], "mean_based_v1")
+        self.assertEqual(json.loads(stored[1]), metrics)
         connection.close()
 
 

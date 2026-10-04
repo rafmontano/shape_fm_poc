@@ -2,9 +2,9 @@
 # ==============================================================================
 # 04_01_forecast_r_methods.R
 #
-# Purpose: Serve the approved nine-method R pool and shared period diagnostics.
-# Inputs: JSON stdin with action forecast or diagnose_period and an ordered jobs list.
-# Outputs: JSON results and exact R package versions; never reads or writes DuckDB.
+# Purpose: Serve the capability-aware R pool and shared period diagnostics.
+# Inputs: JSON stdin with action forecast or diagnose_period and versioned jobs.
+# Outputs: Common forecast result/error envelopes and package versions; no DuckDB.
 # Run from: Invoked by the Python Gate 4 coordinator.
 # ==============================================================================
 
@@ -19,10 +19,25 @@ source("src/r/util/seasonal_period.R")
 
 payload <- jsonlite::fromJSON(file("stdin"), simplifyVector = FALSE)
 
-# Purpose: Map production model IDs to the existing registered R method IDs.
-# Inputs: Stable production ID, without the native _forec suffix.
-# Outputs: One allowlisted forecast-pool method ID.
-registered_method_id <- function(model_id) {
+# Code constants: exact cross-language fields and point-only M4 allowlist.
+.FORECAST_REQUEST_FIELDS <- c(
+  "contract_version", "experiment_id", "task_id", "forecast_instance_id",
+  "variant_id", "dataset_id", "series_id", "model_id", "required_capability",
+  "context", "horizon", "frequency", "seasonal_period", "input_scale",
+  "quantile_levels", "seed", "model_settings"
+)
+.M4_POINT_METHODS <- c(
+  naive2 = "naive2_forec", ses = "ses_forec", holt = "holt_forec",
+  damped = "damped_forec"
+)
+
+# Purpose: Map production model IDs to one capability-aware R method ID.
+# Inputs: Stable production model ID.
+# Outputs: One allowlisted registered or M4 point method ID.
+r_method_id <- function(model_id) {
+  if (model_id %in% names(.M4_POINT_METHODS)) {
+    return(unname(.M4_POINT_METHODS[[model_id]]))
+  }
   result <- paste0(model_id, "_forec")
   if (!result %in% names(forecast_method_registry())) {
     stop("Unsupported R model: ", model_id, call. = FALSE)
@@ -30,36 +45,93 @@ registered_method_id <- function(model_id) {
   result
 }
 
-# Purpose: Execute one production forecast through the registered pool.
-# Inputs: Job with identities, prepared context, model period, horizon and settings.
-# Outputs: Common probabilistic arrays plus requested/executed/fallback provenance.
+# Purpose: Execute one common request through the registered or M4 point pool.
+# Inputs: Exact language-neutral forecast request.
+# Outputs: Exact language-neutral successful forecast result.
 forecast_one <- function(job) {
-  method_id <- registered_method_id(job$model)
-  result <- run_forecast_method(list(
-    task_id = job$id,
-    dataset_id = job$dataset_id %||% job$id,
-    series_id = job$series_id %||% job$id,
-    context = job$context,
-    horizon = job$horizon,
-    frequency = job$model_period,
-    method_id = method_id,
-    settings = job$settings %||% list(),
-    quantile_levels = seq(0.1, 0.9, by = 0.1)
-  ))
+  if (!identical(sort(names(job)), sort(.FORECAST_REQUEST_FIELDS))) {
+    stop("forecast request must contain exactly the common contract fields", call. = FALSE)
+  }
+  method_id <- r_method_id(job$model_id)
+  started <- proc.time()[["elapsed"]]
+  if (identical(job$required_capability, "mean_only")) {
+    if (!job$model_id %in% names(.M4_POINT_METHODS) || !is.null(job$quantile_levels)) {
+      stop("invalid mean-only R forecast request", call. = FALSE)
+    }
+    series <- time_series_from_values(
+      as.numeric(unlist(job$context)), as.integer(job$seasonal_period), allow_missing = FALSE
+    )
+    mean <- get(method_id, mode = "function")(series, as.integer(job$horizon))
+    result <- list(
+      mean = as.numeric(mean), median = NULL, quantile_levels = NULL,
+      quantiles = NULL, requested_method_id = method_id,
+      executed_method_id = method_id, fallback_used = FALSE,
+      fallback_reason = NULL,
+      provenance = .forecast_provenance(method_id, "official M4 point forecast", list())
+    )
+  } else {
+    if (!identical(job$required_capability, "probabilistic")) {
+      stop("unsupported R forecast capability", call. = FALSE)
+    }
+    result <- run_forecast_method(list(
+      task_id = job$task_id,
+      dataset_id = job$dataset_id,
+      series_id = job$series_id,
+      context = job$context,
+      horizon = job$horizon,
+      frequency = job$seasonal_period,
+      method_id = method_id,
+      settings = job$model_settings,
+      quantile_levels = job$quantile_levels
+    ))
+  }
+  provenance <- result$provenance
+  provenance$implementation_language <- "R"
+  provenance$seed <- job$seed
   list(
-    id = job$id,
+    contract_version = job$contract_version,
+    status = "success",
+    experiment_id = job$experiment_id,
+    task_id = job$task_id,
+    forecast_instance_id = job$forecast_instance_id,
+    variant_id = job$variant_id,
+    requested_model_id = job$model_id,
+    executed_model_id = sub("_forec$", "", result$executed_method_id),
+    forecast_capability = job$required_capability,
+    output_scale = job$input_scale,
+    horizon = job$horizon,
     mean = result$mean,
     median = result$median,
-    quantiles = lapply(
-      seq_len(nrow(result$quantiles)),
-      function(row) as.numeric(result$quantiles[row, ])
+    quantile_levels = if (is.null(result$quantile_levels)) NULL else as.numeric(result$quantile_levels),
+    quantiles = if (is.null(result$quantiles)) NULL else lapply(
+      seq_len(nrow(result$quantiles)), function(row) as.numeric(result$quantiles[row, ])
     ),
-    model_period = result$r_period,
-    requested_method_id = result$requested_method_id,
-    executed_method_id = result$executed_method_id,
     fallback_used = result$fallback_used,
     fallback_reason = result$fallback_reason,
-    provenance = result$provenance
+    runtime_seconds = max(0, proc.time()[["elapsed"]] - started),
+    provenance = provenance
+  )
+}
+
+# Purpose: Convert a provider failure to the common error envelope.
+# Inputs: Original request and caught condition.
+# Outputs: Exact common error mapping with no partial forecast arrays.
+forecast_error <- function(job, error) {
+  list(
+    contract_version = job$contract_version %||% "forecast-v1",
+    status = "error",
+    experiment_id = job$experiment_id %||% "unknown",
+    task_id = job$task_id %||% "unknown",
+    forecast_instance_id = job$forecast_instance_id %||% "unknown",
+    variant_id = job$variant_id %||% "unknown",
+    requested_model_id = job$model_id %||% "unknown",
+    error_type = class(error)[[1L]],
+    error_message = conditionMessage(error),
+    provenance = list(
+      implementation_language = "R",
+      provider = "forecast",
+      package_version = as.character(utils::packageVersion("forecast"))
+    )
   )
 }
 
@@ -79,7 +151,9 @@ diagnose_one <- function(job) {
 }
 
 if (identical(payload$action, "forecast")) {
-  results <- lapply(payload$jobs, forecast_one)
+  results <- lapply(payload$jobs, function(job) {
+    tryCatch(forecast_one(job), error = function(error) forecast_error(job, error))
+  })
 } else if (identical(payload$action, "diagnose_period")) {
   results <- lapply(payload$jobs, diagnose_one)
 } else {

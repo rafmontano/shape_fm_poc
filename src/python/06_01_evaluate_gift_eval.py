@@ -67,7 +67,7 @@ class ShapeFMPredictor:
     Outputs: Stateful, single-pass production of identity-aligned ``QuantileForecast`` objects.
     """
 
-    def __init__(self, records: list[dict], quantile_levels: list[float]):
+    def __init__(self, records: list[dict], quantile_levels: list[float] | None):
         """Purpose: Initialize ordered forecast and quantile state for later prediction.
 
         Inputs: Records with mean/quantile horizon arrays and their configured quantile levels.
@@ -83,17 +83,28 @@ class ShapeFMPredictor:
         Outputs: A generator of mean/quantile arrays with forecast horizons, item IDs, and computed start dates.
         """
         for item, context in zip(self.records, test_data_input, strict=True):
-            arrays = np.asarray([item["mean"], *item["quantiles"]], dtype=np.float64)
+            arrays = np.asarray(
+                [item["mean"]] if self.quantile_levels is None
+                else [item["mean"], *item["quantiles"]], dtype=np.float64
+            )
             yield QuantileForecast(
                 forecast_arrays=arrays,
-                forecast_keys=["mean", *[str(value) for value in self.quantile_levels]],
+                forecast_keys=["mean"] if self.quantile_levels is None
+                else ["mean", *[str(value) for value in self.quantile_levels]],
                 start_date=context["start"] + len(context["target"]),
                 item_id=str(context["item_id"]),
             )
 
 
-def metrics(quantile_levels: list[float]):
-    """Build the official metric set using task-supplied quantile levels."""
+def metrics(quantile_levels: list[float] | None):
+    """Build the capability-appropriate metric set without deriving forecasts."""
+    if quantile_levels is None:
+        return [
+            MSE(forecast_type="mean"), MAE(forecast_type="mean"),
+            MASE(forecast_type="mean"), MAPE(forecast_type="mean"),
+            SMAPE(forecast_type="mean"), RMSE(forecast_type="mean"),
+            NRMSE(forecast_type="mean"), ND(forecast_type="mean"),
+        ]
     return [
         MSE(forecast_type="mean"),
         MSE(forecast_type=0.5),
@@ -105,7 +116,9 @@ def metrics(quantile_levels: list[float]):
         RMSE(),
         NRMSE(),
         ND(),
-        MeanWeightedSumQuantileLoss(quantile_levels=quantile_levels),
+        MeanWeightedSumQuantileLoss(
+            quantile_levels=[level for level in quantile_levels if 0.1 <= level <= 0.9]
+        ),
     ]
 
 
@@ -243,7 +256,14 @@ def evaluate(source_root: str, payload_path: Path) -> dict:
         source_root, payload["dataset_name"], payload["term"]
     )
     require_single_window(dataset)
+    profile = payload.get("evaluation_profile", "gift_eval_probabilistic_v1")
+    if profile not in {"gift_eval_probabilistic_v1", "mean_based_v1"}:
+        raise ValueError("unsupported evaluation profile")
     quantile_levels = payload["quantile_levels"]
+    if profile == "mean_based_v1" and quantile_levels is not None:
+        raise ValueError("mean-based evaluation requires null quantile levels")
+    if profile == "gift_eval_probabilistic_v1" and quantile_levels is None:
+        raise ValueError("probabilistic evaluation requires quantile levels")
     options = payload["options"]
     expected_options = {
         "axis": None,

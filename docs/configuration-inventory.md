@@ -12,16 +12,23 @@ not replace the production default or reinterpret older experiments.
 The Stage 2 opt-in `poc2_m4_daily_100_r_pool.json` (version 7) connects the
 approved nine-method R pool and inherits corrected v6 window/S1 preparation.
 See the [versioned contract](experiment-configuration.md#version-7-adds-the-approved-r-pool-without-rewriting-history).
+The bounded `poc2_m4_daily_100_all_models.json` acceptance (version 8) selects
+one robust/standardised variant, the nine R methods, Chronos-2, and the existing
+ten-way equal-weight combination. It derives exactly 1,100 forecast rows.
+Version 9, `poc2_m4_daily_100_forecast_contract_m4_comb.json`, keeps that dataset
+and preparation while adding four mean-only M4 methods and replacing the v8
+combination candidate with official M4 Comb. It derives 1,400 Process 04 rows,
+100 M4 combinations, 1,500 forecasts, 300 component links, and 15 evaluations.
 
 ## Experiment globals
 
 | JSON area | Current scope | Consumers |
 |---|---|---|
-| `configuration_version`, `experiment` | version 2 by default; opt-in v3 tuning; v4 standardisation experiment; name, date, objective | validator, DuckDB metadata, status |
+| `configuration_version`, `experiment` | version 2 by default; opt-in v3 tuning; v4 standardisation; v7 R pool; v8 all-model acceptance; v9 common contract and M4 Comb; name, date, objective | validator, DuckDB metadata, status |
 | `reproducibility.seed` | `1234` | scientific identity and future stochastic workers |
 | `data` | pinned GIFT-Eval M4 Daily source; first 100 official series; 14-step, one-window benchmark | import, planning, evaluation |
 | `pipeline` | Processes 01–06; optional R-period override; standard/robust preprocessing; versioned transformations; v4 explicit context length; combination; opt-in v3/v4 period tuning | task planning and Processes 02–05 |
-| `models` | v1/v2 and normal v4 AutoARIMA + Chronos-2; tuning v3/v4 AutoARIMA + ETS; v7 nine registered R methods | Process 04 workers and provenance |
+| `models` | v1/v2 and normal v4 AutoARIMA + Chronos-2; tuning v3/v4 AutoARIMA + ETS; v7 nine registered R methods; v8 those nine plus Chronos-2; v9 adds four mean-only M4 methods through a separate allowlist | Process 04 workers and provenance |
 | scientific `evaluation` fields | GIFT-Eval revision, method, options, provisional candidate and submission metadata | Process 06 and export validation |
 
 The scientific fingerprint covers the data, scientific pipeline, models,

@@ -38,13 +38,20 @@ class ExperimentConfigurationError(ValueError):
 # Code constant: v1 preserves coupled period-7, v2 resolves the R period,
 # v3 opts into period tuning, v4 selects portable sample standardisation, and
 # v5 defines the original rolling-window/S1 contract; v6 corrects split
-# arithmetic; v7 adds the approved R pool without reinterpreting older models.
-SUPPORTED_CONFIGURATION_VERSIONS = {1, 2, 3, 4, 5, 6, 7}
+# arithmetic; v7 adds the approved R pool; v8 adds the bounded one-variant
+# all-model acceptance; v9 activates the forecast contract and M4 benchmarks.
+SUPPORTED_CONFIGURATION_VERSIONS = {1, 2, 3, 4, 5, 6, 7, 8, 9}
 # Stable production IDs map to the native, allowlisted FFORMA method registry.
 R_MODEL_METHODS = {
     name: f"{name}_forec" for name in
     ("auto_arima", "ets", "nnetar", "tbats", "stlm_ar", "rw_drift", "thetaf", "naive", "snaive")
 }
+# Stable point-only IDs map to the M4 functions without changing the nine-method registry.
+R_POINT_METHODS = {
+    name: f"{name}_forec" for name in ("naive2", "ses", "holt", "damped")
+}
+R_FORECAST_METHODS = {**R_MODEL_METHODS, **R_POINT_METHODS}
+PROBABILISTIC_QUANTILES = [0.025, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.975]
 # Code constant: repository protocol mapping shared by JSON, DuckDB, CLI, and status output.
 PROCESS_NAMES = {
     1: "import",
@@ -189,7 +196,7 @@ class ExperimentConfiguration:
         """
         if model == "auto_arima":
             return self.auto_arima_settings
-        if model in R_MODEL_METHODS and model in self.resolved["models"]:
+        if model in R_FORECAST_METHODS and model in self.resolved["models"]:
             return deepcopy(self.resolved["models"][model]["settings"])
         raise ExperimentConfigurationError(f"unsupported R forecast model: {model}")
 
@@ -436,15 +443,20 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
     ]
     if pipeline["processes"] != expected_processes:
         raise ExperimentConfigurationError("pipeline.processes must define ordered Processes 01-06")
-    if pipeline["preprocessing"] != {
+    expected_preprocessing = {
         "default": "robust",
-        "modes": ["standard", "robust"],
-    }:
+        "modes": ["robust"] if version in {8, 9} else ["standard", "robust"],
+    }
+    if pipeline["preprocessing"] != expected_preprocessing:
         raise ExperimentConfigurationError(
-            "preprocessing must expose standard and robust with robust as default"
+            f"v{version} preprocessing must select only robust"
+            if version in {8, 9}
+            else "preprocessing must expose standard and robust with robust as default"
         )
     expected_transformations = {
         "methods": [
+            "standardise_sample_v1"
+        ] if version in {8, 9} else [
             "identity",
             "standardise_sample_v1" if version >= 4 else "minmax_then_standardize",
         ]
@@ -466,7 +478,7 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
             raise ExperimentConfigurationError(
                 "pipeline.window_preparation.context_length must be a positive integer"
             )
-    elif version in {5, 6, 7}:
+    elif version in {5, 6, 7, 8, 9}:
         _require_keys(pipeline, {"window_preparation"}, "pipeline")
         window_preparation = _require_mapping(
             pipeline["window_preparation"], "pipeline.window_preparation"
@@ -578,21 +590,27 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
                 )
     elif "window_preparation" in pipeline:
         raise ExperimentConfigurationError(
-            "pipeline.window_preparation belongs to configuration version 4, 5, or 6"
+            "pipeline.window_preparation belongs to configuration version 4 or later"
         )
     tuning_enabled = "seasonal_period_tuning" in pipeline
     if pipeline["adjustment"] != "identity":
         raise ExperimentConfigurationError("unsupported adjustment method")
-    expected_combination = {
-        "method": "equal_weight",
-        "weights": (
-            {name: 1.0 / len(value["models"]) for name in value["models"]}
-            if version == 7 and value["models"] else
-            {"auto_arima": 0.5, "ets": 0.5}
-            if tuning_enabled
-            else {"auto_arima": 0.5, "chronos_2": 0.5}
-        ),
-    }
+    expected_combination = (
+        {"method": "m4_comb", "weights": {
+            "ses": 1.0 / 3.0, "holt": 1.0 / 3.0, "damped": 1.0 / 3.0,
+        }}
+        if version == 9 else
+        {
+            "method": "equal_weight",
+            "weights": (
+                {name: 1.0 / len(value["models"]) for name in value["models"]}
+                if version in {7, 8} and value["models"] else
+                {"auto_arima": 0.5, "ets": 0.5}
+                if tuning_enabled
+                else {"auto_arima": 0.5, "chronos_2": 0.5}
+            ),
+        }
+    )
     if pipeline["combination"] != expected_combination:
         raise ExperimentConfigurationError("unsupported forecast combination")
 
@@ -629,15 +647,24 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
         if tuning_enabled
         else {"auto_arima", "chronos_2"}
     )
-    if version == 7:
-        if set(models) != set(R_MODEL_METHODS):
-            raise ExperimentConfigurationError("v7 models require the approved nine-method R pool")
-        for model in set(models) & R_MODEL_METHODS.keys():
+    if version in {7, 8, 9}:
+        expected_pool = (
+            set(R_FORECAST_METHODS) | {"chronos_2"}
+            if version == 9 else
+            set(R_MODEL_METHODS) | ({"chronos_2"} if version == 8 else set())
+        )
+        if set(models) != expected_pool:
+            raise ExperimentConfigurationError(
+                f"v{version} models require the approved nine-method R pool"
+                + (" plus Chronos-2" if version in {8, 9} else "")
+            )
+        for model in set(models) & R_FORECAST_METHODS.keys():
             settings = {"opt_crit": "mae"} if model == "ets" else {}
             if model == "auto_arima":
                 settings = {"stepwise": False, "approximation": False,
                             "allowdrift": True, "allowmean": True,
-                            "interval_levels": [20, 40, 60, 80]}
+                            "interval_levels": [20, 40, 60, 80, 95] if version == 9
+                            else [20, 40, 60, 80]}
             if models[model] != {"package": "forecast", "settings": settings}:
                 raise ExperimentConfigurationError(f"unsupported approved R pool settings for {model}")
     elif set(models) != expected_models:
@@ -669,8 +696,11 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
             "models.chronos_2",
         )
         quantiles = chronos["quantile_levels"]
-        if quantiles != [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]:
-            raise ExperimentConfigurationError("Chronos quantile levels must equal 0.1 through 0.9")
+        expected_quantiles = PROBABILISTIC_QUANTILES if version == 9 else [
+            0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9
+        ]
+        if quantiles != expected_quantiles:
+            raise ExperimentConfigurationError("Chronos quantile levels do not match the versioned profile")
         if (
             chronos["repository"] != "amazon/chronos-2"
             or not isinstance(chronos["revision"], str)
@@ -802,9 +832,9 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
         "import", "plan", "preprocess", "transform", "auto_arima", "chronos",
         "combine", "gift_eval",
     }
-    if version in {5, 6, 7}:
+    if version in {5, 6, 7, 8, 9}:
         expected_batch_sizes.add("window_preparation")
-    if tuning_enabled or version == 7:
+    if tuning_enabled or version in {7, 8, 9}:
         expected_batch_sizes.add("r_forecast")
     batch_sizes = _require_mapping(default["batch_sizes"], "execution.default.batch_sizes")
     if set(batch_sizes) != expected_batch_sizes or any(
@@ -861,15 +891,28 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
             raise ExperimentConfigurationError(
                 "v4 acceptance must describe the sequential Gate 1-3 run"
             )
-    elif version in {5, 6, 7}:
-        if acceptance != {
+    elif version in {5, 6, 7, 8, 9}:
+        expected_acceptance = {
             "mode": "dask",
-            "workflow": "forecast_pool" if version == 7 else "window_preparation",
+            "workflow": "forecast_pool" if version in {7, 8, 9} else "window_preparation",
             "execution_profile": "poc2_seasonal_recovery",
-            "profile_version": 3 if version == 7 else 2,
+            "profile_version": 3 if version in {7, 8, 9} else 2,
             "workers": {"mac_cpu": 8, "ubuntu_cpu": 15, "total": 23},
             "system_memory_min_available_gib": {"mac": 3, "ubuntu": 16},
-        }:
+        }
+        if version in {8, 9}:
+            expected_acceptance.update({
+                "workers": {
+                    "mac_cpu": 8,
+                    "ubuntu_cpu": 15,
+                    "ubuntu_gpu": 15,
+                    "total": 38,
+                },
+                "physical_gpu_count": 1,
+                "gpu_name": "NVIDIA GeForce RTX 5090",
+                "accelerator_memory_min_available_gib": 4,
+            })
+        if acceptance != expected_acceptance:
             raise ExperimentConfigurationError(
                 f"v{version} acceptance must describe its approved two-host workflow profile"
             )
@@ -900,7 +943,7 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
         "r_auto_arima_worker",
         "r_m4comp2018_worker",
     }
-    if tuning_enabled or version == 7:
+    if tuning_enabled or version in {7, 8, 9}:
         required_paths.add("r_forecast_worker")
     if set(paths) != required_paths or any(
         not isinstance(path, str) or not path for path in paths.values()
@@ -924,7 +967,7 @@ def resolve_experiment_configuration(value: dict[str, Any]) -> ExperimentConfigu
     validate_experiment_configuration(value)
     original = deepcopy(value)
     resolved = deepcopy(value)
-    if resolved["configuration_version"] in {5, 6, 7}:
+    if resolved["configuration_version"] in {5, 6, 7, 8, 9}:
         frequencies = resolved["pipeline"]["window_preparation"]["frequencies"]
         for settings in frequencies.values():
             settings["stride"] = settings["input_length"] + settings["future_horizon"]

@@ -46,6 +46,49 @@ Historical `final_acceptance` documents describe past evidence, not a mandatory
 GPU hardware field: ordinary preflight consumes the effective profile and still
 requires CUDA on GPU workers when that historical field is absent.
 
+## Version 9 adds the common forecast contract and M4 Comb
+
+`config/experiments/poc2_m4_daily_100_forecast_contract_m4_comb.json` preserves
+version 8's first 100 M4 Daily series, seed, robust/sample-standardised variant,
+and execution profile. It plans fourteen Process 04 base candidates: the nine
+registered R probabilistic methods, Chronos-2, and mean-only Naive2, SES, Holt,
+and Damped. All providers use the exact `forecast-v1` request and result field
+sets. The probabilistic profile is q0.025, q0.1 through q0.9, and q0.975.
+
+Process 05 uses `m4_comb` instead of v8's ten-way equal-weight candidate. It
+depends only on stored SES, Holt, and Damped rows at one-third each and records
+their three lineage links. The derived task counts are
+100/100/100/1,400/1,500/15 for Processes 01–06; expected result counts are 1,500
+forecasts and 300 M4 component links. Process 06 evaluates ten probabilistic and
+five mean-only candidates with capability-appropriate profiles. Version 9 does
+not reinterpret version 8 or its accepted evidence.
+
+The [version-9 execution evidence](poc2-forecast-contract-m4-combination-execution-evidence.md)
+records the completed cardinalities, two-host routing, exact M4 lineage,
+resource telemetry and unchanged scientific fingerprints after normal restart.
+
+## Version 8 defines the bounded all-model acceptance
+
+`config/experiments/poc2_m4_daily_100_all_models.json` selects the first 100 M4
+Daily series, one `robust` plus `standardise_sample_v1` preparation variant, the
+nine registered R methods, and Chronos-2. It uses the existing Process 05
+`equal_weight` calculation with weight 0.1 for each of the ten independently
+stored component forecasts; it adds no model or combination implementation.
+
+The derived task counts are 100/100/100/1,000/1,100/11 for Processes 01–06.
+Process 04 stores 1,000 base forecasts, Process 05 stores 100 combinations, and
+the final forecast count is exactly 1,100. The explicit
+`poc2_seasonal_recovery` profile resolves 8 Mac CPU, 15 Ubuntu CPU and 15 logical
+Ubuntu GPU workers. The Mac remains the sole database writer. Version 8 neither
+changes version 7 nor registers the ID 018 point methods or its future M4 Comb
+recipe.
+
+The [initial execution evidence](poc2-all-model-execution-evidence.md) completed
+and stored this graph. It also records that all period-1 STL-AR requests used
+the existing visible seasonal-naïve fallback, so the result is not evidence
+that the STL-AR implementation fitted. A period-7 rerun would be a distinct
+scientific experiment and is not implied by version 8.
+
 ## Version 7 adds the approved R pool without rewriting history
 
 `config/experiments/poc2_m4_daily_100_r_pool.json` is an opt-in configuration,
@@ -133,7 +176,7 @@ series and window limits. Version 5 retains its original Decimal semantics.
 
 | Field | Meaning and current value | Consumer |
 |---|---|---|
-| `configuration_version` | `1` historical; `2` independently resolved R period; `3` opt-in period tuning; `4` portable sample standardisation; `5` original rolling windows/S1; `6` corrected bounded rolling windows/S1 | validator and DuckDB loader |
+| `configuration_version` | `1` historical; `2` independently resolved R period; `3` opt-in period tuning; `4` portable sample standardisation; `5` original rolling windows/S1; `6` corrected bounded rolling windows/S1; `7` nine-method R pool; `8` one-variant all-model acceptance; `9` common contract, point methods, and M4 Comb | validator and DuckDB loader |
 | `experiment.name` | v2 default `poc2_m4_daily_100_resolved_period`; v1 name retained | experiment metadata and status |
 | `experiment.date` | required ISO date; v2 default `2026-09-30` | DuckDB experiment metadata |
 | `experiment.description` | required research objective | DuckDB experiment metadata |
@@ -143,16 +186,16 @@ series and window limits. Version 5 retains its original Decimal semantics.
 | `data.benchmark` | `m4_daily/D/short`, `Econ/Fin`, one variate, daily frequency, 14-step horizon, one window, zero-based end-exclusive boundaries | import, planning, workers, evaluation |
 | `data.selection` | deterministic `first_official`, count `100` | import and plan |
 | `pipeline.processes` | ordered IDs/names 01–06 | process state, CLI selection, status |
-| `pipeline.preprocessing` | modes `standard`, `robust`; default `robust` | Process 02 task creation and R payload |
-| `pipeline.transformations.methods` | v1–v3: `identity`, `minmax_then_standardize`; v4: `identity`, `standardise_sample_v1` | Process 03 task creation and worker payload |
+| `pipeline.preprocessing` | normally modes `standard`, `robust` with default `robust`; v8 selects only `robust` | Process 02 task creation and R payload |
+| `pipeline.transformations.methods` | v1–v3: `identity`, `minmax_then_standardize`; v4–v7: `identity`, `standardise_sample_v1`; v8 selects only `standardise_sample_v1` | Process 03 task creation and worker payload |
 | `pipeline.window_preparation.context_length` | v4 positive integer; committed value `64`; capability not yet consumed by current model adapters | central configuration and future selected window consumers |
 | `pipeline.window_preparation.frequencies` | v5 fixed approved table; v6 positive W/H definitions over supported keys; production v6 retains approved defaults and resolves stride W+H | rolling-window coordinator and child definitions |
 | `pipeline.window_preparation.split` | v5 Decimal count semantics; v6 `r_double_floor_v1`; both use S1 by original series, fraction 0.80, seed 123 and pinned tsai, with persisted membership controlling resume | eligible-cohort allocation and child membership |
 | `pipeline.window_preparation.block_policy` | v5 complete non-overlapping blocks at segment start; no padding, partial block, random offset or protected-boundary crossing | tsai window creation |
 | `pipeline.adjustment` | `identity` | variant identity |
-| `pipeline.combination` | equal weight; v1/v2 AutoARIMA + Chronos-2, v3 AutoARIMA + ETS | Process 05 payload and provenance |
+| `pipeline.combination` | equal weight over every configured model through v8; v9 uses `m4_comb` over stored SES/Holt/Damped means at one-third each | Process 05 payload and provenance |
 | `models.auto_arima` | R `forecast` package and all `auto.arima`/interval settings | Process 04 R payload |
-| `models.chronos_2` | repository, revision, package version, float32, nine quantiles, and batch/cross-learning policy | Process 04 Python/Dask payload and preflight |
+| `models.chronos_2` | repository, revision, package version, float32, nine quantiles, and batch/cross-learning policy; included with all nine R methods in v8 | Process 04 Python/Dask payload and preflight |
 | `models.ets` | v3 R `forecast` ETS with registered `opt.crit = "mae"` settings | Process 04 R payload |
 | `evaluation.method` | `gift_eval` | Process 06 selection |
 | `evaluation.gift_eval` | code revision, locked environment, submodule directory | bridge launch and distributed preflight |

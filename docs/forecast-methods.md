@@ -1,5 +1,11 @@
 # R forecast-method pool
 
+The researcher approved the M4 benchmark extension in
+[`poc2-m4-benchmark-methods.md`](poc2-m4-benchmark-methods.md) on 4 October
+2026. The bounded implementation adds Naive2, SES, Holt and Damped to this single
+R pool. Configuration v9 activates them through a separate capability-aware
+allowlist without altering the established nine-method registry.
+
 ## Scope and boundary
 
 Gate 4 has an allowlisted R forecast pool in
@@ -25,43 +31,82 @@ The initial method order preserves the original FFORMA pool:
 the same identifiers mapped to explicit function objects. The generic runner
 indexes only this validated registry; JSON cannot supply executable R code.
 
+## M4 point methods
+
+The same source file now also provides four library-only point methods:
+
+- `naive2_forec`
+- `ses_forec`
+- `holt_forec`
+- `damped_forec`
+
+They receive one finite `stats::ts` plus a positive horizon and return only a
+finite numeric mean vector. The private `.m4_seasonality_test` implements the
+official 90% autocorrelation rule. The shared private `.m4_point_forecast`
+validates input, avoids decomposition for period one and nonseasonal series,
+performs classical multiplicative adjustment when selected, invokes the chosen
+point method, restores future seasonal factors once, and validates the output.
+
+These functions do not appear in `M4_forec_methods()` or
+`forecast_method_registry()`, so the original nine names, order, and callables
+remain exact. Configuration v9 selects them through the separate
+`R_POINT_METHODS` allowlist and the normal Process 04 R worker. Their common
+result capability is `mean_only`: `mean` is populated while `median`,
+`quantile_levels`, and `quantiles` are null. They do not use fallback. The
+researcher's historical R module and the official M4 R benchmark definition are
+the scientific authorities for ID 018.
+
+M4 Comb is this Process 05 recipe in configuration v9:
+
+```text
+m4_comb:
+  ses:     1/3
+  holt:    1/3
+  damped:  1/3
+```
+
+Process 04 calculates and stores SES, Holt and Damped independently. After
+verifying all three stored component forecasts, Process 05 reads them,
+calculates the equal-weight result, stores it as a fourth forecast, and records the
+three component forecast IDs, names and weights through `forecast_components`.
+The components remain independently retrievable, evaluable, restartable and
+reusable. No R `comb_forec()` model-refitting function exists; the existing
+Process 05 calculation remains the sole combination implementation.
+
 ## Request and result
 
-A request contains optional task/run identity, dataset and series IDs, a
-non-empty finite numeric `context`, positive integer `horizon`, positive integer
-resolved R `frequency`/period (or `seasonality`), a registered `method_id`,
-method `settings`, and
-ordered unique `quantile_levels` strictly between zero and one. It must not
-contain future actual observations. Current GIFT-Eval forecasts request levels
-0.1 through 0.9.
+A common `forecast-v1` request carries exact experiment, task, instance,
+variant, dataset, series, model, capability, scale and seed identities plus a
+non-empty finite `context`, positive `horizon`, stored frequency, resolved
+seasonal period, explicit model settings, and capability-appropriate quantile
+levels. It never contains future actual observations. Probabilistic v9 requests
+use q0.025, q0.1 through q0.9, and q0.975; mean-only requests use null levels.
 
 All nine methods receive a `stats::ts` created by the shared
 `time_series_from_values()` boundary. It preserves the prepared values and
 attaches the period resolved by experiment planning; individual methods do not
 independently infer a period or construct their own production input object.
 
-Every successful result contains:
+Every successful common result contains:
 
-- dataset, series, and optional task/run identity;
-- `requested_method_id` and `executed_method_id`;
-- `horizon`, resolved `r_period`, `mean`, `median`, `quantile_levels`, and a
-  levels-by-horizon
-  `quantiles` matrix;
+- exact contract, experiment, task, instance, and variant identity;
+- `requested_model_id`, `executed_model_id`, capability, scale, and horizon;
+- `mean`, `median`, `quantile_levels`, and a levels-by-horizon `quantiles`
+  matrix, with the last three null for mean-only results;
 - `fallback_used` and `fallback_reason`;
 - method, package-version, distribution, settings, and R provenance;
 - `status = "success"`.
 
-The validator rejects wrong dimensions, non-finite values, crossing quantiles,
-incorrect q0.5 medians, inconsistent fallback metadata, and unregistered
-methods. `forecast_result_to_json()` writes the quantile matrix in row-major
-order with 17-digit numeric precision.
+The coordinator validator rejects field drift, identity or capability mismatch,
+wrong dimensions, non-finite values, crossing quantiles, incorrect q0.5 medians,
+and inconsistent fallback metadata before restoring scale and storing the result.
 
 ## Probabilistic outputs
 
 The interval adapters request the central intervals implied by the desired
-quantiles. For the current levels, 80%, 60%, 40%, and 20% lower bounds become
-q0.1, q0.2, q0.3, and q0.4; the corresponding upper bounds become q0.9, q0.8,
-q0.7, and q0.6. These adapters do not request an internal Box-Cox
+quantiles. For the current levels, 95%, 80%, 60%, 40%, and 20% lower bounds
+become q0.025, q0.1, q0.2, q0.3, and q0.4; the corresponding upper bounds become
+q0.975, q0.9, q0.8, q0.7, and q0.6. These adapters do not request an internal Box-Cox
 transformation, so the `forecast` package's symmetric input-scale intervals use
 the point forecast as the median and q0.5.
 
@@ -105,6 +150,10 @@ fallback emits a warning and returns one result with the original method in
 Direct seasonal-naïve failure never recurses. If both methods fail, execution
 terminates with one error containing both failures. A fallback result confirms
 that a forecast was produced; it does not claim that the requested model fitted.
+The [version-8 execution evidence](poc2-all-model-execution-evidence.md) is a
+concrete example: all 100 period-1 STL-AR requests stored valid seasonal-naïve
+fallbacks, so those candidate rows must not be reported as successful STL-AR
+fits.
 
 ## Stage 2 production integration
 
@@ -115,6 +164,22 @@ the prepared context, resolved period and configured settings for each job.
 The provider returns requested/executed method, fallback reason and provenance;
 `ForecastStorage` validates these before the single-writer commit. Retrieval
 uses the configured model ID and never refits a method.
+
+Chronos-2 produces the configured quantiles through its pinned native pipeline.
+Because its independently estimated levels can cross, the Python provider sorts
+quantile values per horizon step, derives the result median from the rearranged
+q0.5 row, preserves the model mean, and records whether this monotone
+rearrangement occurred. The coordinator still rejects any crossing result, and
+the evaluator never repairs one.
+
+Configuration v9
+(`poc2_m4_daily_100_forecast_contract_m4_comb.json`) retains that registry and
+adds the four point methods through `R_POINT_METHODS`. All fourteen base methods
+use the same serialized request/success/error fields, coordinator validation,
+inverse transformation, Dask routing, and single-writer storage path. Process 05
+then creates `m4_comb` only from the three stored original-scale component means.
+Process 06 selects the full probabilistic metric profile for ten candidates and
+the eight-metric `mean_based_v1` profile for the four point methods and M4 Comb.
 
 Historical configurations and their AutoARIMA worker path remain supported.
 The adapter delegates to the same native implementation; it is not a second

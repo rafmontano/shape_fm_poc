@@ -100,6 +100,32 @@ evidence and limitations in the acceptance record before launching a full run.
 The normal `run --processes 2-3` and `5-6` routes now accept the same explicit
 approved execution profile as forecasting. Use inclusive ranges, not comma lists.
 
+The bounded all-model acceptance configuration is
+`config/experiments/poc2_m4_daily_100_all_models.json` (version 8). It selects
+one robust/standardised variant and plans 100 Daily series × ten base models
+(the nine registered R methods plus Chronos-2), followed by the existing
+equal-weight combination: exactly 1,100 stored forecasts and 11 evaluations.
+It uses the explicit `poc2_seasonal_recovery` profile and does not activate the
+unregistered ID 018 point methods or its future M4 Comb recipe.
+The [bounded execution evidence](docs/poc2-all-model-execution-evidence.md)
+records 1,100 valid stored forecasts and successful two-host recovery, but does
+not claim that every requested model fitted: all period-1 STL-AR requests used
+the existing visible seasonal-naïve fallback. That scientific disposition
+remains for researcher decision.
+
+The follow-on forecast-contract configuration is
+`config/experiments/poc2_m4_daily_100_forecast_contract_m4_comb.json` (version
+9). It uses the same 100 Daily series and one preparation variant, routes nine R
+probabilistic methods, Chronos-2, and four official M4 point methods through one
+common request/result contract, then calculates `m4_comb` in Process 05 from the
+stored SES, Holt, and Damped means. Its expected graph is 1,400 base forecasts,
+100 combinations, 300 component links, 1,500 total forecasts, and 15
+capability-appropriate evaluations.
+
+The [version-9 execution evidence](docs/poc2-forecast-contract-m4-combination-execution-evidence.md)
+records the completed graph, exact lineage, two-host contribution, resource
+safety and an immutable scientific restart without interpreting model accuracy.
+
 For independent Stage 2 QA, inspect the disposable fixture named in the acceptance
 record with `status` and `results`; distinguish its labelled synthetic forecast
 rows from native model evidence. Check one stored result per R method, requested

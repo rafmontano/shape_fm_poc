@@ -27,6 +27,8 @@ import numpy as np
 import torch
 from chronos import BaseChronosPipeline, Chronos2Pipeline
 
+from util.p04_00_forecast_contract import ForecastContract
+
 
 def _apple_device_name() -> str:
     """Read the Apple CPU brand string, falling back to platform identity when sysctl is unavailable."""
@@ -163,16 +165,46 @@ def predict(
         quantile_levels=levels,
         cross_learning=request["cross_learning"],
     )
+    runtime = time.monotonic() - started
     results = []
     for job, item_quantiles, item_mean in zip(jobs, quantiles, means, strict=True):
         values = item_quantiles.detach().cpu().numpy()[0].T
         mean = item_mean.detach().cpu().numpy()[0]
+        arranged_quantiles, quantiles_rearranged = ForecastContract.noncrossing_quantiles(
+            values.tolist()
+        )
         results.append(
             {
-                "id": job["id"],
+                "contract_version": job["contract_version"],
+                "status": "success",
+                "experiment_id": job["experiment_id"],
+                "task_id": job["task_id"],
+                "forecast_instance_id": job["forecast_instance_id"],
+                "variant_id": job["variant_id"],
+                "requested_model_id": job["model_id"],
+                "executed_model_id": "chronos_2",
+                "forecast_capability": "probabilistic",
+                "output_scale": job["input_scale"],
+                "horizon": job["horizon"],
                 "mean": mean.tolist(),
-                "median": values[levels.index(0.5)].tolist(),
-                "quantiles": values.tolist(),
+                "median": arranged_quantiles[levels.index(0.5)],
+                "quantile_levels": levels,
+                "quantiles": arranged_quantiles,
+                "fallback_used": False,
+                "fallback_reason": None,
+                "runtime_seconds": runtime,
+                "provenance": {
+                    "implementation_language": "Python",
+                    "provider": "chronos-forecasting",
+                    "provider_version": importlib.metadata.version("chronos-forecasting"),
+                    "model_revision": job["model_settings"]["revision"],
+                    "effective_settings": job["model_settings"],
+                    "seed": job["seed"],
+                    "dtype": str(item_mean.dtype),
+                    "quantile_rearrangement": (
+                        "sorted_per_horizon" if quantiles_rearranged else "identity"
+                    ),
+                },
             }
         )
     maximum_rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
@@ -182,7 +214,7 @@ def predict(
         "type": "result",
         "batch_id": request["batch_id"],
         "results": results,
-        "inference_seconds": time.monotonic() - started,
+        "inference_seconds": runtime,
         "effective_batch_size": len(jobs),
         "peak_process_memory_bytes": maximum_rss,
         "accelerator_memory": accelerator_memory(device),

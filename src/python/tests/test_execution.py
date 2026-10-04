@@ -215,6 +215,42 @@ class ExecutionProfileTests(unittest.TestCase):
         kill_group.assert_called_once_with(123, 15)
         process.wait.assert_called_once_with(timeout=5)
 
+    def test_managed_cluster_propagates_reachable_prefect_api(self) -> None:
+        """Remote workers use the coordinator service and cannot start local APIs."""
+        from util.shared_distributed_cluster import ManagedTuningCluster
+
+        profile, _ = resolve_execution_profile("poc2_seasonal_recovery")
+        probe = MagicMock(stdout="192.0.2.1\n")
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch("util.shared_distributed_cluster.subprocess.run", return_value=probe),
+        ):
+            missing = ManagedTuningCluster(profile)
+            with self.assertRaisesRegex(RuntimeError, "PREFECT_API_URL"):
+                missing.preflight()
+
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "PREFECT_API_URL": "http://192.0.2.1:4200/api",
+                    "SHAPEFM_MAC_BIND_HOST": "192.0.2.1",
+                },
+                clear=True,
+            ),
+            patch("util.shared_distributed_cluster.time.sleep"),
+        ):
+            cluster = ManagedTuningCluster(profile)
+            cluster.preflight = MagicMock(return_value={})
+            cluster._start_local = MagicMock()
+            cluster._ssh = MagicMock(return_value="")
+            evidence = cluster.start()
+        remote_command = cluster._ssh.call_args.args[0]
+        self.assertIn("PREFECT_API_URL=http://192.0.2.1:4200/api", remote_command)
+        self.assertIn("PREFECT_SERVER_EPHEMERAL_ENABLED=false", remote_command)
+        self.assertEqual(evidence["prefect_api_url"], "http://192.0.2.1:4200/api")
+        cluster.remote_started = False
+
     def test_run_process_propagates_expected_gpu_worker_count_to_validation(self) -> None:
         """Dask process execution passes its expected GPU count to cluster validation."""
         coordinator = object.__new__(ExperimentCoordinator)
@@ -506,11 +542,11 @@ class ExecutionProfileTests(unittest.TestCase):
     def test_length_aware_batches_are_bounded_and_do_not_mix_ranges(self) -> None:
         """Length-aware batches are size-bounded, ordered, and homogeneous by length band."""
         jobs = [
-            {"id": "long", "context": [0] * 1025},
-            {"id": "short-b", "context": [0] * 12},
-            {"id": "medium", "context": [0] * 130},
-            {"id": "short-a", "context": [0] * 9},
-            {"id": "short-c", "context": [0] * 15},
+            {"task_id": "long", "context": [0] * 1025},
+            {"task_id": "short-b", "context": [0] * 12},
+            {"task_id": "medium", "context": [0] * 130},
+            {"task_id": "short-a", "context": [0] * 9},
+            {"task_id": "short-c", "context": [0] * 15},
         ]
         batches = _length_aware_batches(jobs, 2)
         self.assertTrue(all(len(batch) <= 2 for batch in batches))

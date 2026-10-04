@@ -24,14 +24,14 @@ from prefect.futures import as_completed
 from prefect_dask import DaskTaskRunner
 
 from .shared_distributed_execution import AUTOARIMA_R_RESOURCE
-from .shared_configuration import R_MODEL_METHODS
+from .shared_configuration import R_FORECAST_METHODS
 from .p04_03_forecast_storage import ForecastStorage
 
 
 @task(name="compute R forecast batch", cache_policy=NO_CACHE, persist_result=False)
 def compute_autoarima_batch(provider: Any, batch: list[dict[str, Any]]) -> dict[str, Any]:
     """Compute one homogeneous registered R batch without coordinator storage."""
-    return provider.forecast(batch[0]["model"], batch)
+    return provider.forecast(batch[0]["model_id"], batch)
 
 
 @task(name="compute Chronos forecast batch", cache_policy=NO_CACHE, persist_result=False)
@@ -70,12 +70,12 @@ def _run_submission_phase(*, cpu_batches: list[list[dict[str, Any]]],
             active_ets = sum(name == "ets" for name, _ in submitted.values())
             eligible = next((i for i, jobs in enumerate(pending_cpu)
                              if (active_ets < (ets_max_in_flight or autoarima_max_in_flight)
-                                 if jobs[0]["model"] == "ets" else
+                                 if jobs[0]["model_id"] == "ets" else
                                  active_cpu - active_ets < autoarima_max_in_flight)), None)
             if eligible is not None:
                 batch = pending_cpu[eligible]
                 del pending_cpu[eligible]
-                model = batch[0]["model"]
+                model = batch[0]["model_id"]
             else:
                 cpu_work_remains = bool(pending_cpu) or active_cpu > 0
                 # A blocked GPU future must not consume the last global slot
@@ -101,7 +101,7 @@ def _run_submission_phase(*, cpu_batches: list[list[dict[str, Any]]],
             try:
                 with annotation:
                     future = (auto_task.submit(auto_provider, batch)
-                              if model in R_MODEL_METHODS
+                              if model in R_FORECAST_METHODS
                               else chronos_task.submit(chronos_provider, batch))
             except Exception as error:
                 failures.append(error)
@@ -153,11 +153,11 @@ def ordinary_forecast_flow(database: Path, experiment_id: str, *, storage_type: 
         ).fetchall())
         storage = storage_type(coordinator, experiment_id, attempts)
         jobs = storage.prepare_pending_jobs(rows)
-        auto_batches = [batch for model in R_MODEL_METHODS
-                        for batch in _batches([job for job in jobs if job["model"] == model],
+        auto_batches = [batch for model in R_FORECAST_METHODS
+                        for batch in _batches([job for job in jobs if job["model_id"] == model],
                                               auto_batch_size)]
         chronos_batches = _length_aware_batches(
-            [job for job in jobs if job["model"] == "chronos_2"], chronos_batch_size
+            [job for job in jobs if job["model_id"] == "chronos_2"], chronos_batch_size
         )
         auto_task = compute_autoarima_batch.with_options(retries=retries)
         chronos_task = compute_chronos_batch.with_options(retries=retries)

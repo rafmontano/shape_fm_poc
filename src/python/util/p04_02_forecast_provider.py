@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from .shared_configuration import R_MODEL_METHODS
+from .shared_configuration import R_FORECAST_METHODS
 from .shared_execution_profiles import GIB, PersistentChronosWorker, system_hardware, validate_system_memory
 
 
@@ -103,7 +103,7 @@ class DistributedForecastProvider:
 
         started = time.time()
         retry_count = get_run_context().task_run.run_count - 1
-        if model in R_MODEL_METHODS:
+        if model in R_FORECAST_METHODS:
             safety = self.safety_policy.autoarima if self.safety_policy else None
             if model == "ets" and safety is not None:
                 safety = {**safety, "fit_budget_gib": self.safety_policy.ets_fit_budget_gib}
@@ -160,24 +160,19 @@ class LocalAutoArimaProvider:
             threads=int(execution["thread_limits"]["r"]),
         )
         settings = {model: configuration.r_model_settings(model)
-                    for model in configuration.resolved["models"] if model in R_MODEL_METHODS}
+                    for model in configuration.resolved["models"] if model in R_FORECAST_METHODS}
         return cls(bridge, settings.get("auto_arima", {}), settings)
 
     def forecast(self, model: str, batch: list[dict[str, Any]]) -> dict[str, Any]:
         """Return a storage-free R response preserving requested/executed method IDs."""
-        if model not in R_MODEL_METHODS:
+        if model not in R_FORECAST_METHODS:
             raise ValueError(f"LocalAutoArimaProvider does not support {model!r}")
         started = time.monotonic()
         settings = self.r_settings[model] if self.r_settings is not None else self.settings
         response = self.worker({
             "action": "forecast",
             "settings": settings,
-            "jobs": [
-                {**{key: value for key, value in job.items()
-                    if key not in {"instance_id", "variant_id"}},
-                 "model": model, "model_period": job["seasonality"], "settings": settings}
-                for job in batch
-            ],
+            "jobs": batch,
         })
         runtime = time.monotonic() - started
         return {
@@ -276,9 +271,7 @@ class LocalChronosProvider:
     def _payload(self, batch: list[dict[str, Any]]) -> dict[str, Any]:
         """Build one native Chronos request without routing-only job fields."""
         return {"command": "predict", "batch_id": f"chronos-batch/{uuid.uuid4().hex}",
-                "jobs": [{key: value for key, value in job.items()
-                          if key not in {"model", "instance_id", "variant_id", "seasonality"}}
-                         for job in batch], "horizon": batch[0]["horizon"],
+                "jobs": batch, "horizon": batch[0]["horizon"],
                 "quantile_levels": list(self.quantiles), "inference_batch_size": len(batch),
                 "cross_learning": self.model["cross_learning"],
                 "predict_batches_jointly": self.model["predict_batches_jointly"]}

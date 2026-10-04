@@ -25,7 +25,9 @@ from typing import Any, Callable
 
 import duckdb
 
-from .shared_configuration import R_MODEL_METHODS, canonical_json, json_fingerprint
+from .shared_configuration import (
+    R_FORECAST_METHODS, R_MODEL_METHODS, canonical_json, json_fingerprint,
+)
 from .shared_database import DEFAULT_DATABASE, load_database_configuration, migrate_database
 from .shared_execution_profiles import (
     GIB,
@@ -36,7 +38,7 @@ from .shared_execution_profiles import (
     validate_heavy_tuning_execution,
     validate_system_memory,
 )
-from .p05_01_forecast_combination import combine_equal_weight
+from .p05_01_forecast_combination import combine_equal_weight, combine_m4_point
 from .p01_02_import_execution import repository_root
 from .shared_transformations import TransformationResult, inverse
 from .shared_provenance import utc_now
@@ -189,7 +191,7 @@ def _length_aware_batches(
 ) -> list[list[dict[str, Any]]]:
     """Batch by power-of-two context ranges, then by the configured bound."""
     grouped: dict[int, list[dict[str, Any]]] = {}
-    for job in sorted(jobs, key=lambda value: (len(value["context"]), value["id"])):
+    for job in sorted(jobs, key=lambda value: (len(value["context"]), value["task_id"])):
         length_bucket = max(1, len(job["context"])).bit_length()
         grouped.setdefault(length_bucket, []).append(job)
     return [
@@ -200,8 +202,12 @@ def _length_aware_batches(
 
 
 def _combine_job(job: dict[str, Any]) -> dict[str, Any]:
-    """Equal-weight the configured component forecasts without storage access."""
-    return combine_equal_weight(job["components"], job["weights"])
+    """Apply one configured combination recipe without storage access."""
+    return (
+        combine_m4_point(job["components"], job["weights"])
+        if job.get("method") == "m4_comb"
+        else combine_equal_weight(job["components"], job["weights"])
+    )
 
 
 class ExperimentCoordinator:
@@ -634,7 +640,7 @@ class ExperimentCoordinator:
                             )
                         for candidate in (
                             *self.config["models"].keys(),
-                            "equal_weight",
+                            self.config["combination"]["method"],
                         ):
                             task_rows.append(
                                 self._task_row(
@@ -661,7 +667,9 @@ class ExperimentCoordinator:
         try:
             evaluation_tasks = []
             for variant_id, _, _ in variants:
-                for candidate in (*self.config["models"].keys(), "equal_weight"):
+                for candidate in (
+                    *self.config["models"].keys(), self.config["combination"]["method"]
+                ):
                     evaluation_tasks.append(
                         self._task_row(
                             experiment_id, 6, None, variant_id, candidate
@@ -1733,7 +1741,7 @@ class ExperimentCoordinator:
         paths = self.configuration.execution_paths
         distributed = dask_client is not None
         r_settings = {model: self.configuration.r_model_settings(model)
-                      for model in self.config["models"] if model in R_MODEL_METHODS}
+                      for model in self.config["models"] if model in R_FORECAST_METHODS}
         if distributed:
             chronos = self.config["models"].get("chronos_2", {})
             safety = ForecastSafetyPolicy.from_profile(profile, platform.node())
@@ -1800,13 +1808,19 @@ class ExperimentCoordinator:
         Outputs: None; completes base-candidate tasks and computes and transactionally
         persists equal-weight forecasts, component lineage, hashes, and task state.
         """
-        combination_rows = [row for row in rows if row[3] == "equal_weight"]
+        combination_name = self.config["combination"]["method"]
+        combination_rows = [row for row in rows if row[3] == combination_name]
         jobs = []
         for task_id, instance_id, variant_id, _ in combination_rows:
-            model_names = tuple(self.config["models"])
+            model_names = (
+                ("ses", "holt", "damped")
+                if combination_name == "m4_comb"
+                else tuple(self.config["combination"]["weights"])
+            )
             placeholders = ", ".join("?" for _ in model_names)
             components = self.connection.execute(
-                """SELECT candidate, mean, median, quantiles, forecast_id FROM forecasts
+                """SELECT candidate, mean, median, quantiles, forecast_id,
+                          forecast_capability FROM forecasts
                 WHERE experiment_id=? AND variant_id=? AND forecast_instance_id=?
                 AND candidate IN ("""
                 + placeholders
@@ -1814,11 +1828,22 @@ class ExperimentCoordinator:
                 [experiment_id, variant_id, instance_id, *model_names],
             ).fetchall()
             if len(components) != len(model_names):
-                raise RuntimeError("equal-weight combination requires every configured model forecast")
-            mapped = {row[0]: {"mean": row[1], "median": row[2], "quantiles": row[3], "id": row[4]} for row in components}
+                raise RuntimeError(
+                    f"{combination_name} requires every configured stored component forecast"
+                )
+            available = {row[0]: row for row in components}
+            mapped = {
+                name: {
+                    "mean": available[name][1], "median": available[name][2],
+                    "quantiles": available[name][3], "id": available[name][4],
+                    "capability": available[name][5],
+                }
+                for name in model_names
+            }
             jobs.append(
                 {
                     "id": task_id,
+                    "method": combination_name,
                     "components": mapped,
                     "weights": self.config["combination"]["weights"],
                 }
@@ -1831,7 +1856,7 @@ class ExperimentCoordinator:
             runtime: float = 0.0,
             resources: dict[str, Any] | None = None,
         ) -> None:
-            """Purpose: Commit one equal-weight candidate and its Process 05 attempt.
+            """Purpose: Commit one configured candidate and its Process 05 attempt.
 
             Inputs: Task row, combined forecast arrays, component mappings, runtime,
             and optional worker provenance.
@@ -1840,6 +1865,13 @@ class ExperimentCoordinator:
             """
             task_id, instance_id, variant_id, candidate = row
             forecast_id = f"forecast/{json_fingerprint({'experiment': experiment_id, 'variant': variant_id, 'instance': instance_id, 'candidate': candidate})[:32]}"
+            capability = "mean_only" if candidate == "m4_comb" else "probabilistic"
+            levels = None if capability == "mean_only" else list(self.quantiles)
+            ordered_lineage = [
+                {"name": name, "forecast_id": component["id"],
+                 "weight": self.config["combination"]["weights"][name]}
+                for name, component in components["components"].items()
+            ]
 
             def insert() -> None:
                 """Purpose: Write one ensemble forecast and its component lineage.
@@ -1855,34 +1887,45 @@ class ExperimentCoordinator:
                      median, quantile_levels, quantiles, runtime_seconds,
                      execution_metadata, content_hash, created_at,
                      forecast_capability)
-                    VALUES (?, ?, ?, ?, 'equal_weight', NULL, NULL, 'original', ?, ?, ?,
-                            ?, 0, ?, ?, current_timestamp, 'probabilistic')
+                    VALUES (?, ?, ?, ?, ?, NULL, NULL, 'original', ?, ?, ?,
+                            ?, 0, ?, ?, current_timestamp, ?)
                     ON CONFLICT (forecast_id) DO NOTHING""",
                     [
                         forecast_id,
                         experiment_id,
                         variant_id,
                         instance_id,
+                        candidate,
                         result["mean"],
                         result["median"],
-                        list(self.quantiles),
+                        levels,
                         result["quantiles"],
                         canonical_json(
-                            {
+                            ({
+                                "rule": "stored SES, Holt, and Damped means at one-third each",
+                                "forecast_capability": capability,
+                                "components": ordered_lineage,
+                            } if candidate == "m4_comb" else {
                                 "adjustment": (
                                     "monotone_rearrangement"
                                     if result["quantiles_rearranged"]
                                     else "identity"
                                 ),
                                 "rule": "corresponding means, medians, and quantiles averaged",
-                            }
+                            })
                         ),
-                        json_fingerprint(
+                        (json_fingerprint({
+                            "rule": "m4_comb", "components": ordered_lineage,
+                            "capability": capability, "scale": "original",
+                            "mean": result["mean"], "median": None,
+                            "quantile_levels": None, "quantiles": None,
+                        }) if candidate == "m4_comb" else json_fingerprint(
                             {
                                 key: result[key]
                                 for key in ("mean", "median", "quantiles")
                             }
-                        ),
+                        )),
+                        capability,
                     ],
                 )
                 for name, component in components["components"].items():
@@ -1901,7 +1944,7 @@ class ExperimentCoordinator:
             )
 
         for task_id, instance_id, variant_id, candidate in rows:
-            if candidate == "equal_weight":
+            if candidate == combination_name:
                 continue
             existing = self.connection.execute(
                 """SELECT forecast_id FROM forecasts WHERE experiment_id=? AND variant_id=?
@@ -2010,10 +2053,16 @@ class ExperimentCoordinator:
             ).fetchall()
             instance_ids = [record[0] for record in records]
             positions = [int(record[1]) for record in records]
-            if any(record[5] != "probabilistic" or record[3] is None for record in records):
-                raise RuntimeError(
-                    "full probabilistic GIFT-Eval does not support mean-only forecasts"
-                )
+            capabilities = {record[5] for record in records}
+            if len(capabilities) != 1:
+                raise RuntimeError("Process 06 candidate mixes forecast capabilities")
+            capability = next(iter(capabilities), None)
+            if capability == "probabilistic" and any(record[3] is None for record in records):
+                raise RuntimeError("probabilistic evaluation requires stored quantiles")
+            if capability == "mean_only" and any(record[3] is not None for record in records):
+                raise RuntimeError("mean-only evaluation must not contain quantiles")
+            if capability not in {"probabilistic", "mean_only"}:
+                raise RuntimeError("Process 06 received an unsupported forecast capability")
             if (
                 len(records) != expected_count
                 or len(set(instance_ids)) != expected_count
@@ -2041,12 +2090,22 @@ class ExperimentCoordinator:
                     "task_id": task_id,
                     "variant_id": variant_id,
                     "candidate": candidate,
+                    "forecast_capability": capability,
+                    "evaluation_profile": (
+                        "mean_based_v1" if capability == "mean_only"
+                        else "gift_eval_probabilistic_v1"
+                    ),
                     "evaluation_input_count": len(records),
                     "forecast_input_fingerprint": input_fingerprint,
                     "payload": {
                         "dataset_name": self.configuration.resolved["data"]["dataset_name"],
                         "term": self.configuration.resolved["data"]["benchmark"]["term"],
-                        "quantile_levels": list(self.quantiles),
+                        "evaluation_profile": (
+                            "mean_based_v1" if capability == "mean_only"
+                            else "gift_eval_probabilistic_v1"
+                        ),
+                        "quantile_levels": None if capability == "mean_only"
+                        else list(self.quantiles),
                         "options": self.configuration.evaluation_options,
                         "seasonality": evaluation_seasonality,
                         "forecasts": [
@@ -2085,12 +2144,17 @@ class ExperimentCoordinator:
             if result.get("id") != item["task_id"]:
                 raise RuntimeError("Process 06 evaluator returned a mismatched task ID")
             official = result["official"]
+            if any(not isinstance(value, (int, float)) or not math.isfinite(value)
+                   for value in official.values()):
+                raise RuntimeError("Process 06 evaluator returned non-finite metrics")
             runtime = response["runtime_seconds"]
             task_id = item["task_id"]
             variant_id = item["variant_id"]
             candidate = item["candidate"]
             evaluation_input_count = item["evaluation_input_count"]
             forecast_input_fingerprint = item["forecast_input_fingerprint"]
+            evaluation_profile = item["evaluation_profile"]
+            forecast_capability = item["forecast_capability"]
             evaluation_id = f"evaluation/{json_fingerprint({'experiment': experiment_id, 'variant': variant_id, 'candidate': candidate})[:32]}"
 
             def insert():
@@ -2107,7 +2171,7 @@ class ExperimentCoordinator:
                      options, metrics, evaluation_input_count,
                      forecast_input_fingerprint, is_complete_manifest,
                      is_submittable, created_at)
-                    VALUES (?, ?, ?, ?, ?, 'gluonts.model.evaluate_forecasts',
+                    VALUES (?, ?, ?, ?, ?, ?,
                             ?, ?, ?, ?, ?, false, false, current_timestamp)
                     ON CONFLICT (evaluation_id) DO UPDATE SET
                         evaluator=excluded.evaluator,
@@ -2125,8 +2189,15 @@ class ExperimentCoordinator:
                         variant_id,
                         candidate,
                         benchmark_id,
+                        ("ShapeFM mean-based GluonTS metrics"
+                         if forecast_capability == "mean_only"
+                         else "gluonts.model.evaluate_forecasts"),
                         self.config["benchmark"]["gift_eval_revision"],
-                        canonical_json(self.configuration.evaluation_options),
+                        canonical_json({
+                            **self.configuration.evaluation_options,
+                            "evaluation_profile": evaluation_profile,
+                            "forecast_capability": forecast_capability,
+                        }),
                         canonical_json(official),
                         evaluation_input_count,
                         forecast_input_fingerprint,
@@ -2382,6 +2453,7 @@ def validate_forecast_capability(
     quantile_levels: Any,
     quantiles: Any,
     forecast_capability: str,
+    horizon: int | None = None,
 ) -> None:
     """Validate required mean and all-or-none probabilistic forecast fields."""
     if (
@@ -2395,9 +2467,17 @@ def validate_forecast_capability(
     ):
         raise ValueError("forecast mean is required")
     probabilistic = (median, quantile_levels, quantiles)
+    expected_horizon = len(mean) if horizon is None else horizon
+    if len(mean) != expected_horizon:
+        raise ValueError("forecast mean length must equal horizon")
     if forecast_capability == "probabilistic":
         if any(value is None for value in probabilistic):
             raise ValueError("probabilistic forecasts require median, levels, and quantiles")
+        if (
+            len(median) != expected_horizon or len(quantiles) != len(quantile_levels)
+            or any(len(values) != expected_horizon for values in quantiles)
+        ):
+            raise ValueError("probabilistic forecast fields have invalid shapes")
         numeric_values = [*median, *quantile_levels]
         numeric_values.extend(
             value for quantile in quantiles for value in quantile
@@ -2407,6 +2487,16 @@ def validate_forecast_capability(
             for value in numeric_values
         ):
             raise ValueError("probabilistic forecast fields must contain only finite values")
+        if any(any(left > right for left, right in zip(column, column[1:]))
+               for column in zip(*quantiles, strict=True)):
+            raise ValueError("probabilistic forecast quantiles cross")
+        median_rows = [index for index, level in enumerate(quantile_levels)
+                       if abs(level - 0.5) < 1e-12]
+        if len(median_rows) != 1 or any(
+            abs(left - right) > 1e-10
+            for left, right in zip(median, quantiles[median_rows[0]], strict=True)
+        ):
+            raise ValueError("forecast median must equal q0.5")
     elif forecast_capability == "mean_only":
         if any(value is not None for value in probabilistic):
             raise ValueError("mean-only forecasts must omit every probabilistic field")

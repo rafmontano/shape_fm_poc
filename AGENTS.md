@@ -25,6 +25,12 @@ instructions, including their scoped checkpoint publication authorisation.
 The researcher has since approved checkpointing the reviewed Stage 2 result and
 a non-destructive Python file-organisation pass. Follow the current AMP handoff,
 not historical publication restrictions. Objective 2 completion remains open.
+The language-neutral forecast black-box contract and ID 018 activation addendum
+were approved on 4 October 2026. Implement them from
+`docs/forecast-black-box-contract.md` and
+`docs/poc2-m4-benchmark-methods.md`: activate Naive2, SES, Holt and Damped in a
+new experiment, calculate official point-only M4 Comb from stored components in
+Process 05, and do not add or use `forecastHybrid` for that benchmark.
 
 Apply the standing [Python utility naming standard](docs/code-standards.md#python-utility-file-organisation):
 `pNN_MM_` for process-owned helpers, `shared_` for shared components, and no
@@ -71,6 +77,8 @@ execution policy before heavy testing, including source synchronisation and
 Ubuntu availability. Git publication requires explicit scoped authorisation.
 
 ID 013 and ID 014 are closed under their directional-label and optional-feature
-acceptance records. No subsequent migration item is authorised. During the
-recorded Ubuntu maintenance pause, do not restart project work until the
-researcher confirms that the OS upgrade is complete.
+acceptance records. ID 018 forecast-contract activation and its bounded
+two-machine execution validation are now authorised. During any recorded Ubuntu
+maintenance pause, complete local work but do not begin remote execution until
+the researcher confirms that the machine is available and the OS upgrade is
+complete.

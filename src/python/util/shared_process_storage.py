@@ -269,7 +269,11 @@ class ProcessStorage:
             output = expected + " JOIN transformed_series r ON r.experiment_id=x.experiment_id AND r.forecast_instance_id=i.forecast_instance_id AND r.variant_id=v.variant_id"
         else:
             models = "json_keys(CAST(x.scientific_configuration AS JSON), '$.models')"
-            candidates = models if process_id == 4 else f"list_append({models}, 'equal_weight')"
+            combination = (
+                "json_extract_string(CAST(x.scientific_configuration AS JSON), "
+                "'$.pipeline.combination.method')"
+            )
+            candidates = models if process_id == 4 else f"list_append({models}, {combination})"
             if process_id == 6:
                 expected = f"SELECT x.experiment_id,v.variant_id,c.candidate FROM experiments x JOIN experiment_variants v ON v.experiment_id=x.experiment_id, UNNEST({candidates}) c(candidate)"
                 output = expected + " JOIN official_evaluations r ON r.experiment_id=x.experiment_id AND r.variant_id=v.variant_id AND r.candidate=c.candidate"
@@ -283,7 +287,8 @@ class ProcessStorage:
         """Check original-scale arrays, lineage and content identity independently."""
         rows = connection.execute(
             """SELECT f.mean, f.median, f.quantile_levels, f.quantiles, i.horizon,
-                      f.scale, f.parent_result_id, s.transformation_id, f.content_hash
+                      f.scale, f.parent_result_id, s.transformation_id, f.content_hash,
+                      f.forecast_capability
                FROM experiment_tasks t
                JOIN forecasts f ON f.experiment_id=t.experiment_id
                  AND f.variant_id=t.variant_id AND f.candidate=t.candidate
@@ -293,12 +298,27 @@ class ProcessStorage:
                  AND s.variant_id=t.variant_id AND s.forecast_instance_id=t.forecast_instance_id
                WHERE t.stage=4"""
         ).fetchall()
-        for mean, median, levels, quantiles, horizon, scale, parent, source, fingerprint in rows:
+        for (mean, median, levels, quantiles, horizon, scale, parent, source,
+             fingerprint, capability) in rows:
+            valid_shape = (
+                capability == "mean_only" and median is None and levels is None
+                and quantiles is None and len(mean or []) == horizon
+            ) or (
+                capability == "probabilistic" and median is not None and levels
+                and quantiles and len(levels) == len(quantiles)
+                and all(len(values) == horizon for values in [mean, median, *quantiles])
+            )
+            values = [mean] if capability == "mean_only" else [mean, median, *quantiles]
+            current_hash = json_fingerprint({
+                "capability": capability, "scale": "original", "mean": tuple(mean),
+                "median": None if median is None else tuple(median),
+                "quantile_levels": levels,
+                "quantiles": None if quantiles is None else [tuple(value) for value in quantiles],
+            })
+            legacy_hash = json_fingerprint({"mean": mean, "quantiles": quantiles})
+            valid_hash = fingerprint in {current_hash, legacy_hash}
             if (scale != "original" or source is None or parent != source
-                    or mean is None or median is None or not levels or not quantiles
-                    or len(levels) != len(quantiles)
-                    or any(len(values) != horizon for values in [mean, median, *quantiles])
-                    or any(not math.isfinite(value) for values in [mean, median, *quantiles]
-                           for value in values)
-                    or fingerprint != json_fingerprint({"mean": mean, "quantiles": quantiles})):
+                    or mean is None or not valid_shape
+                    or any(not math.isfinite(value) for array in values for value in array)
+                    or not valid_hash):
                 raise RuntimeError("stored forecast output failed value, horizon, hash or lineage validation")

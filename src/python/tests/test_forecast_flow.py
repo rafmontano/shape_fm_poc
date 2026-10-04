@@ -12,11 +12,91 @@ import unittest
 
 from util.shared_configuration import canonical_json
 from util.shared_experiment_execution import get_forecast
+from util.p04_00_forecast_contract import ForecastContract
 from util.p04_01_forecast_flow import run_ordinary_forecast_flow
 from util.p04_02_forecast_provider import LocalAutoArimaProvider
 from util.p04_03_forecast_storage import ForecastStorage
 from util.shared_process_storage import ProcessStorage
 from tests import test_experiment_execution as fixtures
+
+
+class ForecastContractTests(unittest.TestCase):
+    """Exercise exact common fields and capability-specific output invariants."""
+
+    @staticmethod
+    def request(capability="probabilistic"):
+        """Build one asymmetric valid request without production dependencies."""
+        return {
+            "contract_version": "forecast-v1", "experiment_id": "experiment",
+            "task_id": "task", "forecast_instance_id": "instance",
+            "variant_id": "variant", "dataset_id": "dataset", "series_id": "series",
+            "model_id": "auto_arima" if capability == "probabilistic" else "ses",
+            "required_capability": capability, "context": [1.0, 4.0, 2.0],
+            "horizon": 2, "frequency": "D", "seasonal_period": 7,
+            "input_scale": "transformed",
+            "quantile_levels": [0.025, 0.5, 0.975]
+            if capability == "probabilistic" else None,
+            "seed": 1234, "model_settings": {},
+        }
+
+    def test_probabilistic_success_requires_exact_levels_and_median(self):
+        """No provider may omit tail levels, interpolate rows, or disagree at q0.5."""
+        contract = ForecastContract()
+        request = self.request()
+        result = fixtures.forecast_result(
+            request, [4.0, 8.0], quantiles=[[1.0, 2.0], [4.0, 8.0], [7.0, 12.0]]
+        )
+        self.assertIs(contract.validate_result(request, result), result)
+        for mutation, message in (
+            (lambda value: value["quantile_levels"].pop(), "levels do not match"),
+            (lambda value: value.__setitem__("median", [4.0, 9.0]), "does not equal q0.5"),
+            (lambda value: value["quantiles"].__setitem__(2, [0.0, 12.0]), "cross"),
+        ):
+            broken = {**result, "quantile_levels": list(result["quantile_levels"]),
+                      "median": list(result["median"]),
+                      "quantiles": [list(row) for row in result["quantiles"]]}
+            mutation(broken)
+            with self.assertRaisesRegex(ValueError, message):
+                contract.validate_result(request, broken)
+
+    def test_mean_only_success_and_error_use_exact_common_fields(self):
+        """Point forecasts keep probabilistic fields null and errors retain identities."""
+        contract = ForecastContract()
+        request = self.request("mean_only")
+        result = {
+            "contract_version": "forecast-v1", "status": "success",
+            "experiment_id": "experiment", "task_id": "task",
+            "forecast_instance_id": "instance", "variant_id": "variant",
+            "requested_model_id": "ses", "executed_model_id": "ses",
+            "forecast_capability": "mean_only", "output_scale": "transformed",
+            "horizon": 2, "mean": [2.0, 3.0], "median": None,
+            "quantile_levels": None, "quantiles": None, "fallback_used": False,
+            "fallback_reason": None, "runtime_seconds": 0.01, "provenance": {},
+        }
+        self.assertIs(contract.validate_result(request, result), result)
+        with self.assertRaisesRegex(ValueError, "null probabilistic fields"):
+            contract.validate_result(request, {**result, "median": [2.0, 3.0]})
+        error = {
+            "contract_version": "forecast-v1", "status": "error",
+            "experiment_id": "experiment", "task_id": "task",
+            "forecast_instance_id": "instance", "variant_id": "variant",
+            "requested_model_id": "ses", "error_type": "fit_error",
+            "error_message": "controlled failure", "provenance": {},
+        }
+        self.assertIs(contract.validate_result(request, error), error)
+        with self.assertRaisesRegex(ValueError, "exactly"):
+            contract.validate_result(request, {**error, "extra": True})
+
+    def test_chronos_adapter_rearranges_crossings_per_horizon(self):
+        """Provider-side rearrangement preserves ordered columns and reports changes."""
+        crossed = [[1.0, 8.0], [4.0, 3.0], [7.0, 6.0]]
+        arranged, changed = ForecastContract.noncrossing_quantiles(crossed)
+        self.assertEqual(arranged, [[1.0, 3.0], [4.0, 6.0], [7.0, 8.0]])
+        self.assertTrue(changed)
+        ordered = [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]
+        self.assertEqual(
+            ForecastContract.noncrossing_quantiles(ordered), (ordered, False)
+        )
 
 
 class ForecastFlowTests(unittest.TestCase):
@@ -64,8 +144,7 @@ class ForecastFlowTests(unittest.TestCase):
         return {
             "packages": {"forecast": "fixture"},
             "results": [
-                {"id": job["id"], "mean": [3.0, 8.0], "median": [3.0, 8.0],
-                 "quantiles": [[3.0, 8.0]] * 9}
+                fixtures.forecast_result(job, [3.0, 8.0])
                 for job in payload["jobs"]
             ],
         }
@@ -92,7 +171,7 @@ class ForecastFlowTests(unittest.TestCase):
 
         def transient(payload):
             """Bounded functional fault injector needs no reusable state object."""
-            calls.append(payload["jobs"][0]["id"])
+            calls.append(payload["jobs"][0]["task_id"])
             if len(calls) <= 2:
                 raise RuntimeError("injected transient")
             return self.response(payload)
@@ -167,7 +246,7 @@ class ForecastFlowTests(unittest.TestCase):
 
         def fail(payload):
             """Record a permanent fault in this isolated invocation."""
-            calls.append(payload["jobs"][0]["id"])
+            calls.append(payload["jobs"][0]["task_id"])
             raise RuntimeError("permanent failure")
 
         with self.assertRaisesRegex(RuntimeError, "permanent failure"):
@@ -188,7 +267,7 @@ class ForecastFlowTests(unittest.TestCase):
 
             def failure(payload):
                 """Always fail one bounded task, making every extra retry observable."""
-                calls.append(payload["jobs"][0]["id"])
+                calls.append(payload["jobs"][0]["task_id"])
                 raise RuntimeError("bounded fault")
 
             with (patch.object(LocalAutoArimaProvider, "from_configuration",
@@ -240,7 +319,7 @@ class ForecastFlowTests(unittest.TestCase):
                 """Release both GPU calls only after every CPU batch has progressed."""
                 if model == "chronos_2":
                     gpu_started.set()
-                elif overlap and batch[0]["id"] == "task-0":
+                elif overlap and batch[0]["task_id"] == "task-0":
                     self.assertTrue(gpu_started.wait(10), "overlap was silently serialized")
                 if model == "chronos_2" and not overlap:
                     self.assertTrue(released.is_set(), "GPU submitted before CPU phase completed")
@@ -248,11 +327,11 @@ class ForecastFlowTests(unittest.TestCase):
                     raise RuntimeError("fixed-wave head-of-line blocking")
                 with lock:
                     if model == "auto_arima":
-                        cpu_seen.add(batch[0]["id"])
+                        cpu_seen.add(batch[0]["task_id"])
                         if len(cpu_seen) == 3:
                             released.set()
                     else:
-                        gpu_seen.add(batch[0]["id"])
+                        gpu_seen.add(batch[0]["task_id"])
                 result = ForecastFlowTests.response({"jobs": batch})
                 return {**result, "metadata": {}, "runtime_seconds": 0}
 
@@ -298,7 +377,7 @@ class ForecastFlowTests(unittest.TestCase):
             response["results"][0]["mean"] = [3.0]
             return response
 
-        with self.assertRaisesRegex(RuntimeError, "horizon mismatch"):
+        with self.assertRaisesRegex(ValueError, "finite horizon vector"):
             self.run_flow(LocalAutoArimaProvider(wrong, {}))
         self.assertEqual(self.coordinator.connection.execute(
             "SELECT count(*) FROM forecasts"
@@ -322,7 +401,7 @@ class ForecastFlowTests(unittest.TestCase):
 
         def remaining(payload):
             """Record exactly which durable identities resume computes."""
-            seen.extend(job["id"] for job in payload["jobs"])
+            seen.extend(job["task_id"] for job in payload["jobs"])
             return self.response(payload)
 
         self.run_flow(LocalAutoArimaProvider(remaining, {}))

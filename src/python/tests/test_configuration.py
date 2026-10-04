@@ -38,6 +38,14 @@ RESOLVED_PERIOD_CONFIGURATION = (
     Path(__file__).resolve().parents[3]
     / "config/experiments/poc2_m4_daily_100_resolved_period.json"
 )
+ALL_MODELS_CONFIGURATION = (
+    Path(__file__).resolve().parents[3]
+    / "config/experiments/poc2_m4_daily_100_all_models.json"
+)
+FORECAST_CONTRACT_CONFIGURATION = (
+    Path(__file__).resolve().parents[3]
+    / "config/experiments/poc2_m4_daily_100_forecast_contract_m4_comb.json"
+)
 
 
 class ExperimentConfigurationTests(unittest.TestCase):
@@ -68,6 +76,76 @@ class ExperimentConfigurationTests(unittest.TestCase):
         invalid["models"]["nnetar"]["settings"] = {"repeats": 1}
         with self.assertRaisesRegex(ExperimentConfigurationError, "R pool settings"):
             resolve_experiment_configuration(invalid)
+
+    def test_all_models_contract_is_one_variant_and_eleven_candidates(self):
+        """V8 plans nine registered R models, Chronos, and one equal combination."""
+        from util.shared_configuration import R_MODEL_METHODS
+
+        configuration = load_experiment_configuration(ALL_MODELS_CONFIGURATION)
+        expected_models = (*R_MODEL_METHODS, "chronos_2")
+        self.assertEqual(configuration.version, 8)
+        self.assertEqual(tuple(configuration.resolved["models"]), expected_models)
+        self.assertEqual(
+            configuration.resolved["pipeline"]["preprocessing"],
+            {"default": "robust", "modes": ["robust"]},
+        )
+        self.assertEqual(
+            configuration.resolved["pipeline"]["transformations"],
+            {"methods": ["standardise_sample_v1"]},
+        )
+        self.assertEqual(
+            configuration.resolved["pipeline"]["combination"],
+            {"method": "equal_weight", "weights": dict.fromkeys(expected_models, 0.1)},
+        )
+        self.assertEqual(
+            configuration.resolved["derived"]["expected_task_counts"],
+            {"1": 100, "2": 100, "3": 100, "4": 1_000, "5": 1_100, "6": 11},
+        )
+        self.assertEqual(configuration.resolved["derived"]["expected_forecast_rows"], 1_100)
+        self.assertEqual(configuration.resolved["derived"]["expected_evaluation_rows"], 11)
+        self.assertEqual(
+            configuration.resolved["execution"]["final_acceptance"]["workers"],
+            {"mac_cpu": 8, "ubuntu_cpu": 15, "ubuntu_gpu": 15, "total": 38},
+        )
+
+        missing_chronos = deepcopy(configuration.original)
+        del missing_chronos["models"]["chronos_2"]
+        missing_chronos["pipeline"]["combination"]["weights"] = dict.fromkeys(
+            R_MODEL_METHODS, 1.0 / len(R_MODEL_METHODS)
+        )
+        with self.assertRaisesRegex(ExperimentConfigurationError, "plus Chronos-2"):
+            resolve_experiment_configuration(missing_chronos)
+
+        extra_variant = deepcopy(configuration.original)
+        extra_variant["pipeline"]["transformations"]["methods"].insert(0, "identity")
+        with self.assertRaisesRegex(ExperimentConfigurationError, "transformation"):
+            resolve_experiment_configuration(extra_variant)
+
+    def test_forecast_contract_configuration_has_exact_acceptance_cardinalities(self):
+        """V9 plans fourteen base models, official M4 Comb, and fifteen evaluations."""
+        from util.shared_configuration import R_MODEL_METHODS, R_POINT_METHODS
+
+        configuration = load_experiment_configuration(FORECAST_CONTRACT_CONFIGURATION)
+        expected_models = (*R_MODEL_METHODS, *R_POINT_METHODS, "chronos_2")
+        self.assertEqual(configuration.version, 9)
+        self.assertEqual(tuple(configuration.resolved["models"]), expected_models)
+        self.assertEqual(
+            configuration.resolved["pipeline"]["combination"],
+            {"method": "m4_comb", "weights": {
+                "ses": 1 / 3, "holt": 1 / 3, "damped": 1 / 3,
+            }},
+        )
+        self.assertEqual(
+            configuration.resolved["derived"]["expected_task_counts"],
+            {"1": 100, "2": 100, "3": 100, "4": 1_400,
+             "5": 1_500, "6": 15},
+        )
+        self.assertEqual(configuration.resolved["derived"]["expected_forecast_rows"], 1_500)
+        self.assertEqual(configuration.resolved["derived"]["expected_evaluation_rows"], 15)
+        self.assertEqual(
+            configuration.resolved["models"]["chronos_2"]["quantile_levels"],
+            [0.025, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.975],
+        )
 
     def test_complete_document_derives_current_cardinalities(self) -> None:
         """The reference contract derives all Process 01–06 and result counts."""

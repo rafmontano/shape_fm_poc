@@ -34,6 +34,26 @@ from util.shared_transformations import inverse, transform
 EXPECTED_100_TASK_COUNTS = {2: 200, 3: 400, 4: 800, 5: 1_200, 6: 12}
 
 
+def forecast_result(job, mean, *, fallback=False, executed_model=None, quantiles=None):
+    """Build one valid common probabilistic response for bounded worker doubles."""
+    levels = job["quantile_levels"]
+    rows = quantiles if quantiles is not None else [list(mean) for _ in levels]
+    executed = executed_model or job["model_id"]
+    return {
+        "contract_version": job["contract_version"], "status": "success",
+        "experiment_id": job["experiment_id"], "task_id": job["task_id"],
+        "forecast_instance_id": job["forecast_instance_id"],
+        "variant_id": job["variant_id"], "requested_model_id": job["model_id"],
+        "executed_model_id": executed, "forecast_capability": "probabilistic",
+        "output_scale": job["input_scale"], "horizon": job["horizon"],
+        "mean": list(mean), "median": list(rows[levels.index(0.5)]),
+        "quantile_levels": levels, "quantiles": rows,
+        "fallback_used": fallback,
+        "fallback_reason": "controlled model-fit failure" if fallback else None,
+        "runtime_seconds": 0.0, "provenance": {"method_id": executed},
+    }
+
+
 def initialize_test_database(
     path: Path, configuration_name: str = "poc2_m4_daily_100.json"
 ) -> None:
@@ -142,6 +162,39 @@ class ExternalBatchTests(unittest.TestCase):
         )
         self.assertEqual(result["quantiles"], [[2.0], [3.0], [4.0]])
         self.assertFalse(result["quantiles_rearranged"])
+
+    def test_m4_comb_averages_only_ordered_stored_point_means(self):
+        """Official M4 Comb retains null probabilistic fields and exact thirds."""
+        result = _combine_job({
+            "method": "m4_comb",
+            "components": {
+                "ses": {"mean": [3.0, 12.0], "capability": "mean_only"},
+                "holt": {"mean": [6.0, 3.0], "capability": "mean_only"},
+                "damped": {"mean": [12.0, 6.0], "capability": "mean_only"},
+            },
+            "weights": {"ses": 1 / 3, "holt": 1 / 3, "damped": 1 / 3},
+        })
+        self.assertEqual(result, {
+            "mean": [7.0, 7.0], "median": None, "quantiles": None,
+            "quantiles_rearranged": False,
+        })
+
+    def test_m4_comb_rejects_missing_wrong_or_nonfinite_components(self):
+        """Missing lineage, probabilistic components, and nonfinite means fail closed."""
+        base = {
+            "ses": {"mean": [1.0], "capability": "mean_only"},
+            "holt": {"mean": [2.0], "capability": "mean_only"},
+            "damped": {"mean": [3.0], "capability": "mean_only"},
+        }
+        weights = {"ses": 1 / 3, "holt": 1 / 3, "damped": 1 / 3}
+        for components, message in (
+            ({name: value for name, value in base.items() if name != "damped"}, "requires ordered"),
+            ({**base, "holt": {"mean": [2.0], "capability": "probabilistic"}}, "mean-only"),
+            ({**base, "damped": {"mean": [float("nan")], "capability": "mean_only"}}, "finite"),
+        ):
+            with self.assertRaisesRegex(ValueError, message):
+                _combine_job({"method": "m4_comb", "components": components,
+                              "weights": weights})
 
     def test_batches_are_bounded(self):
         """Batching respects configured capacity."""
@@ -484,24 +537,14 @@ class TransactionTests(unittest.TestCase):
             nonlocal calls
             calls += 1
             received_settings.append(payload["settings"])
-            if payload["jobs"][0]["id"] == "task-1":
+            if payload["jobs"][0]["task_id"] == "task-1":
                 raise RuntimeError("second external batch failed")
             job = payload["jobs"][0]
             values = [3.0, 3.0]
             return {
-                "results": [
-                    {
-                        "id": job["id"],
-                        "mean": values,
-                        "median": values,
-                        "quantiles": [values] * 9,
-                        "requested_method_id": "auto_arima_forec",
-                        "executed_method_id": "snaive_forec",
-                        "fallback_used": True,
-                        "fallback_reason": "controlled model-fit failure",
-                        "provenance": {"method_id": "snaive_forec"},
-                    }
-                ],
+                "results": [forecast_result(
+                    job, values, fallback=True, executed_model="snaive"
+                )],
                 "packages": {"forecast": "test"},
             }
 
@@ -521,9 +564,9 @@ class TransactionTests(unittest.TestCase):
         self.assertEqual(connection.execute("SELECT count(*) FROM forecasts").fetchone()[0], 1)
         provenance = json.loads(
             connection.execute("SELECT execution_metadata FROM forecasts").fetchone()[0]
-        )["forecast_method"]
-        self.assertEqual(provenance["requested_method_id"], "auto_arima_forec")
-        self.assertEqual(provenance["executed_method_id"], "snaive_forec")
+        )["forecast_contract"]
+        self.assertEqual(provenance["requested_model_id"], "auto_arima")
+        self.assertEqual(provenance["executed_model_id"], "snaive")
         self.assertTrue(provenance["fallback_used"])
         self.assertEqual(provenance["fallback_reason"], "controlled model-fit failure")
         self.assertTrue(received_settings)
@@ -533,12 +576,7 @@ class TransactionTests(unittest.TestCase):
         ))
         self.coordinator._r_worker = lambda payload: {
             "results": [
-                {
-                    "id": job["id"],
-                    "mean": [3.0, 3.0],
-                    "median": [3.0, 3.0],
-                    "quantiles": [[3.0, 3.0]] * 9,
-                }
+                forecast_result(job, [3.0, 3.0])
                 for job in payload["jobs"]
             ],
             "packages": {"forecast": "test"},
@@ -615,12 +653,9 @@ class TransactionTests(unittest.TestCase):
             job = payload["jobs"][0]
             received_contexts.append(job["context"])
             return {
-                "results": [{
-                    "id": job["id"],
-                    "mean": [0.0, 1.0],
-                    "median": [-0.5, 1.5],
-                    "quantiles": transformed_quantiles,
-                }],
+                "results": [forecast_result(
+                    job, [0.0, 1.0], quantiles=transformed_quantiles
+                )],
                 "packages": {"forecast": "stub"},
             }
 
@@ -659,6 +694,70 @@ class TransactionTests(unittest.TestCase):
         )
         self.assertEqual(forecast[5], "transformed-v4")
         self.assertEqual(forecast[6], "probabilistic")
+
+    def test_process_05_stores_exact_m4_comb_and_three_links(self):
+        """The real Process 05 path combines stored means and records ordered lineage."""
+        self.coordinator.close()
+        database = self.directory / "poc1.duckdb"
+        database.unlink()
+        initialize_test_database(
+            database, "poc2_m4_daily_100_forecast_contract_m4_comb.json"
+        )
+        self.coordinator = ExperimentCoordinator(database)
+        self._insert_benchmark_and_instances()
+        connection = self.coordinator.connection
+        connection.execute(
+            """INSERT INTO experiment_variants
+            (variant_id, experiment_id, cleaning_method, transformation_method,
+             adjustment_method, configuration)
+            VALUES ('variant', 'experiment', 'robust',
+                    'standardise_sample_v1', 'identity', '{}')"""
+        )
+        for name, values in (
+            ("ses", [3.0, 12.0]), ("holt", [6.0, 3.0]),
+            ("damped", [12.0, 6.0]),
+        ):
+            connection.execute(
+                """INSERT INTO forecasts
+                (forecast_id, experiment_id, variant_id, forecast_instance_id,
+                 candidate, scale, mean, median, quantile_levels, quantiles,
+                 execution_metadata, content_hash, forecast_capability)
+                VALUES (?, 'experiment', 'variant', 'instance-0', ?, 'original',
+                        ?, NULL, NULL, NULL, '{}', ?, 'mean_only')""",
+                [f"forecast-{name}", name, values, f"hash-{name}"],
+            )
+        connection.execute(
+            """INSERT INTO experiment_tasks
+            (task_id, experiment_id, stage, forecast_instance_id, variant_id,
+             candidate, status)
+            VALUES ('combine-task', 'experiment', 5, 'instance-0', 'variant',
+                    'm4_comb', 'pending')"""
+        )
+        row = ("combine-task", "instance-0", "variant", "m4_comb")
+        invocation = self.coordinator._begin_invocation("experiment", 5, 1, "cpu", 1)
+        attempts = self.coordinator._start_tasks([row], invocation)
+        self.coordinator._run_05_combine("experiment", [row], attempts, 1)
+        combined = connection.execute(
+            """SELECT mean, median, quantile_levels, quantiles,
+                      forecast_capability, execution_metadata
+               FROM forecasts WHERE candidate='m4_comb'"""
+        ).fetchone()
+        self.assertEqual(combined[:5], ([7.0, 7.0], None, None, None, "mean_only"))
+        self.assertEqual(
+            [(row[0], row[1], row[2]) for row in connection.execute(
+                """SELECT component_name, component_forecast_id, weight
+                   FROM forecast_components ORDER BY component_name"""
+            ).fetchall()],
+            [("damped", "forecast-damped", 1 / 3),
+             ("holt", "forecast-holt", 1 / 3),
+             ("ses", "forecast-ses", 1 / 3)],
+        )
+        metadata = json.loads(combined[5])
+        self.assertEqual([item["name"] for item in metadata["components"]],
+                         ["ses", "holt", "damped"])
+        self.assertEqual(connection.execute(
+            "SELECT status FROM experiment_tasks WHERE task_id='combine-task'"
+        ).fetchone()[0], "completed")
 
     def test_chronos_oom_restarts_splits_and_preserves_successes(self):
         """Chronos restarts after OOM, splits the batch, and records retry metadata."""
@@ -745,12 +844,7 @@ class TransactionTests(unittest.TestCase):
                     "type": "result",
                     "batch_id": payload["batch_id"],
                     "results": [
-                        {
-                            "id": job["id"],
-                            "mean": values,
-                            "median": values,
-                            "quantiles": [values] * 9,
-                        }
+                        forecast_result(job, values)
                         for job in payload["jobs"]
                     ],
                     "effective_batch_size": len(payload["jobs"]),

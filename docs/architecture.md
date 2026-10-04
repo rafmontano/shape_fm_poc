@@ -81,6 +81,38 @@ no new machine limits. The compatibility name `LocalAutoArimaProvider` remains,
 but its generic R adapter accepts the configured registered method. The old
 AutoARIMA script remains a delegating adapter for stored paths and manual QA.
 
+Configuration v8 is the bounded all-model acceptance contract. It selects one
+`robust` plus `standardise_sample_v1` variant, the same nine registered R
+methods, Chronos-2, and the existing equal-weight Process 05 calculation with
+one tenth assigned to every stored component. Its 100-series graph contains
+1,000 base forecasts and 100 combinations. The approved runtime-v3 topology
+provides 8 Mac CPU, 15 Ubuntu CPU and 15 logical Ubuntu GPU workers while the
+Mac remains the sole writer. This is a new experiment definition; it does not
+reinterpret v7 or activate ID 018's unregistered point methods or M4 Comb.
+The initial [bounded execution evidence](poc2-all-model-execution-evidence.md)
+completed the graph and preserved all rows on resume. Because Daily resolves to
+period 1, every STL-AR request visibly executed the registered seasonal-naïve
+fallback; the evidence therefore does not claim that all ten base models fitted.
+
+Configuration v9 adds a language-neutral `forecast-v1` boundary shared by the R
+and Python providers. Process 04 now stores 1,400 independent base forecasts:
+the existing nine R probabilistic methods, Chronos-2, and four M4 `mean_only`
+methods. The coordinator validates exact identities, capability, scale, horizon,
+finite shapes, q0.5 equality and noncrossing quantiles before restoring scale and
+writing DuckDB. Workers remain storage-free.
+
+The same v9 graph activates the official `m4_comb` dependency in Process 05.
+It reads the already stored SES, Holt, and Damped means, calculates one-third of
+each, stores a separate mean-only forecast, and records exactly three component
+links. It does not invoke or refit a forecasting model. Process 06 uses the full
+probabilistic profile for ten models and a separate eight-metric mean profile
+for Naive2, SES, Holt, Damped, and M4 Comb. Older configurations and evidence
+retain their original contracts.
+
+The [version-9 execution evidence](poc2-forecast-contract-m4-combination-execution-evidence.md)
+records the completed two-machine graph, storage audit and restart check; it is
+implementation evidence rather than technical or researcher acceptance.
+
 ```text
 researcher entry → Prefect experiment → retained gate / tuning / window flow
                                              │
@@ -290,6 +322,13 @@ pool for AutoARIMA. Connecting the other eight registered R methods to model
 selection, task planning, execution, persistence and retrieval remains
 outstanding approved forecast-pool integration work. It is documented rather
 than implemented in this closure task.
+
+The approved [ID 018 M4 benchmark-method decision](poc2-m4-benchmark-methods.md)
+keeps one R forecast pool and adds Naive2, SES, Holt and Damped there as
+library-only, unregistered point methods. It also defines M4 Comb as a future
+Process 05 dependency recipe over separately stored SES, Holt and Damped
+forecasts, never as an R method that refits its components. Implementation and
+activation are separate checkpoints; the approval alone changes no experiment.
 
 ## Identity, transactions, and restart
 

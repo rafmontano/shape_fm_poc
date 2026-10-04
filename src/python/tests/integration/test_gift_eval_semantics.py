@@ -9,6 +9,7 @@
 
 """Verify pinned GIFT-Eval dataset metadata, split, metric, and quantile semantics used by experiment planning."""
 
+import importlib.util
 import os
 import unittest
 from pathlib import Path
@@ -30,6 +31,34 @@ class GiftEvalSemanticsTests(unittest.TestCase):
     Inputs: The committed experiment configuration and local pinned M4 Daily dataset.
     Outputs: Metadata and split assertions; sets ``GIFT_EVAL`` and reads dataset files only.
     """
+
+    @staticmethod
+    def evaluation_bridge():
+        """Load the numbered production bridge without changing its entry-point name."""
+        path = Path(__file__).resolve().parents[2] / "06_01_evaluate_gift_eval.py"
+        spec = importlib.util.spec_from_file_location("shape_fm_evaluation_bridge", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_capability_profiles_use_only_supplied_forecast_values(self):
+        """Point metrics omit uncertainty and probabilistic keys exactly match input levels."""
+        bridge = self.evaluation_bridge()
+        self.assertEqual(len(bridge.metrics(None)), 8)
+        levels = [0.025, 0.1, 0.5, 0.9, 0.975]
+        self.assertEqual(len(bridge.metrics(levels)), 11)
+        dataset = ListDataset([{
+            "item_id": "exact-levels", "start": pd.Period("2020-01-01", freq="D"),
+            "target": [1.0, 2.0, 3.0],
+        }], freq="D")
+        record = {"mean": [4.0, 5.0],
+                  "quantiles": [[float(index), float(index + 1)]
+                                for index in range(len(levels))]}
+        forecast = next(bridge.ShapeFMPredictor([record], levels).predict(dataset))
+        self.assertEqual(forecast.forecast_keys,
+                         ["mean", "0.025", "0.1", "0.5", "0.9", "0.975"])
+        self.assertEqual(forecast.forecast_array.shape, (6, 2))
+
     def test_m4_daily_contract_matches_official_package(self):
         """M4 Daily configuration and train, validation, and test boundaries match GIFT-Eval."""
         root = Path(__file__).resolve().parents[4]

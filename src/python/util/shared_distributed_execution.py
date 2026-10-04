@@ -34,7 +34,7 @@ import distributed
 from distributed import Client, Future, as_completed, get_worker
 
 from .shared_configuration import json_fingerprint
-from .p05_01_forecast_combination import combine_equal_weight
+from .p05_01_forecast_combination import combine_equal_weight, combine_m4_point
 from .shared_transformations import transform
 
 
@@ -1004,15 +1004,7 @@ def autoarima_batch(
         response = _run_r({
             "action": "forecast",
             "settings": settings,
-            "jobs": [
-                {
-                    **{key: value for key, value in job.items()
-                       if key not in {"instance_id", "variant_id"}},
-                    "model_period": job["seasonality"],
-                    "settings": settings,
-                }
-                for job in batch
-            ],
+            "jobs": batch,
         }, script, timeout, threads, memory_monitor=memory_monitor)
     runtime = time.monotonic() - started
     return {
@@ -1034,8 +1026,10 @@ def combine_batch(batch: list[dict[str, Any]], retry_count: int = 0) -> dict[str
     started = time.monotonic()
     results = []
     for job in batch:
-        combination = combine_equal_weight(
-            job["components"], job["weights"]
+        combination = (
+            combine_m4_point(job["components"], job["weights"])
+            if job["method"] == "m4_comb"
+            else combine_equal_weight(job["components"], job["weights"])
         )
         results.append(
             {
@@ -1202,15 +1196,7 @@ def chronos_batch(
                 response = worker.request({
             "command": "predict",
             "batch_id": f"chronos-batch/{uuid.uuid4().hex}",
-            "jobs": [
-                {
-                    key: value
-                    for key, value in job.items()
-                    if key
-                    not in {"model", "instance_id", "variant_id", "seasonality"}
-                }
-                for job in current
-            ],
+            "jobs": current,
             "horizon": current[0]["horizon"],
             "quantile_levels": quantile_levels,
             "inference_batch_size": len(current),

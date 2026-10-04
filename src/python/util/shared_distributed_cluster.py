@@ -18,6 +18,7 @@ import subprocess
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from distributed import Client
 
@@ -134,6 +135,7 @@ class ManagedTuningCluster:
             "/home/rafmontano/Documents/PhD/2026/projects/shape_fm_poc",
         )
         self.host_key_alias = os.environ.get("SHAPEFM_SSH_HOST_KEY_ALIAS")
+        self.prefect_api_url = os.environ.get("PREFECT_API_URL")
         self.mac_bind_host = os.environ.get("SHAPEFM_MAC_BIND_HOST") or subprocess.run(
             ["ipconfig", "getifaddr", "en0"],
             check=False,
@@ -177,6 +179,15 @@ class ManagedTuningCluster:
 
     def preflight(self) -> dict[str, Any]:
         """Reject unavailable hosts, occupied ports, stale workers, or low memory."""
+        prefect_url = urlparse(self.prefect_api_url or "")
+        if (
+            prefect_url.scheme not in {"http", "https"}
+            or not prefect_url.hostname
+            or prefect_url.hostname in {"localhost", "127.0.0.1", "0.0.0.0"}
+        ):
+            raise RuntimeError(
+                "distributed execution requires PREFECT_API_URL with a Mac LAN address"
+            )
         occupied = subprocess.run(
             ["lsof", "-nP", "-iTCP:8786", "-iTCP:8787", "-sTCP:LISTEN"],
             cwd=ROOT,
@@ -232,6 +243,8 @@ class ManagedTuningCluster:
                 **os.environ,
                 "PYTHONPATH": str(ROOT / "src/python"),
                 "RENV_CONFIG_SYNCHRONIZED_CHECK": "false",
+                "PREFECT_API_URL": self.prefect_api_url,
+                "PREFECT_SERVER_EPHEMERAL_ENABLED": "false",
             },
             stdin=subprocess.DEVNULL,
             stdout=log,
@@ -308,6 +321,8 @@ class ManagedTuningCluster:
             "set -eu; "
             f"cd {remote_root}; mkdir -p .amp/in data/dask; "
             "setsid nohup env PYTHONPATH=src/python RENV_CONFIG_SYNCHRONIZED_CHECK=false "
+            f"PREFECT_API_URL={shlex.quote(self.prefect_api_url)} "
+            "PREFECT_SERVER_EPHEMERAL_ENABLED=false "
             f"sh -c {shlex.quote(remote_workers + 'wait')} "
             ">>data/dask/seasonal-recovery-launch.log 2>&1 </dev/null & "
             "echo $! >.amp/in/seasonal-recovery-ubuntu.pid"
@@ -315,6 +330,7 @@ class ManagedTuningCluster:
         self.remote_started = True
         self._ssh(remote_command)
         evidence["scheduler_address"] = self.scheduler_address
+        evidence["prefect_api_url"] = self.prefect_api_url
         evidence["configured_cpu_workers"] = {
             "mac": self.profile.dask_mac_cpu_workers,
             "ubuntu": self.profile.dask_ubuntu_cpu_workers,

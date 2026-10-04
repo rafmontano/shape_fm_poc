@@ -1,10 +1,12 @@
 # ==============================================================================
 # forecast_methods.R
 #
-# Purpose: Define the allowlisted R forecast pool and its common probabilistic contract.
-# Inputs: Validated request lists containing identities, an already prepared numeric
-#   context, frequency, horizon, method settings, and requested quantile levels.
-# Outputs: JSON-serialisable forecast result lists; performs no file or database writes.
+# Purpose: Define the registered probabilistic R forecast pool and unregistered M4
+#   point methods with their shared native scientific calculations.
+# Inputs: Validated request lists for registered methods, or one finite stats::ts
+#   and positive horizon for unregistered M4 point methods.
+# Outputs: JSON-serialisable registered results or numeric point vectors; performs
+#   no file or database writes.
 # Run from: Imported; not run directly.
 # ==============================================================================
 
@@ -398,6 +400,108 @@ validate_forecast_result <- function(result) {
     distribution,
     .forecast_provenance(method_id, distribution_description, provenance_settings)
   )
+}
+
+# Purpose: Apply the official M4 90% autocorrelation seasonality test.
+# Inputs: One finite numeric series and its positive integer period.
+# Outputs: TRUE only when the official 1.645 critical-value rule identifies
+#   seasonality; fewer than three cycles and indeterminate results return FALSE.
+.m4_seasonality_test <- function(input, period) {
+  if (!is.numeric(input) || length(input) < 1L || any(!is.finite(input))) {
+    stop("M4 seasonality input must be a non-empty finite numeric series", call. = FALSE)
+  }
+  period <- .positive_integer(period, "M4 series frequency")
+  if (length(input) < 3L * period) {
+    return(FALSE)
+  }
+
+  autocorrelations <- stats::acf(input, plot = FALSE)$acf[-1L, 1L, 1L]
+  critical_limit <- 1.645 / sqrt(length(input)) *
+    sqrt(cumsum(c(1, 2 * autocorrelations^2)))
+  isTRUE(abs(autocorrelations[period]) > critical_limit[period])
+}
+
+# Purpose: Prepare, forecast, and restore one official M4 point forecast.
+# Inputs: One finite univariate stats::ts, positive integer horizon, and a function
+#   that returns a point forecast from the optionally seasonally adjusted series.
+# Outputs: Finite numeric vector of exactly horizon length. Seasonal inputs are
+#   adjusted once by classical multiplicative decomposition and restored once.
+.m4_point_forecast <- function(series, horizon, forecast_function) {
+  if (
+    !stats::is.ts(series) || !is.numeric(series) || !is.null(dim(series)) ||
+      length(series) < 1L || any(!is.finite(series))
+  ) {
+    stop("M4 point methods require one finite univariate stats::ts", call. = FALSE)
+  }
+  horizon <- .positive_integer(horizon, "horizon")
+  period <- .positive_integer(stats::frequency(series), "M4 series frequency")
+  if (!requireNamespace("forecast", quietly = TRUE)) {
+    stop("R package 'forecast' is required", call. = FALSE)
+  }
+
+  adjusted <- series
+  seasonal_factors <- rep(1, horizon)
+  if (period > 1L && .m4_seasonality_test(series, period)) {
+    decomposition <- stats::decompose(series, type = "multiplicative")
+    adjusted <- series / decomposition$seasonal
+    seasonal_factors <- rep(
+      utils::tail(decomposition$seasonal, period),
+      length.out = horizon
+    )
+  }
+
+  point_forecast <- as.numeric(forecast_function(adjusted, horizon))
+  if (length(point_forecast) != horizon) {
+    stop("M4 point forecast output length must equal horizon", call. = FALSE)
+  }
+  if (any(!is.finite(point_forecast))) {
+    stop("M4 point forecast output must contain only finite values", call. = FALSE)
+  }
+  output <- point_forecast * seasonal_factors
+  if (any(!is.finite(output))) {
+    stop("M4 seasonal restoration produced non-finite values", call. = FALSE)
+  }
+  output
+}
+
+#' Forecast with the official M4 Naive2 benchmark.
+#'
+#' Inputs: One finite univariate stats::ts and a positive integer horizon.
+#' Outputs: Numeric mean forecast after shared optional M4 seasonal adjustment.
+naive2_forec <- function(x, h) {
+  .m4_point_forecast(x, h, function(series, horizon) {
+    forecast::naive(series, h = horizon)$mean
+  })
+}
+
+#' Forecast with the official M4 simple exponential smoothing benchmark.
+#'
+#' Inputs: One finite univariate stats::ts and a positive integer horizon.
+#' Outputs: Numeric mean forecast after shared optional M4 seasonal adjustment.
+ses_forec <- function(x, h) {
+  .m4_point_forecast(x, h, function(series, horizon) {
+    forecast::ses(series, h = horizon)$mean
+  })
+}
+
+#' Forecast with the official undamped M4 Holt benchmark.
+#'
+#' Inputs: One finite univariate stats::ts and a positive integer horizon.
+#' Outputs: Numeric mean forecast after shared optional M4 seasonal adjustment.
+holt_forec <- function(x, h) {
+  .m4_point_forecast(x, h, function(series, horizon) {
+    forecast::holt(series, h = horizon, damped = FALSE)$mean
+  })
+}
+
+#' Forecast with the official damped M4 Holt benchmark.
+#'
+#' Inputs: One finite univariate stats::ts and a positive integer horizon.
+#' Outputs: Numeric mean forecast after shared optional M4 seasonal adjustment.
+damped_forec <- function(x, h) {
+  .m4_point_forecast(x, h, function(series, horizon) {
+    forecast::holt(series, h = horizon, damped = TRUE)$mean
+  })
 }
 
 #' Forecast with automatic ARIMA selection.
