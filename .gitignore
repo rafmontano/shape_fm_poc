@@ -76,6 +76,9 @@ __pycache__/
 # Test scratch space
 /.test-tmp/
 
+# AMP-local scratch files and review artifacts
+/.amp/in/
+
 # Coordinator-local Prefect operational history (SQLite, logs, and memo state)
 /.prefect/
 
