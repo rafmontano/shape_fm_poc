@@ -2759,6 +2759,14 @@ class ExperimentCoordinator:
             profile,
         )
         for batch, response in responses:
+            if len(batch) != 1:
+                raise RuntimeError("directional prediction response must own one block")
+            block = batch[0]
+            block_provenance = {
+                "block_id": block["id"],
+                "distance_calculations": len(block["queries"])
+                * len(payload["references"]),
+            }
             predictions = [
                 prediction
                 for result in response["results"]
@@ -2794,6 +2802,7 @@ class ExperimentCoordinator:
                             "worker": response["worker"],
                             "runtime": response["runtime"],
                             "resource_usage": response["resource_usage"],
+                            **block_provenance,
                             "reference_library_fingerprint": reference_fingerprint,
                         }
                     ),
@@ -2818,6 +2827,7 @@ class ExperimentCoordinator:
                     {
                         "worker": response["worker"],
                         "resource_usage": response["resource_usage"],
+                        **block_provenance,
                     },
                 )
         if task_by_identity:
