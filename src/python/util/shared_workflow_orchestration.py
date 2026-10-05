@@ -75,12 +75,42 @@ def compute_clean_batch(
 
 @task(name="Gate 03 transform batch", persist_result=False, cache_policy=NO_CACHE)
 def compute_transform_batch(
-    batch: list[dict[str, Any]], _options: dict[str, Any], distributed: bool
+    batch: list[dict[str, Any]], options: dict[str, Any], distributed: bool
 ) -> dict[str, Any]:
     """Transform one serializable batch in a named Prefect compute task."""
-    from .shared_distributed_execution import transform_batch
+    from .shared_distributed_execution import transform_batch, window_preparation_batch
+
+    if options.get("bounded_preparation"):
+        return window_preparation_batch(
+            batch,
+            options["script"],
+            options["timeout"],
+            options["threads"],
+            options.get("memory_safety"),
+            get_run_context().task_run.run_count - 1,
+        )
 
     return transform_batch(batch, get_run_context().task_run.run_count - 1)
+
+
+@task(name="Gate 04 directional DTW batch", persist_result=False, cache_policy=NO_CACHE)
+def compute_directional_dtw_batch(
+    batch: list[dict[str, Any]], options: dict[str, Any], distributed: bool
+) -> dict[str, Any]:
+    """Run one directional DTW block in the isolated classifier environment."""
+    from .shared_distributed_execution import directional_dtw_batch
+
+    return directional_dtw_batch(
+        batch,
+        options["operation"],
+        options["classifier_environment"],
+        options["worker_script"],
+        options["reference_fingerprint"],
+        options["timeout"],
+        options["memory_min_available_gib"],
+        options["swap_growth_limit_gib"],
+        get_run_context().task_run.run_count - 1,
+    )
 
 
 @task(name="Gate 05 combine batch", persist_result=False, cache_policy=NO_CACHE)
@@ -121,6 +151,7 @@ def compute_evaluation(
 COMPUTE_TASKS = {
     2: compute_clean_batch,
     3: compute_transform_batch,
+    4: compute_directional_dtw_batch,
     5: compute_combine_batch,
     6: compute_evaluation,
 }
@@ -176,8 +207,8 @@ def run_gate_compute_flow(
     max_in_flight: int, local_workers: int,
 ) -> Iterator[dict[str, Any]]:
     """Bind eligible gates to existing Dask or explicit bounded local task workers."""
-    distributed = scheduler_address is not None and process_id in {2, 3, 5}
-    if process_id in {2, 3, 5} and scheduler_address is not None:
+    distributed = scheduler_address is not None and process_id in {2, 3, 4, 5}
+    if process_id in {2, 3, 4, 5} and scheduler_address is not None:
         selected = gate_compute_flow.with_options(
             task_runner=DaskTaskRunner(address=scheduler_address)
         )

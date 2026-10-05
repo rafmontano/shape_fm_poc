@@ -30,7 +30,7 @@ from .shared_configuration import (
 
 
 # Code constant: latest DuckDB migration version implemented by this source revision.
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 # Bootstrap/interface default: legacy library database path; an explicit path from the
 # coordinator overrides it, and the path does not define scientific identity.
 DEFAULT_DATABASE = Path("data/shapefm.duckdb")
@@ -533,6 +533,123 @@ CREATE TABLE IF NOT EXISTS submission_exports (
     is_submittable BOOLEAN NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp
 );
+
+CREATE TABLE IF NOT EXISTS directional_evaluation_inputs (
+    evaluation_input_id VARCHAR PRIMARY KEY,
+    experiment_id VARCHAR NOT NULL,
+    variant_id VARCHAR NOT NULL,
+    forecast_instance_id VARCHAR NOT NULL,
+    preparation_id VARCHAR NOT NULL,
+    preparation_fingerprint VARCHAR NOT NULL,
+    raw_input_hash VARCHAR NOT NULL,
+    cleaned_input_hash VARCHAR NOT NULL,
+    transformed_input_hash VARCHAR NOT NULL,
+    transformed_input DOUBLE[] NOT NULL,
+    label_reference DOUBLE NOT NULL,
+    preprocessing_provenance JSON NOT NULL,
+    package_versions JSON NOT NULL,
+    content_hash VARCHAR NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
+    UNIQUE (experiment_id, variant_id, forecast_instance_id)
+);
+
+CREATE TABLE IF NOT EXISTS directional_actual_labels (
+    actual_label_id VARCHAR PRIMARY KEY,
+    experiment_id VARCHAR NOT NULL,
+    evaluation_input_id VARCHAR NOT NULL,
+    definition_id VARCHAR NOT NULL,
+    labels TINYINT[] NOT NULL,
+    content_hash VARCHAR NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
+    UNIQUE (experiment_id, evaluation_input_id, definition_id)
+);
+
+CREATE TABLE IF NOT EXISTS directional_model_definitions (
+    model_definition_id VARCHAR PRIMARY KEY,
+    experiment_id VARCHAR NOT NULL,
+    variant_id VARCHAR NOT NULL,
+    scientific_definition JSON NOT NULL,
+    repository_revision VARCHAR NOT NULL,
+    scientific_source_fingerprint VARCHAR NOT NULL,
+    worker_file_fingerprint VARCHAR NOT NULL,
+    classifier_lock_fingerprint VARCHAR NOT NULL,
+    runtime_versions JSON NOT NULL,
+    numeric_dtype VARCHAR NOT NULL CHECK (numeric_dtype = 'float64'),
+    reference_library_fingerprint VARCHAR NOT NULL,
+    preparation_fingerprint VARCHAR NOT NULL,
+    implementation_fingerprint VARCHAR NOT NULL,
+    content_hash VARCHAR NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
+    UNIQUE (experiment_id, variant_id, implementation_fingerprint)
+);
+
+CREATE TABLE IF NOT EXISTS directional_calibration_scores (
+    calibration_score_id VARCHAR PRIMARY KEY,
+    model_definition_id VARCHAR NOT NULL,
+    effective_width INTEGER NOT NULL CHECK (effective_width BETWEEN 0 AND 63),
+    representative_proportion DOUBLE NOT NULL,
+    horizon INTEGER NOT NULL CHECK (horizon BETWEEN 1 AND 14),
+    correct_count INTEGER NOT NULL CHECK (correct_count >= 0),
+    evaluation_count INTEGER NOT NULL CHECK (evaluation_count > 0),
+    accuracy DOUBLE NOT NULL,
+    candidate_policy JSON NOT NULL,
+    content_hash VARCHAR NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
+    UNIQUE (model_definition_id, effective_width, horizon)
+);
+
+CREATE TABLE IF NOT EXISTS directional_selected_widths (
+    selected_width_id VARCHAR PRIMARY KEY,
+    model_definition_id VARCHAR NOT NULL,
+    horizon INTEGER NOT NULL CHECK (horizon BETWEEN 1 AND 14),
+    effective_width INTEGER NOT NULL CHECK (effective_width BETWEEN 0 AND 63),
+    representative_proportion DOUBLE NOT NULL,
+    calibration_accuracy DOUBLE NOT NULL,
+    tie_rule VARCHAR NOT NULL,
+    content_hash VARCHAR NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
+    UNIQUE (model_definition_id, horizon)
+);
+
+CREATE TABLE IF NOT EXISTS directional_predictions (
+    prediction_id VARCHAR PRIMARY KEY,
+    experiment_id VARCHAR NOT NULL,
+    model_definition_id VARCHAR NOT NULL,
+    evaluation_input_id VARCHAR NOT NULL,
+    horizon INTEGER NOT NULL CHECK (horizon BETWEEN 1 AND 14),
+    prediction TINYINT NOT NULL CHECK (prediction IN (0, 1)),
+    nearest_reference_identity VARCHAR NOT NULL,
+    nearest_distance DOUBLE NOT NULL,
+    effective_width INTEGER NOT NULL CHECK (effective_width BETWEEN 0 AND 63),
+    execution_metadata JSON NOT NULL,
+    content_hash VARCHAR NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
+    UNIQUE (experiment_id, model_definition_id, evaluation_input_id, horizon)
+);
+
+CREATE TABLE IF NOT EXISTS directional_evaluations (
+    directional_evaluation_id VARCHAR PRIMARY KEY,
+    experiment_id VARCHAR NOT NULL,
+    model_definition_id VARCHAR NOT NULL,
+    horizon INTEGER NOT NULL CHECK (horizon BETWEEN 1 AND 14),
+    correct_count INTEGER NOT NULL CHECK (correct_count >= 0),
+    evaluation_count INTEGER NOT NULL CHECK (evaluation_count > 0),
+    accuracy DOUBLE NOT NULL,
+    prediction_fingerprint VARCHAR NOT NULL,
+    content_hash VARCHAR NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
+    UNIQUE (experiment_id, model_definition_id, horizon)
+);
+
+CREATE TABLE IF NOT EXISTS deterministic_no_work (
+    no_work_id VARCHAR PRIMARY KEY,
+    experiment_id VARCHAR NOT NULL,
+    process_id INTEGER NOT NULL CHECK (process_id BETWEEN 1 AND 6),
+    reason VARCHAR NOT NULL,
+    content_hash VARCHAR NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
+    UNIQUE (experiment_id, process_id)
+);
 """
 
 
@@ -706,7 +823,12 @@ def migrate_database(path: Path = DEFAULT_DATABASE) -> Path:
         connection.execute(
             "INSERT INTO schema_versions (version, description) VALUES (?, ?) "
             "ON CONFLICT (version) DO NOTHING",
-            [SCHEMA_VERSION, "Rolling-window preparation parent identities and runs"],
+            [9, "Rolling-window preparation parent identities and runs"],
+        )
+        connection.execute(
+            "INSERT INTO schema_versions (version, description) VALUES (?, ?) "
+            "ON CONFLICT (version) DO NOTHING",
+            [SCHEMA_VERSION, "Directional DTW preparation, calibration, prediction and evaluation"],
         )
         connection.execute("COMMIT")
     except BaseException:

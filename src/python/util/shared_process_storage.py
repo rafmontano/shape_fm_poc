@@ -90,6 +90,13 @@ class ProcessStorage:
                 if not incomplete and not missing:
                     self._validate_import(connection, configuration)
             else:
+                version = int(
+                    connection.execute(
+                        "SELECT configuration_version FROM experiment_configuration"
+                    ).fetchone()[0]
+                )
+                if version == 10 and process_id >= 3:
+                    return self._validate_directional(connection, process_id)
                 expected_sql, output_sql = self._contracts(process_id)
                 expected = int(connection.execute(f"SELECT count(*) FROM ({expected_sql}) expected").fetchone()[0])
                 task_count = int(connection.execute(
@@ -119,6 +126,119 @@ class ProcessStorage:
             )
         return {"output_validated": True, "expected_task_count": expected,
                 "stored_task_count": stored}
+
+    @staticmethod
+    def _validate_directional(
+        connection: duckdb.DuckDBPyConnection, process_id: int
+    ) -> dict[str, Any]:
+        """Validate directional task identities and their non-forecast durable outputs."""
+        series_count = int(
+            connection.execute(
+                """SELECT CAST(json_extract(resolved_configuration,
+                                             '$.data.selection.count') AS INTEGER)
+                   FROM experiment_configuration"""
+            ).fetchone()[0]
+        )
+        expected = {3: series_count, 4: 1 + series_count * 14, 5: 1, 6: 14}[
+            process_id
+        ]
+        task_count, completed = connection.execute(
+            """SELECT count(*), count(*) FILTER (WHERE t.status='completed')
+               FROM experiment_tasks AS t WHERE t.stage=?""",
+            [process_id],
+        ).fetchone()
+        if task_count != expected or completed != expected:
+            raise RuntimeError(
+                f"completed Process {process_id} has incomplete directional tasks: "
+                f"expected={expected}, tasks={task_count}, completed={completed}"
+            )
+        if process_id == 3:
+            inputs = int(
+                connection.execute(
+                    "SELECT count(*) FROM directional_evaluation_inputs"
+                ).fetchone()[0]
+            )
+            labels = int(
+                connection.execute(
+                    "SELECT count(*) FROM directional_actual_labels"
+                ).fetchone()[0]
+            )
+            invalid = int(
+                connection.execute(
+                    """SELECT count(*) FROM directional_evaluation_inputs AS i
+                       JOIN directional_actual_labels AS a
+                         ON a.evaluation_input_id=i.evaluation_input_id
+                       WHERE len(i.transformed_input)!=64 OR len(a.labels)!=14
+                          OR NOT isfinite(i.label_reference)"""
+                ).fetchone()[0]
+            )
+            if inputs != series_count or labels != series_count or invalid:
+                raise RuntimeError("stored directional preparation is incomplete or invalid")
+            stored = inputs
+        elif process_id == 4:
+            model_count = int(
+                connection.execute(
+                    "SELECT count(*) FROM directional_model_definitions"
+                ).fetchone()[0]
+            )
+            scores = int(
+                connection.execute(
+                    "SELECT count(*) FROM directional_calibration_scores"
+                ).fetchone()[0]
+            )
+            widths = int(
+                connection.execute(
+                    "SELECT count(*) FROM directional_selected_widths"
+                ).fetchone()[0]
+            )
+            predictions, invalid = connection.execute(
+                """SELECT count(*), count(*) FILTER (
+                         WHERE p.prediction NOT IN (0,1)
+                            OR NOT isfinite(p.nearest_distance)
+                            OR p.nearest_reference_identity='')
+                   FROM directional_predictions AS p"""
+            ).fetchone()
+            forecasts = int(
+                connection.execute(
+                    """SELECT count(*) FROM forecasts AS f
+                       WHERE f.candidate='directional_dtw'"""
+                ).fetchone()[0]
+            )
+            if (
+                model_count != 1
+                or scores != 64 * 14
+                or widths != 14
+                or predictions != series_count * 14
+                or invalid
+                or forecasts
+            ):
+                raise RuntimeError("stored directional calibration or predictions are invalid")
+            stored = model_count + predictions
+        elif process_id == 5:
+            stored = int(
+                connection.execute(
+                    """SELECT count(*) FROM deterministic_no_work AS n
+                       WHERE n.process_id=5"""
+                ).fetchone()[0]
+            )
+            if stored != 1:
+                raise RuntimeError("directional Process 05 no-work identity is missing")
+        else:
+            stored, invalid = connection.execute(
+                """SELECT count(*), count(*) FILTER (
+                         WHERE e.evaluation_count!=? OR e.correct_count<0
+                            OR e.correct_count>e.evaluation_count
+                            OR e.accuracy<0 OR e.accuracy>1)
+                   FROM directional_evaluations AS e""",
+                [series_count],
+            ).fetchone()
+            if stored != 14 or invalid:
+                raise RuntimeError("stored directional evaluations are incomplete or invalid")
+        return {
+            "output_validated": True,
+            "expected_task_count": expected,
+            "stored_task_count": int(stored),
+        }
 
     @staticmethod
     def _validate_import(connection: duckdb.DuckDBPyConnection, configuration: Any) -> None:

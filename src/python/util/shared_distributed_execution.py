@@ -17,6 +17,7 @@ import hashlib
 import json
 import os
 import platform
+import resource
 import signal
 import socket
 import subprocess
@@ -33,7 +34,7 @@ import dask
 import distributed
 from distributed import Client, Future, as_completed, get_worker
 
-from .shared_configuration import json_fingerprint
+from .shared_configuration import canonical_json, json_fingerprint
 from .p05_01_forecast_combination import combine_equal_weight, combine_m4_point
 from .shared_transformations import transform
 
@@ -275,6 +276,131 @@ def tuning_worker_preflight(
         "r_packages": r_packages,
         "memory": worker_resource_snapshot(dask_worker),
     }
+
+
+def directional_worker_preflight(
+    expected_manifest: dict[str, str],
+    classifiers_environment: str,
+    worker_script: str,
+    classifiers_lock: str,
+    dask_worker: Any = None,
+) -> dict[str, Any]:
+    """Verify synchronized source and the locked aeon runtime on one CPU worker."""
+    local_manifest = {
+        relative: hashlib.sha256((ROOT / relative).read_bytes()).hexdigest()
+        if (ROOT / relative).is_file()
+        else "missing"
+        for relative in expected_manifest
+    }
+    completed = subprocess.run(
+        [
+            str(ROOT / classifiers_environment / "bin/python"),
+            str(ROOT / worker_script),
+            "describe",
+        ],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    lock_path = ROOT / classifiers_lock
+    return {
+        **_worker_provenance(worker=dask_worker),
+        "platform": platform.system(),
+        "python_version": platform.python_version(),
+        "dask_version": dask.__version__,
+        "distributed_version": distributed.__version__,
+        "source_manifest": source_manifest_fingerprint(local_manifest),
+        "source_mismatches": sorted(
+            relative
+            for relative, digest in expected_manifest.items()
+            if local_manifest.get(relative) != digest
+        ),
+        "classifier_lock_fingerprint": (
+            hashlib.sha256(lock_path.read_bytes()).hexdigest()
+            if lock_path.is_file()
+            else "missing"
+        ),
+        "classifier_runtime": json.loads(completed.stdout),
+        "memory": worker_resource_snapshot(dask_worker),
+    }
+
+
+def validate_directional_cluster(
+    client: Client,
+    *,
+    expected_workers: int,
+    expected_mac_workers: int,
+    expected_ubuntu_workers: int,
+    timeout: float,
+    expected_manifest: dict[str, str],
+    classifiers_environment: str,
+    worker_script: str,
+    classifiers_lock: str,
+    expected_lock_fingerprint: str,
+) -> dict[str, dict[str, Any]]:
+    """Require the approved CPU topology, exact source, and locked aeon runtime."""
+    client.wait_for_workers(expected_workers, timeout=timeout)
+    reports = client.run(
+        directional_worker_preflight,
+        expected_manifest,
+        classifiers_environment,
+        worker_script,
+        classifiers_lock,
+    )
+    failures: list[str] = []
+    expected_source = source_manifest_fingerprint(expected_manifest)
+    expected_runtime = {
+        "aeon": "1.6.0",
+        "numpy": "2.0.2",
+        "numba": "0.61.2",
+        "scikit-learn": "1.7.2",
+        "numeric_dtype": "float64",
+    }
+    mac_workers = sum(report["platform"] == "Darwin" for report in reports.values())
+    ubuntu_workers = sum(report["platform"] == "Linux" for report in reports.values())
+    actual_topology = (len(reports), mac_workers, ubuntu_workers)
+    expected_topology = (
+        expected_workers,
+        expected_mac_workers,
+        expected_ubuntu_workers,
+    )
+    if actual_topology != expected_topology:
+        failures.append(
+            f"worker topology total/mac/ubuntu={actual_topology}, expected {expected_topology}"
+        )
+    for address, report in reports.items():
+        if report["source_manifest"] != expected_source or report["source_mismatches"]:
+            failures.append(
+                f"{address}: stale source files {report['source_mismatches'][:10]}"
+            )
+        if report["classifier_lock_fingerprint"] != expected_lock_fingerprint:
+            failures.append(f"{address}: classifier lock fingerprint differs")
+        runtime = report["classifier_runtime"]
+        for field, value in expected_runtime.items():
+            observed = runtime.get("runtime", {}).get(field)
+            if observed != value:
+                failures.append(
+                    f"{address}: classifier {field}={observed!r}, expected {value!r}"
+                )
+        if not report["python_version"].startswith("3.12."):
+            failures.append(
+                f"{address}: Python {report['python_version']!r} is outside >=3.12,<3.13"
+            )
+        for field in ("dask_version", "distributed_version"):
+            if report[field] != EXPECTED_DASK_VERSION:
+                failures.append(
+                    f"{address}: {field}={report[field]!r}, expected {EXPECTED_DASK_VERSION!r}"
+                )
+        resources = report["resources"]
+        if resources.get("CPU", 0) != 1:
+            failures.append(f"{address}: worker does not advertise exactly one CPU")
+        if resources.get(CHRONOS_GPU_RESOURCE, 0):
+            failures.append(f"{address}: directional CPU worker advertises a GPU slot")
+    if failures:
+        raise RuntimeError("directional DTW Dask preflight failed:\n" + "\n".join(failures))
+    return reports
 
 
 def validate_tuning_cluster(
@@ -777,6 +903,160 @@ def transform_batch(batch: list[dict[str, Any]], retry_count: int = 0) -> dict[s
         "results": results,
         "runtime_seconds": time.monotonic() - started,
         "worker": _worker_provenance(retry_count),
+    }
+
+
+def _immutable_cache_directory(dask_worker: Any = None) -> Path:
+    """Return the current worker's operational cache, or a focused local equivalent."""
+    try:
+        base = Path((dask_worker or get_worker()).local_directory)
+    except ValueError:
+        base = ROOT / ".amp/in/directional-worker-cache"
+    path = base / "immutable-reference-libraries"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def install_immutable_reference_cache(
+    fingerprint: str, payload: dict[str, Any], dask_worker: Any = None
+) -> dict[str, Any]:
+    """Install or verify one content-addressed worker-local reference library."""
+    if json_fingerprint(payload) != fingerprint:
+        raise RuntimeError("reference-library payload does not match its fingerprint")
+    destination = _immutable_cache_directory(dask_worker) / f"{fingerprint}.json"
+    encoded = canonical_json(payload)
+    if destination.exists():
+        existing = json.loads(destination.read_text(encoding="utf-8"))
+        if json_fingerprint(existing) != fingerprint or existing != payload:
+            raise RuntimeError(
+                "worker reference cache reuses a fingerprint with different content"
+            )
+    else:
+        temporary = destination.with_name(f".{destination.name}.{uuid.uuid4().hex}.tmp")
+        temporary.write_text(encoded, encoding="utf-8")
+        try:
+            os.link(temporary, destination)
+        except FileExistsError:
+            existing = json.loads(destination.read_text(encoding="utf-8"))
+            if json_fingerprint(existing) != fingerprint or existing != payload:
+                raise RuntimeError(
+                    "worker reference cache changed during concurrent installation"
+                )
+        finally:
+            temporary.unlink(missing_ok=True)
+    return {
+        "fingerprint": fingerprint,
+        "path": str(destination),
+        "worker": _worker_provenance(worker=dask_worker),
+    }
+
+
+def directional_dtw_batch(
+    batch: list[dict[str, Any]],
+    operation: str,
+    classifier_environment: str,
+    worker_script: str,
+    reference_fingerprint: str,
+    timeout: float,
+    memory_min_available_gib: dict[str, float],
+    swap_growth_limit_gib: float,
+    retry_count: int = 0,
+) -> dict[str, Any]:
+    """Run one compact directional block through the isolated locked executable."""
+    cache = _immutable_cache_directory() / f"{reference_fingerprint}.json"
+    if not cache.is_file():
+        raise RuntimeError(
+            f"directional reference cache is not installed for {reference_fingerprint}"
+        )
+    cached_payload = json.loads(cache.read_text(encoding="utf-8"))
+    if json_fingerprint(cached_payload) != reference_fingerprint:
+        raise RuntimeError("directional reference cache failed content verification")
+    numba_cache = _immutable_cache_directory().parent / "numba"
+    numba_cache.mkdir(parents=True, exist_ok=True)
+    environment = {
+        **os.environ,
+        "NUMBA_CACHE_DIR": str(numba_cache),
+        "NUMBA_NUM_THREADS": "1",
+        "OMP_NUM_THREADS": "1",
+        "OPENBLAS_NUM_THREADS": "1",
+        "MKL_NUM_THREADS": "1",
+        "VECLIB_MAXIMUM_THREADS": "1",
+        "NUMEXPR_NUM_THREADS": "1",
+    }
+    import psutil
+
+    memory_before = psutil.virtual_memory()
+    swap_before = psutil.swap_memory()
+    try:
+        dask_before = worker_resource_snapshot()
+    except ValueError:
+        dask_before = {
+            "dask_spilled_memory_bytes": 0,
+            "dask_spilled_disk_bytes": 0,
+        }
+    started = time.monotonic()
+    completed = subprocess.run(
+        [
+            str(ROOT / classifier_environment / "bin/python"),
+            str(ROOT / worker_script),
+            operation,
+            "--reference-cache",
+            str(cache),
+            "--reference-fingerprint",
+            reference_fingerprint,
+        ],
+        cwd=ROOT,
+        input=canonical_json({"jobs": batch}),
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        env=environment,
+    )
+    response = json.loads(completed.stdout)
+    if response.get("operation") != operation:
+        raise RuntimeError("directional worker returned a mismatched operation")
+    memory_after = psutil.virtual_memory()
+    swap_after = psutil.swap_memory()
+    try:
+        dask_after = worker_resource_snapshot()
+    except ValueError:
+        dask_after = {
+            "dask_spilled_memory_bytes": 0,
+            "dask_spilled_disk_bytes": 0,
+        }
+    host_kind = "mac" if platform.system() == "Darwin" else "ubuntu"
+    available_floor = float(memory_min_available_gib[host_kind]) * 1024**3
+    swap_growth = max(0, int(swap_after.used) - int(swap_before.used))
+    if min(memory_before.available, memory_after.available) < available_floor:
+        raise RuntimeError(
+            f"directional DTW {host_kind} memory safety floor was breached"
+        )
+    if swap_growth > float(swap_growth_limit_gib) * 1024**3:
+        raise RuntimeError("directional DTW swap-growth safety limit was breached")
+    child_peak = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
+    child_peak_bytes = int(child_peak if platform.system() == "Darwin" else child_peak * 1024)
+    return {
+        **response,
+        "subprocess_runtime_seconds": time.monotonic() - started,
+        "worker": _worker_provenance(retry_count),
+        "resource_usage": {
+            "hostname": socket.gethostname(),
+            "available_memory_bytes_before": int(memory_before.available),
+            "available_memory_bytes_after": int(memory_after.available),
+            "swap_used_bytes_before": int(swap_before.used),
+            "swap_used_bytes_after": int(swap_after.used),
+            "swap_growth_bytes": swap_growth,
+            "child_peak_rss_bytes": child_peak_bytes,
+            "dask_spilled_memory_bytes": max(
+                int(dask_before["dask_spilled_memory_bytes"]),
+                int(dask_after["dask_spilled_memory_bytes"]),
+            ),
+            "dask_spilled_disk_bytes": max(
+                int(dask_before["dask_spilled_disk_bytes"]),
+                int(dask_after["dask_spilled_disk_bytes"]),
+            ),
+        },
     }
 
 

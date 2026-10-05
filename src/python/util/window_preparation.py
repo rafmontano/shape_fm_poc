@@ -485,8 +485,10 @@ class WindowPreparationCoordinator:
             raise ValueError("windows database must differ from the parent database")
         self.parent = duckdb.connect(str(self.parent_path))
         self.configuration = load_database_configuration(self.parent_path, self.parent)
-        if self.configuration.version not in {5, 6, 7}:
-            raise ValueError("rolling-window preparation requires configuration version 5, 6 or 7")
+        if self.configuration.version not in {5, 6, 7, 10}:
+            raise ValueError(
+                "rolling-window preparation requires configuration version 5, 6, 7 or 10"
+            )
         self.definition = self.configuration.resolved["pipeline"]["window_preparation"]
         self.preparation_id = "window-preparation/" + json_fingerprint(
             {

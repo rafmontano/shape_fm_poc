@@ -1,9 +1,10 @@
 [project]
 name = "shapefm-conventional-classifiers-environment"
 version = "0.1.0"
-description = "Conventional sktime classifiers including Rotation Forest, ROCKET, and distance methods."
+description = "Conventional classifiers including direct aeon distance methods and existing sktime models."
 requires-python = ">=3.12,<3.13"
 dependencies = [
+  "aeon==1.6.0",
   "joblib==1.5.2",
   "numba==0.61.2",
   "numpy==2.0.2",

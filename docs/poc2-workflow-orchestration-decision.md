@@ -206,6 +206,9 @@ Preserve and route these existing capabilities through the new orchestration:
 - Optional seasonal-period tuning and its model execution paths.
 - Optional rolling-window preparation and persisted S1 membership, outside
   the compulsory six-gate sequence.
+- The approved ID 021 directional branch: bounded preparation in Process 03,
+  direct-aeon calibration/prediction blocks in Process 04, deterministic
+  Process 05 no-work, and shared directional evaluation in Process 06.
 - Stored forecast/reference retrieval, status, planning, existing tests and
   interactive QA. Read-only utilities can remain direct utilities.
 

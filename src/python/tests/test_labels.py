@@ -19,7 +19,7 @@ from pathlib import Path
 
 import numpy as np
 
-from util.shared_labels import directional_labels
+from util.shared_labels import directional_accuracy, directional_labels
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -91,6 +91,17 @@ class DirectionalLabelTests(unittest.TestCase):
         for values, reference, expected in cases:
             with self.subTest(values=values):
                 self.assertEqual(directional_labels(values, reference).tolist(), expected)
+
+    def test_shared_directional_accuracy_counts_asymmetric_binary_vectors(self) -> None:
+        """Process 06 receives independent counts rather than a DTW-owned evaluator."""
+        self.assertEqual(
+            directional_accuracy([1, 0, 1, 1], [1, 1, 1, 0]),
+            {"correct_count": 2, "evaluation_count": 4, "accuracy": 0.5},
+        )
+        with self.assertRaises(ValueError):
+            directional_accuracy([1, 0], [1])
+        with self.assertRaises(ValueError):
+            directional_accuracy([2], [1])
 
     def test_matrix_uses_row_specific_references_and_preserves_missing_targets(self) -> None:
         """Rows never share references and unavailable future values remain unavailable."""

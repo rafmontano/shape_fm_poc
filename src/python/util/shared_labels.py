@@ -59,3 +59,27 @@ def directional_labels(values: Any, references: Any) -> np.ndarray:
     labels = compared.astype(np.float64)
     labels[np.isnan(future)] = np.nan
     return labels
+
+
+def directional_accuracy(
+    predictions: Any, actual_labels: Any
+) -> dict[str, float | int]:
+    """Return strict binary directional accuracy for one complete horizon."""
+    predicted = np.asarray(predictions)
+    actual = np.asarray(actual_labels)
+    if (
+        predicted.ndim != 1
+        or actual.ndim != 1
+        or predicted.size == 0
+        or predicted.shape != actual.shape
+        or not np.isin(predicted, (0, 1)).all()
+        or not np.isin(actual, (0, 1)).all()
+    ):
+        raise ValueError("directional evaluation requires equal nonempty binary vectors")
+    correct = int(np.equal(predicted, actual).sum())
+    count = int(predicted.size)
+    return {
+        "correct_count": correct,
+        "evaluation_count": count,
+        "accuracy": correct / count,
+    }

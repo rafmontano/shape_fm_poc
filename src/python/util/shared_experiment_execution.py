@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import math
 import os
 import platform
@@ -48,6 +49,50 @@ from .shared_provenance import utc_now
 # existing ``stage`` fields remain unchanged for database and JSON compatibility.
 PROCESSES = {2: "preprocess", 3: "transform", 4: "forecast", 5: "combine", 6: "evaluate"}
 
+# Code constant: complete scientific columns compared by the directional
+# insert-or-verify boundary. ``created_at`` is deliberately operational only.
+DIRECTIONAL_RECORD_COLUMNS = {
+    "directional_evaluation_inputs": (
+        "evaluation_input_id", "experiment_id", "variant_id", "forecast_instance_id",
+        "preparation_id", "preparation_fingerprint", "raw_input_hash",
+        "cleaned_input_hash", "transformed_input_hash", "transformed_input",
+        "label_reference", "preprocessing_provenance", "package_versions", "content_hash",
+    ),
+    "directional_actual_labels": (
+        "actual_label_id", "experiment_id", "evaluation_input_id", "definition_id",
+        "labels", "content_hash",
+    ),
+    "directional_model_definitions": (
+        "model_definition_id", "experiment_id", "variant_id", "scientific_definition",
+        "repository_revision", "scientific_source_fingerprint", "worker_file_fingerprint",
+        "classifier_lock_fingerprint", "runtime_versions", "numeric_dtype",
+        "reference_library_fingerprint", "preparation_fingerprint",
+        "implementation_fingerprint", "content_hash",
+    ),
+    "directional_calibration_scores": (
+        "calibration_score_id", "model_definition_id", "effective_width",
+        "representative_proportion", "horizon", "correct_count", "evaluation_count",
+        "accuracy", "candidate_policy", "content_hash",
+    ),
+    "directional_selected_widths": (
+        "selected_width_id", "model_definition_id", "horizon", "effective_width",
+        "representative_proportion", "calibration_accuracy", "tie_rule", "content_hash",
+    ),
+    "directional_predictions": (
+        "prediction_id", "experiment_id", "model_definition_id", "evaluation_input_id",
+        "horizon", "prediction", "nearest_reference_identity", "nearest_distance",
+        "effective_width", "execution_metadata", "content_hash",
+    ),
+    "directional_evaluations": (
+        "directional_evaluation_id", "experiment_id", "model_definition_id", "horizon",
+        "correct_count", "evaluation_count", "accuracy", "prediction_fingerprint",
+        "content_hash",
+    ),
+    "deterministic_no_work": (
+        "no_work_id", "experiment_id", "process_id", "reason", "content_hash",
+    ),
+}
+
 
 def expected_task_counts(
     instance_count: int, workflow: dict[str, Any]
@@ -60,6 +105,15 @@ def expected_task_counts(
     """
     if instance_count < 0:
         raise ValueError("instance count cannot be negative")
+    if set(workflow["models"]) == {"directional_dtw"}:
+        horizons = workflow["models"]["directional_dtw"]["labels"]["horizons"]
+        return {
+            2: instance_count,
+            3: instance_count,
+            4: 1 + instance_count * len(horizons),
+            5: 1,
+            6: len(horizons),
+        }
     cleaning_count = len(workflow["cleaning"])
     variant_count = cleaning_count * len(workflow["transformations"])
     model_count = len(workflow["models"])
@@ -374,7 +428,11 @@ class ExperimentCoordinator:
             transformation_workers=int(workers["3"]),
             autoarima_workers=int(workers["4"]),
             chronos_processes=1,
-            chronos_inference_batch_size=int(values["batch_sizes"]["chronos"]),
+            chronos_inference_batch_size=int(
+                values["batch_sizes"].get(
+                    "chronos", values["batch_sizes"].get("directional_prediction", 1)
+                )
+            ),
             combination_workers=int(workers["5"]),
             evaluation_workers=int(workers["6"]),
             cpu_gpu_overlap=bool(values["cpu_gpu_overlap"]),
@@ -473,18 +531,26 @@ class ExperimentCoordinator:
                 f"{len(instances)} instances and {len(set(series_ids))} distinct series"
             )
         if dry_run:
+            task_counts = expected_task_counts(len(instances), self.config)
+            directional = self.configuration.version == 10
             return {
                 "scope": requested_scope,
                 "mode": "dry-run",
                 "selection": self.configuration.resolved["data"]["selection"],
                 "series_count": len(set(series_ids)),
                 "forecast_instances": len(instances),
-                "candidate_forecast_rows": expected_task_counts(len(instances), self.config)[5],
-                "official_evaluation_rows": expected_task_counts(len(instances), self.config)[6],
+                "candidate_forecast_rows": 0 if directional else task_counts[5],
+                "directional_calibration_identities": 1 if directional else 0,
+                "directional_prediction_identities": (
+                    len(instances) * 14 if directional else 0
+                ),
+                "process_05_no_work_identities": 1 if directional else 0,
+                "directional_evaluation_identities": 14 if directional else 0,
+                "official_evaluation_rows": 0 if directional else task_counts[6],
                 "benchmark_configuration": official["configuration_name"],
                 "task_counts": {
                     str(process): count
-                    for process, count in expected_task_counts(len(instances), self.config).items()
+                    for process, count in task_counts.items()
                 },
                 "resource_note": "planning only; no experiment rows were materialised",
             }
@@ -628,6 +694,18 @@ class ExperimentCoordinator:
                                 experiment_id, 3, instance_id, variant_id, None
                             )
                         )
+                        if self.configuration.version == 10:
+                            for horizon in range(1, 15):
+                                task_rows.append(
+                                    self._task_row(
+                                        experiment_id,
+                                        4,
+                                        instance_id,
+                                        variant_id,
+                                        f"directional_dtw:h{horizon:02d}",
+                                    )
+                                )
+                            continue
                         for model in self.config["models"]:
                             task_rows.append(
                                 self._task_row(
@@ -666,7 +744,39 @@ class ExperimentCoordinator:
         self.connection.execute("BEGIN TRANSACTION")
         try:
             evaluation_tasks = []
+            if self.configuration.version == 10:
+                variant_id = variants[0][0]
+                evaluation_tasks.extend(
+                    [
+                        self._task_row(
+                            experiment_id,
+                            4,
+                            None,
+                            variant_id,
+                            "directional_dtw:calibration",
+                        ),
+                        self._task_row(
+                            experiment_id,
+                            5,
+                            None,
+                            variant_id,
+                            "directional_dtw:no_work",
+                        ),
+                    ]
+                )
+                evaluation_tasks.extend(
+                    self._task_row(
+                        experiment_id,
+                        6,
+                        None,
+                        variant_id,
+                        f"directional_dtw:h{horizon:02d}",
+                    )
+                    for horizon in range(1, 15)
+                )
             for variant_id, _, _ in variants:
+                if self.configuration.version == 10:
+                    continue
                 for candidate in (
                     *self.config["models"].keys(), self.config["combination"]["method"]
                 ):
@@ -1053,6 +1163,56 @@ class ExperimentCoordinator:
             self.connection.execute("ROLLBACK")
             raise
 
+    def _insert_or_verify(self, table: str, record: dict[str, Any]) -> None:
+        """Insert a directional scientific record or reject any stored conflict."""
+        columns = DIRECTIONAL_RECORD_COLUMNS.get(table)
+        if columns is None or set(record) != set(columns):
+            raise ValueError(f"invalid insert-or-verify contract for {table}")
+        identity = record[columns[0]]
+        stored = self.connection.execute(
+            f"SELECT {', '.join(f'r.{column}' for column in columns)} "
+            f"FROM {table} AS r WHERE r.{columns[0]}=?",
+            [identity],
+        ).fetchone()
+        expected = tuple(record[column] for column in columns)
+        if stored is None:
+            placeholders = ", ".join("?" for _ in columns)
+            self.connection.execute(
+                f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({placeholders})",
+                expected,
+            )
+            return
+        normalized_stored = tuple(
+            json.loads(value)
+            if isinstance(value, str)
+            and (
+                column.endswith("provenance")
+                or column in {
+                    "scientific_definition", "runtime_versions", "candidate_policy",
+                    "execution_metadata", "package_versions",
+                }
+            )
+            else value
+            for column, value in zip(columns, stored, strict=True)
+        )
+        normalized_expected = tuple(
+            json.loads(value)
+            if isinstance(value, str)
+            and (
+                column.endswith("provenance")
+                or column in {
+                    "scientific_definition", "runtime_versions", "candidate_policy",
+                    "execution_metadata", "package_versions",
+                }
+            )
+            else value
+            for column, value in zip(columns, expected, strict=True)
+        )
+        if normalized_stored != normalized_expected:
+            raise RuntimeError(
+                f"conflicting accepted {table} record for identity {identity}"
+            )
+
     def _fail_task(self, task_id: str, attempt: int, error: str) -> None:
         """Purpose: Persist terminal failure state for one task attempt.
 
@@ -1202,6 +1362,7 @@ class ExperimentCoordinator:
 
             from .shared_distributed_execution import (
                 repository_source_manifest,
+                validate_directional_cluster,
                 validate_cluster,
                 validate_tuning_cluster,
             )
@@ -1219,7 +1380,27 @@ class ExperimentCoordinator:
                                      timeout=f"{settings.dask_timeout_seconds}s")
             expected_gpu_name = None
             try:
-                if ("chronos_2" not in self.config["models"] or
+                if self.configuration.version == 10:
+                    mac_workers = int(profile.dask_mac_cpu_workers or 0)
+                    ubuntu_workers = int(profile.dask_ubuntu_cpu_workers or 0)
+                    paths = self.configuration.execution_paths
+                    lock_path = self.root / paths["classifiers_lock"]
+                    cluster = validate_directional_cluster(
+                        dask_client,
+                        expected_workers=mac_workers + ubuntu_workers,
+                        expected_mac_workers=mac_workers,
+                        expected_ubuntu_workers=ubuntu_workers,
+                        timeout=settings.dask_timeout_seconds,
+                        expected_manifest=repository_source_manifest(),
+                        classifiers_environment=paths["classifiers_environment"],
+                        worker_script=paths["directional_dtw_worker"],
+                        classifiers_lock=paths["classifiers_lock"],
+                        expected_lock_fingerprint=hashlib.sha256(
+                            lock_path.read_bytes()
+                        ).hexdigest(),
+                    )
+                    resolved_device = "cpu"
+                elif ("chronos_2" not in self.config["models"] or
                         process == 4 and self.configuration.seasonal_period_tuning is not None):
                     mac_workers = int(profile.dask_mac_cpu_workers or 0)
                     ubuntu_workers = int(profile.dask_ubuntu_cpu_workers or 0)
@@ -1299,9 +1480,13 @@ class ExperimentCoordinator:
             {
                 2: preprocess_batch_size,
                 3: int(configured_batches["transform"]),
-                4: int(configured_batches["chronos"]),
-                5: int(configured_batches["combine"]),
-                6: int(configured_batches["gift_eval"]),
+                4: int(
+                    configured_batches.get(
+                        "chronos", configured_batches.get("directional_prediction", 1)
+                    )
+                ),
+                5: int(configured_batches.get("combine", 1)),
+                6: int(configured_batches.get("gift_eval", 1)),
             }[process],
             profile,
             invocation_overrides,
@@ -1331,6 +1516,7 @@ class ExperimentCoordinator:
                     profile.transformation_workers,
                     dask_client,
                     settings,
+                    profile,
                 )
             elif process == 4:
                 self._run_04_forecast(
@@ -1580,6 +1766,7 @@ class ExperimentCoordinator:
         workers: int,
         dask_client: Any = None,
         settings: ExecutionSettings | None = None,
+        profile: ExecutionProfile | None = None,
     ) -> None:
         """Purpose: Execute Process 03 transformations of cleaned training contexts.
 
@@ -1588,6 +1775,19 @@ class ExperimentCoordinator:
         Outputs: None; computes transformed vectors locally or on Dask and atomically
         persists values, parameters, lineage, fingerprints, and task completions.
         """
+        if self.configuration.version == 10:
+            if not rows:
+                return
+            self._run_03_directional_preparation(
+                experiment_id,
+                rows,
+                attempts,
+                workers,
+                dask_client,
+                settings,
+                profile,
+            )
+            return
         prepared = []
         metadata = []
         for task_id, instance_id, variant_id, _ in rows:
@@ -1689,6 +1889,224 @@ class ExperimentCoordinator:
         if errors:
             raise RuntimeError("; ".join(errors))
 
+    def _run_03_directional_preparation(
+        self,
+        experiment_id: str,
+        rows: list[tuple],
+        attempts: dict[str, int],
+        workers: int,
+        dask_client: Any,
+        settings: ExecutionSettings | None,
+        profile: ExecutionProfile | None,
+    ) -> None:
+        """Prepare S1 references and bounded official inputs through one worker path."""
+        from .shared_distributed_execution import (
+            repository_source_manifest,
+            source_manifest_fingerprint,
+        )
+        from .shared_labels import (
+            DIRECTIONAL_LABEL_DEFINITION_ID,
+            directional_labels,
+        )
+        from .window_preparation import WindowPreparationCoordinator
+
+        manifest_hash = source_manifest_fingerprint(repository_source_manifest())
+        windows_database = self.database_path.with_name(
+            f"{self.database_path.stem}.windows.duckdb"
+        )
+        with WindowPreparationCoordinator(
+            self.database_path, windows_database
+        ) as preparation:
+            preparation_summary = preparation.run(
+                dask_client=dask_client,
+                source_manifest_hash=manifest_hash,
+                local_limits=(
+                    {"max_series": 100, "max_windows": 200}
+                    if dask_client is None
+                    else None
+                ),
+                execution_profile=(profile.name if dask_client is not None else None),
+                dask_retries=(settings.dask_retries if settings else 0),
+                prefect_compute=dask_client is not None,
+                max_in_flight=(settings.dask_max_in_flight if settings else workers),
+            )
+        contract = {
+            "preprocessing_mode": "robust",
+            "transformation": "standardise_sample_v1",
+            "input_length": 64,
+            "boundary": "final raw observations before official forecast origin",
+            "worker": self.configuration.execution_paths["r_preprocess_worker"],
+            "reference_preparation_id": preparation_summary["preparation_id"],
+            "reference_membership_fingerprint": preparation_summary[
+                "membership_fingerprint"
+            ],
+        }
+        preparation_id = (
+            "directional-official-preparation/"
+            + json_fingerprint(contract)[:32]
+        )
+        preparation_fingerprint = json_fingerprint(contract)
+        jobs = []
+        metadata = {}
+        for task_id, instance_id, variant_id, _ in rows:
+            context, actual, frequency, benchmark_metadata = self.connection.execute(
+                """SELECT i.context_target, i.actual_target, b.frequency, b.metadata
+                   FROM forecast_instances AS i
+                   JOIN benchmark_configurations AS b
+                     ON b.benchmark_configuration_id=i.benchmark_configuration_id
+                   WHERE i.forecast_instance_id=?""",
+                [instance_id],
+            ).fetchone()
+            raw = list(context[-64:])
+            if len(raw) != 64:
+                raise RuntimeError("directional official input requires 64 raw observations")
+            seasonality_metadata = json.loads(benchmark_metadata)
+            seasonality = seasonality_metadata.get(
+                "r_period", seasonality_metadata.get("official_seasonality")
+            )
+            input_id = "directional-input/" + json_fingerprint(
+                {
+                    "experiment": experiment_id,
+                    "variant": variant_id,
+                    "instance": instance_id,
+                    "preparation": preparation_id,
+                }
+            )[:32]
+            jobs.append(
+                {
+                    "id": task_id,
+                    "series_key": task_id,
+                    "preprocessing_mode": "robust",
+                    "transformation": "standardise_sample_v1",
+                    "seasonality": seasonality,
+                    "windows": [
+                        {
+                            "window_id": input_id,
+                            "input_start": len(context) - 64,
+                            "input_end": len(context),
+                            "future_start": len(context),
+                            "future_end": len(context) + 14,
+                            "input": raw,
+                        }
+                    ],
+                }
+            )
+            metadata[task_id] = {
+                "instance_id": instance_id,
+                "variant_id": variant_id,
+                "input_id": input_id,
+                "raw": raw,
+                "actual": actual,
+                "frequency": frequency,
+            }
+
+        from .shared_workflow_orchestration import run_gate_compute_flow
+
+        batches = _batches(
+            jobs, int(self.configuration.execution["batch_sizes"]["window_preparation"])
+        )
+        outcomes = run_gate_compute_flow(
+            process_id=3,
+            batches=batches,
+            options={
+                "bounded_preparation": True,
+                "script": self.configuration.execution_paths["r_preprocess_worker"],
+                "timeout": float(
+                    self.configuration.execution["worker_timeouts_seconds"]["r"]
+                ),
+                "threads": int(self.configuration.execution["thread_limits"]["r"]),
+            },
+            scheduler_address=(dask_client.scheduler.address if dask_client else None),
+            retries=settings.dask_retries if settings else 0,
+            max_in_flight=settings.dask_max_in_flight if settings else workers,
+            local_workers=workers,
+        )
+        errors = []
+        for outcome in outcomes:
+            if "response" not in outcome:
+                errors.append(outcome["error"])
+                continue
+            batch = outcome["batch"]
+            response = outcome["response"]
+            by_id = {result["id"]: result for result in response["results"]}
+            if set(by_id) != {job["id"] for job in batch}:
+                raise RuntimeError("directional preparation returned mismatched task IDs")
+            for job in batch:
+                task_id = job["id"]
+                details = metadata[task_id]
+                windows = by_id[task_id].get("windows")
+                if not isinstance(windows, list) or len(windows) != 1:
+                    raise RuntimeError("directional preparation returned an invalid window")
+                result = windows[0]
+                labels_array = directional_labels(
+                    details["actual"], result["prepared_reference"]
+                )
+                if len(labels_array) != 14 or any(math.isnan(value) for value in labels_array):
+                    raise RuntimeError("official directional labels must be complete")
+                labels = [int(value) for value in labels_array]
+                input_content = {
+                    "experiment_id": experiment_id,
+                    "variant_id": details["variant_id"],
+                    "forecast_instance_id": details["instance_id"],
+                    "preparation_id": preparation_id,
+                    "preparation_fingerprint": preparation_fingerprint,
+                    "raw_input_hash": result["input_hash"],
+                    "cleaned_input_hash": result["cleaned_hash"],
+                    "transformed_input_hash": result["transformed_hash"],
+                    "transformed_input": result["transformed_input"],
+                    "label_reference": result["prepared_reference"],
+                    "preprocessing_provenance": canonical_json(
+                        {
+                            **result["preprocessing"],
+                            "frequency": details["frequency"],
+                            "raw_boundary": [result["input_start"], result["input_end"]],
+                            "source_manifest_fingerprint": manifest_hash,
+                        }
+                    ),
+                    "package_versions": canonical_json(response["packages"]),
+                }
+                input_record = {
+                    "evaluation_input_id": details["input_id"],
+                    **input_content,
+                    "content_hash": json_fingerprint(input_content),
+                }
+                label_id = "directional-actual/" + json_fingerprint(
+                    {
+                        "input": details["input_id"],
+                        "definition": DIRECTIONAL_LABEL_DEFINITION_ID,
+                    }
+                )[:32]
+                label_content = {
+                    "experiment_id": experiment_id,
+                    "evaluation_input_id": details["input_id"],
+                    "definition_id": DIRECTIONAL_LABEL_DEFINITION_ID,
+                    "labels": labels,
+                }
+                label_record = {
+                    "actual_label_id": label_id,
+                    **label_content,
+                    "content_hash": json_fingerprint(label_content),
+                }
+
+                def insert(
+                    input_record=input_record,
+                    label_record=label_record,
+                ) -> None:
+                    self._insert_or_verify(
+                        "directional_evaluation_inputs", input_record
+                    )
+                    self._insert_or_verify("directional_actual_labels", label_record)
+
+                self._commit_task(
+                    task_id,
+                    attempts[task_id],
+                    response["runtime_seconds"] / len(batch),
+                    insert,
+                    response.get("worker"),
+                )
+        if errors:
+            raise RuntimeError("; ".join(errors))
+
     def _run_04_forecast(
         self,
         experiment_id: str,
@@ -1708,6 +2126,13 @@ class ExperimentCoordinator:
         Chronos OOM batches, inverse-transforms outputs, and transactionally persists
         original-scale forecast arrays, provenance, hashes, and task state.
         """
+        if self.configuration.version == 10:
+            if not rows:
+                return
+            self._run_04_directional_dtw(
+                experiment_id, rows, attempts, profile, dask_client, settings
+            )
+            return
         if self.configuration.seasonal_period_tuning is not None:
             from .p04_04_seasonal_period_tuning import (
                 run_distributed_tuned_forecasts,
@@ -1792,6 +2217,612 @@ class ExperimentCoordinator:
             retries=settings.dask_retries if settings is not None else int(execution["dask_retries"]),
         )
 
+    def _directional_reference_library(
+        self,
+    ) -> tuple[dict[str, Any], str, dict[str, Any]]:
+        """Load the complete accepted S1 training library from the linked child."""
+        run = self.connection.execute(
+            """SELECT r.preparation_id, r.child_database, r.definition_hash,
+                      r.membership_fingerprint
+               FROM window_preparation_runs AS r
+               WHERE r.status='completed'
+               ORDER BY r.completed_at DESC LIMIT 1"""
+        ).fetchone()
+        if run is None:
+            raise RuntimeError("directional DTW requires completed window preparation")
+        child_path = (self.database_path.parent / run[1]).resolve()
+        series_identities = {
+            int(row[0]): f"{row[1]}/{row[2]}"
+            for row in self.connection.execute(
+                """SELECT sl.series_key, dl.dataset_id, sl.series_id
+                   FROM series_lookup AS sl
+                   JOIN dataset_lookup AS dl ON dl.dataset_key=sl.dataset_key"""
+            ).fetchall()
+        }
+        child = duckdb.connect(str(child_path), read_only=True)
+        try:
+            rows = child.execute(
+                """SELECT w.window_id, w.series_key, w.transformed_input, l.labels,
+                          w.transformed_hash
+                   FROM prepared_windows AS w
+                   JOIN series_membership AS m
+                     ON m.preparation_id=w.preparation_id
+                    AND m.series_key=w.series_key
+                   JOIN window_directional_labels AS l ON l.window_id=w.window_id
+                   WHERE w.preparation_id=? AND m.split_id='S1'
+                     AND m.partition='train'
+                   ORDER BY w.window_id""",
+                [run[0]],
+            ).fetchall()
+            metadata = child.execute(
+                """SELECT p.parent_scientific_hash, p.parent_configuration_hash,
+                          p.definition_hash, p.source_manifest_hash
+                   FROM preparation_metadata AS p WHERE p.preparation_id=?""",
+                [run[0]],
+            ).fetchone()
+        finally:
+            child.close()
+        references = []
+        for window_id, series_key, values, labels, transformed_hash in rows:
+            if series_key not in series_identities:
+                raise RuntimeError("directional reference has missing stable series identity")
+            if (
+                len(values) != 64
+                or len(labels) != 14
+                or any(value is None for value in labels)
+                or json_fingerprint(values) != transformed_hash
+            ):
+                raise RuntimeError("directional reference library failed value validation")
+            references.append(
+                {
+                    "identity": window_id,
+                    "source_series_identity": series_identities[series_key],
+                    "values": list(values),
+                    "labels": [int(value) for value in labels],
+                }
+            )
+        if not references:
+            raise RuntimeError("directional S1 training reference library is empty")
+        payload = {"references": references}
+        fingerprint = json_fingerprint(payload)
+        preparation = {
+            "preparation_id": run[0],
+            "definition_hash": run[2],
+            "membership_fingerprint": run[3],
+            "parent_scientific_hash": metadata[0],
+            "parent_configuration_hash": metadata[1],
+            "child_definition_hash": metadata[2],
+            "source_manifest_hash": metadata[3],
+            "reference_count": len(references),
+        }
+        return payload, fingerprint, preparation
+
+    def _directional_implementation(
+        self,
+        reference_fingerprint: str,
+        reference_preparation: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Build the calculation-only implementation and accepted-input fingerprint."""
+        paths = self.configuration.execution_paths
+        worker_path = self.root / paths["directional_dtw_worker"]
+        lock_path = self.root / paths["classifiers_lock"]
+        source_paths = [
+            worker_path,
+            Path(__file__).resolve(),
+            self.root / "src/python/util/shared_transformations.py",
+            self.root / "src/python/util/shared_labels.py",
+            self.root / "src/python/util/window_preparation.py",
+        ]
+        source_hashes = {
+            str(path.relative_to(self.root)): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in source_paths
+        }
+        completed = subprocess.run(
+            [
+                str(self.root / paths["classifiers_environment"] / "bin/python"),
+                str(worker_path),
+                "describe",
+            ],
+            cwd=self.root,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        description = json.loads(completed.stdout)
+        expected_runtime = {
+            "aeon": "1.6.0",
+            "numpy": "2.0.2",
+            "numba": "0.61.2",
+            "scikit-learn": "1.7.2",
+        }
+        if any(description["runtime"].get(key) != value for key, value in expected_runtime.items()):
+            raise RuntimeError("classifier runtime does not match the locked DTW contract")
+        runtime_versions = {
+            package: description["runtime"][package]
+            for package in expected_runtime
+        }
+        revision = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=self.root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        official_rows = self.connection.execute(
+            """SELECT i.evaluation_input_id, i.content_hash
+               FROM directional_evaluation_inputs AS i
+               ORDER BY i.evaluation_input_id"""
+        ).fetchall()
+        preparation_fingerprint = json_fingerprint(
+            {
+                "reference_preparation": reference_preparation,
+                "official_inputs": [list(row) for row in official_rows],
+            }
+        )
+        implementation = {
+            "repository_revision": revision,
+            "scientific_source_fingerprint": json_fingerprint(source_hashes),
+            "scientific_source_files": source_hashes,
+            "worker_file_fingerprint": source_hashes[
+                paths["directional_dtw_worker"]
+            ],
+            "classifier_lock_fingerprint": hashlib.sha256(lock_path.read_bytes()).hexdigest(),
+            "runtime_versions": runtime_versions,
+            "numeric_dtype": "float64",
+            "reference_library_fingerprint": reference_fingerprint,
+            "preparation_fingerprint": preparation_fingerprint,
+        }
+        implementation["implementation_fingerprint"] = json_fingerprint(implementation)
+        return implementation
+
+    def _run_directional_blocks(
+        self,
+        operation: str,
+        batches: list[list[dict[str, Any]]],
+        reference_fingerprint: str,
+        workers: int,
+        dask_client: Any,
+        settings: ExecutionSettings | None,
+        profile: ExecutionProfile,
+    ) -> list[tuple[list[dict[str, Any]], dict[str, Any]]]:
+        """Execute validated calibration or prediction blocks under Prefect/Dask."""
+        from .shared_workflow_orchestration import run_gate_compute_flow
+
+        execution = self.configuration.execution
+        paths = self.configuration.execution_paths
+        outcomes = run_gate_compute_flow(
+            process_id=4,
+            batches=batches,
+            options={
+                "operation": operation,
+                "classifier_environment": paths["classifiers_environment"],
+                "worker_script": paths["directional_dtw_worker"],
+                "reference_fingerprint": reference_fingerprint,
+                "timeout": float(
+                    execution["worker_timeouts_seconds"]["directional_dtw"]
+                ),
+                "memory_min_available_gib": {
+                    "mac": float(
+                        profile.dask_mac_memory_min_available_gib
+                        or profile.system_memory_min_available_gib
+                    ),
+                    "ubuntu": float(
+                        profile.dask_ubuntu_memory_min_available_gib
+                        or profile.system_memory_min_available_gib
+                    ),
+                },
+                "swap_growth_limit_gib": float(
+                    profile.dask_swap_growth_limit_gib or 0.25
+                ),
+            },
+            scheduler_address=(dask_client.scheduler.address if dask_client else None),
+            retries=settings.dask_retries if settings else 0,
+            max_in_flight=settings.dask_max_in_flight if settings else workers,
+            local_workers=workers,
+        )
+        completed = []
+        for outcome in outcomes:
+            if "response" not in outcome:
+                raise RuntimeError(outcome["error"])
+            response = outcome["response"]
+            runtime = response.get("runtime", {})
+            for package, version in {
+                "aeon": "1.6.0",
+                "numpy": "2.0.2",
+                "numba": "0.61.2",
+                "scikit-learn": "1.7.2",
+            }.items():
+                if runtime.get(package) != version:
+                    raise RuntimeError("DTW block runtime differs from the locked environment")
+            if runtime.get("numeric_dtype") != "float64" or runtime.get("numba_threads") != 1:
+                raise RuntimeError("DTW block violated numeric dtype or thread controls")
+            completed.append((outcome["batch"], response))
+        return completed
+
+    def _run_04_directional_dtw(
+        self,
+        experiment_id: str,
+        rows: list[tuple],
+        attempts: dict[str, int],
+        profile: ExecutionProfile,
+        dask_client: Any,
+        settings: ExecutionSettings | None,
+    ) -> None:
+        """Calibrate per-horizon widths and predict every pending official identity."""
+        from .shared_distributed_execution import install_immutable_reference_cache
+
+        payload, reference_fingerprint, reference_preparation = (
+            self._directional_reference_library()
+        )
+        if dask_client is None:
+            cache_reports = {
+                "local": install_immutable_reference_cache(
+                    reference_fingerprint, payload
+                )
+            }
+        else:
+            cache_reports = dask_client.run(
+                install_immutable_reference_cache,
+                reference_fingerprint,
+                payload,
+            )
+        if any(
+            report.get("fingerprint") != reference_fingerprint
+            for report in cache_reports.values()
+        ):
+            raise RuntimeError("not every worker accepted the reference library fingerprint")
+        implementation = self._directional_implementation(
+            reference_fingerprint, reference_preparation
+        )
+        variant_id = next(row[2] for row in rows if row[2] is not None)
+        model_science = self.config["models"]["directional_dtw"]
+        model_identity = {
+            "experiment": experiment_id,
+            "variant": variant_id,
+            "definition": model_science,
+            "implementation": implementation["implementation_fingerprint"],
+        }
+        model_id = "directional-model/" + json_fingerprint(model_identity)[:32]
+        model_content = {
+            "experiment_id": experiment_id,
+            "variant_id": variant_id,
+            "scientific_definition": canonical_json(model_science),
+            "repository_revision": implementation["repository_revision"],
+            "scientific_source_fingerprint": implementation[
+                "scientific_source_fingerprint"
+            ],
+            "worker_file_fingerprint": implementation["worker_file_fingerprint"],
+            "classifier_lock_fingerprint": implementation[
+                "classifier_lock_fingerprint"
+            ],
+            "runtime_versions": canonical_json(implementation["runtime_versions"]),
+            "numeric_dtype": "float64",
+            "reference_library_fingerprint": reference_fingerprint,
+            "preparation_fingerprint": implementation["preparation_fingerprint"],
+            "implementation_fingerprint": implementation[
+                "implementation_fingerprint"
+            ],
+        }
+        model_record = {
+            "model_definition_id": model_id,
+            **model_content,
+            "content_hash": json_fingerprint(model_content),
+        }
+        calibration_row = next(
+            (row for row in rows if row[3] == "directional_dtw:calibration"), None
+        )
+        proportions = model_science["constraint"]["candidate_proportions"]
+        width_proportions = {}
+        for proportion in proportions:
+            width_proportions.setdefault(int(proportion * 64), proportion)
+        if set(width_proportions) != set(range(64)):
+            raise RuntimeError("configured candidates do not cover all 64 effective widths")
+        if calibration_row is not None:
+            query_ids = [reference["identity"] for reference in payload["references"]]
+            block_size = int(
+                self.configuration.execution["batch_sizes"]["directional_calibration"]
+            )
+            blocks = [
+                {
+                    "id": f"calibration/w{width:02d}/q{offset:04d}",
+                    "effective_width": width,
+                    "query_identities": query_ids[offset : offset + block_size],
+                }
+                for width in range(64)
+                for offset in range(0, len(query_ids), block_size)
+            ]
+            responses = self._run_directional_blocks(
+                "calibration",
+                [[block] for block in blocks],
+                reference_fingerprint,
+                max(profile.autoarima_workers, 1),
+                dask_client,
+                settings,
+                profile,
+            )
+            totals = {
+                width: {horizon: [0, 0] for horizon in range(1, 15)}
+                for width in range(64)
+            }
+            workers_used: dict[str, int] = {}
+            resource_evidence: dict[str, dict[str, int]] = {}
+            runtime = 0.0
+            for _, response in responses:
+                runtime += float(response["runtime_seconds"])
+                hostname = response["worker"]["hostname"]
+                workers_used[hostname] = workers_used.get(hostname, 0) + len(
+                    response["results"]
+                )
+                usage = response["resource_usage"]
+                host_evidence = resource_evidence.setdefault(
+                    hostname,
+                    {
+                        "minimum_available_memory_bytes": min(
+                            usage["available_memory_bytes_before"],
+                            usage["available_memory_bytes_after"],
+                        ),
+                        "peak_child_rss_bytes": 0,
+                        "maximum_swap_growth_bytes": 0,
+                        "peak_dask_spilled_memory_bytes": 0,
+                        "peak_dask_spilled_disk_bytes": 0,
+                    },
+                )
+                host_evidence["minimum_available_memory_bytes"] = min(
+                    host_evidence["minimum_available_memory_bytes"],
+                    usage["available_memory_bytes_before"],
+                    usage["available_memory_bytes_after"],
+                )
+                for target, source in (
+                    ("peak_child_rss_bytes", "child_peak_rss_bytes"),
+                    ("maximum_swap_growth_bytes", "swap_growth_bytes"),
+                    ("peak_dask_spilled_memory_bytes", "dask_spilled_memory_bytes"),
+                    ("peak_dask_spilled_disk_bytes", "dask_spilled_disk_bytes"),
+                ):
+                    host_evidence[target] = max(
+                        host_evidence[target], int(usage[source])
+                    )
+                for result in response["results"]:
+                    width = int(result["effective_width"])
+                    for horizon, (correct, evaluated) in enumerate(
+                        zip(result["correct"], result["evaluated"], strict=True), 1
+                    ):
+                        totals[width][horizon][0] += int(correct)
+                        totals[width][horizon][1] += int(evaluated)
+            if any(
+                totals[width][horizon][1] != len(query_ids)
+                for width in range(64)
+                for horizon in range(1, 15)
+            ):
+                raise RuntimeError("calibration did not score every reference and horizon")
+            policy = {
+                "candidate_proportions": proportions,
+                "effective_width_mapping": {
+                    str(width): width_proportions[width] for width in range(64)
+                },
+                "calibration_exclusion": "same_source_series",
+                "calibration_tie_rule": "smallest_effective_width",
+                "neighbour_tie_rule": "lowest_stable_reference_identity",
+                "reference_library_fingerprint": reference_fingerprint,
+            }
+            score_records = []
+            selected_records = []
+            for horizon in range(1, 15):
+                selected_width = max(
+                    range(64),
+                    key=lambda width: (
+                        totals[width][horizon][0]
+                        / totals[width][horizon][1],
+                        -width,
+                    ),
+                )
+                for width in range(64):
+                    correct, evaluated = totals[width][horizon]
+                    content = {
+                        "model_definition_id": model_id,
+                        "effective_width": width,
+                        "representative_proportion": width_proportions[width],
+                        "horizon": horizon,
+                        "correct_count": correct,
+                        "evaluation_count": evaluated,
+                        "accuracy": correct / evaluated,
+                        "candidate_policy": canonical_json(policy),
+                    }
+                    score_records.append(
+                        {
+                            "calibration_score_id": "directional-score/"
+                            + json_fingerprint(
+                                {"model": model_id, "width": width, "horizon": horizon}
+                            )[:32],
+                            **content,
+                            "content_hash": json_fingerprint(content),
+                        }
+                    )
+                correct, evaluated = totals[selected_width][horizon]
+                selected_content = {
+                    "model_definition_id": model_id,
+                    "horizon": horizon,
+                    "effective_width": selected_width,
+                    "representative_proportion": width_proportions[selected_width],
+                    "calibration_accuracy": correct / evaluated,
+                    "tie_rule": "smallest_effective_width",
+                }
+                selected_records.append(
+                    {
+                        "selected_width_id": "directional-width/"
+                        + json_fingerprint({"model": model_id, "horizon": horizon})[:32],
+                        **selected_content,
+                        "content_hash": json_fingerprint(selected_content),
+                    }
+                )
+
+            def insert_calibration() -> None:
+                self._insert_or_verify("directional_model_definitions", model_record)
+                for record in score_records:
+                    self._insert_or_verify("directional_calibration_scores", record)
+                for record in selected_records:
+                    self._insert_or_verify("directional_selected_widths", record)
+
+            self._commit_task(
+                calibration_row[0],
+                attempts[calibration_row[0]],
+                runtime,
+                insert_calibration,
+                {
+                    "worker_block_counts": workers_used,
+                    "resource_evidence": resource_evidence,
+                    "reference_cache": cache_reports,
+                    "distance_calculations": sum(
+                        len(query_ids)
+                        - sum(
+                            1
+                            for candidate in payload["references"]
+                            if candidate["source_series_identity"]
+                            == query["source_series_identity"]
+                        )
+                        for query in payload["references"]
+                    )
+                    * 64,
+                },
+            )
+        else:
+            if self.connection.execute(
+                """SELECT count(*) FROM directional_model_definitions AS m
+                   WHERE m.model_definition_id=?""",
+                [model_id],
+            ).fetchone()[0] != 1:
+                raise RuntimeError(
+                    "completed calibration is missing its directional model definition"
+                )
+            self._insert_or_verify("directional_model_definitions", model_record)
+
+        selected = {
+            int(row[0]): int(row[1])
+            for row in self.connection.execute(
+                """SELECT s.horizon, s.effective_width
+                   FROM directional_selected_widths AS s
+                   WHERE s.model_definition_id=? ORDER BY s.horizon""",
+                [model_id],
+            ).fetchall()
+        }
+        if set(selected) != set(range(1, 15)):
+            raise RuntimeError("directional prediction requires fourteen selected widths")
+        prediction_rows = [row for row in rows if row[1] is not None]
+        if not prediction_rows:
+            return
+        task_by_identity = {}
+        input_rows = {}
+        for row in prediction_rows:
+            horizon = int(row[3].rsplit("h", 1)[1])
+            input_row = self.connection.execute(
+                """SELECT i.evaluation_input_id, i.transformed_input
+                   FROM directional_evaluation_inputs AS i
+                   WHERE i.experiment_id=? AND i.forecast_instance_id=?
+                     AND i.variant_id=?""",
+                [experiment_id, row[1], row[2]],
+            ).fetchone()
+            if input_row is None:
+                raise RuntimeError("directional prediction has missing official input")
+            input_rows[input_row[0]] = list(input_row[1])
+            task_by_identity[(input_row[0], horizon)] = row
+        grouped: dict[tuple[int, tuple[int, ...]], list[str]] = {}
+        by_input_horizons: dict[tuple[int, str], list[int]] = {}
+        for input_id, horizon in task_by_identity:
+            by_input_horizons.setdefault((selected[horizon], input_id), []).append(horizon)
+        for (width, input_id), horizons in by_input_horizons.items():
+            grouped.setdefault((width, tuple(sorted(horizons))), []).append(input_id)
+        query_block = int(
+            self.configuration.execution["batch_sizes"]["directional_prediction"]
+        )
+        prediction_jobs = []
+        for (width, horizons), input_ids in sorted(grouped.items()):
+            for offset in range(0, len(input_ids), query_block):
+                selected_inputs = sorted(input_ids)[offset : offset + query_block]
+                prediction_jobs.append(
+                    {
+                        "id": f"prediction/w{width:02d}/h{'-'.join(map(str, horizons))}/q{offset:04d}",
+                        "effective_width": width,
+                        "horizons": list(horizons),
+                        "queries": [
+                            {"identity": identity, "values": input_rows[identity]}
+                            for identity in selected_inputs
+                        ],
+                    }
+                )
+        responses = self._run_directional_blocks(
+            "prediction",
+            [[job] for job in prediction_jobs],
+            reference_fingerprint,
+            max(profile.autoarima_workers, 1),
+            dask_client,
+            settings,
+            profile,
+        )
+        for batch, response in responses:
+            predictions = [
+                prediction
+                for result in response["results"]
+                for prediction in result["predictions"]
+            ]
+            for prediction in predictions:
+                key = (
+                    prediction["evaluation_input_identity"],
+                    int(prediction["horizon"]),
+                )
+                row = task_by_identity.pop(key, None)
+                if row is None:
+                    raise RuntimeError("directional worker returned an unexpected prediction")
+                if (
+                    prediction["prediction"] not in {0, 1}
+                    or not math.isfinite(prediction["nearest_distance"])
+                    or prediction["effective_width"] != selected[key[1]]
+                ):
+                    raise RuntimeError("directional worker returned an invalid prediction")
+                content = {
+                    "experiment_id": experiment_id,
+                    "model_definition_id": model_id,
+                    "evaluation_input_id": key[0],
+                    "horizon": key[1],
+                    "prediction": int(prediction["prediction"]),
+                    "nearest_reference_identity": prediction[
+                        "nearest_reference_identity"
+                    ],
+                    "nearest_distance": float(prediction["nearest_distance"]),
+                    "effective_width": int(prediction["effective_width"]),
+                    "execution_metadata": canonical_json(
+                        {
+                            "worker": response["worker"],
+                            "runtime": response["runtime"],
+                            "resource_usage": response["resource_usage"],
+                            "reference_library_fingerprint": reference_fingerprint,
+                        }
+                    ),
+                }
+                record = {
+                    "prediction_id": "directional-prediction/"
+                    + json_fingerprint(
+                        {"model": model_id, "input": key[0], "horizon": key[1]}
+                    )[:32],
+                    **content,
+                    "content_hash": json_fingerprint(content),
+                }
+
+                def insert_prediction(record=record) -> None:
+                    self._insert_or_verify("directional_predictions", record)
+
+                self._commit_task(
+                    row[0],
+                    attempts[row[0]],
+                    response["runtime_seconds"] / max(len(predictions), 1),
+                    insert_prediction,
+                    {
+                        "worker": response["worker"],
+                        "resource_usage": response["resource_usage"],
+                    },
+                )
+        if task_by_identity:
+            raise RuntimeError("directional worker omitted accepted prediction identities")
+
     def _run_05_combine(
         self,
         experiment_id: str,
@@ -1808,6 +2839,32 @@ class ExperimentCoordinator:
         Outputs: None; completes base-candidate tasks and computes and transactionally
         persists equal-weight forecasts, component lineage, hashes, and task state.
         """
+        if self.configuration.version == 10:
+            if not rows:
+                return
+            if len(rows) != 1 or rows[0][3] != "directional_dtw:no_work":
+                raise RuntimeError("directional Process 05 requires one no-work identity")
+            row = rows[0]
+            content = {
+                "experiment_id": experiment_id,
+                "process_id": 5,
+                "reason": "no forecast combination is configured for directional DTW",
+            }
+            record = {
+                "no_work_id": "deterministic-no-work/"
+                + json_fingerprint({"experiment": experiment_id, "process": 5})[:32],
+                **content,
+                "content_hash": json_fingerprint(content),
+            }
+
+            def insert_no_work() -> None:
+                self._insert_or_verify("deterministic_no_work", record)
+
+            self._commit_task(
+                row[0], attempts[row[0]], 0.0, insert_no_work,
+                {"execution_backend": "Mac coordinator", "hostname": platform.node()},
+            )
+            return
         combination_name = self.config["combination"]["method"]
         combination_rows = [row for row in rows if row[3] == combination_name]
         jobs = []
@@ -2020,6 +3077,75 @@ class ExperimentCoordinator:
         subprocesses using temporary payloads, and transactionally upserts metrics,
         input fingerprints, provenance, and task completion.
         """
+        if self.configuration.version == 10:
+            from .shared_labels import directional_accuracy
+
+            if not rows:
+                return
+            model_rows = self.connection.execute(
+                """SELECT m.model_definition_id
+                   FROM directional_model_definitions AS m
+                   WHERE m.experiment_id=? ORDER BY m.created_at DESC""",
+                [experiment_id],
+            ).fetchall()
+            if len(model_rows) != 1:
+                raise RuntimeError("directional evaluation requires one model definition")
+            model_id = model_rows[0][0]
+            for row in rows:
+                horizon = int(row[3].rsplit("h", 1)[1])
+                values = self.connection.execute(
+                    """SELECT p.evaluation_input_id, p.prediction, a.labels
+                       FROM directional_predictions AS p
+                       JOIN directional_actual_labels AS a
+                         ON a.evaluation_input_id=p.evaluation_input_id
+                       WHERE p.experiment_id=? AND p.model_definition_id=?
+                         AND p.horizon=?
+                       ORDER BY p.evaluation_input_id""",
+                    [experiment_id, model_id, horizon],
+                ).fetchall()
+                if len(values) != self.configuration.series_count:
+                    raise RuntimeError(
+                        f"directional horizon {horizon} has incomplete predictions"
+                    )
+                score = directional_accuracy(
+                    [int(prediction) for _, prediction, _ in values],
+                    [int(labels[horizon - 1]) for _, _, labels in values],
+                )
+                prediction_fingerprint = json_fingerprint(
+                    [
+                        {
+                            "evaluation_input_id": input_id,
+                            "prediction": int(prediction),
+                            "actual": int(labels[horizon - 1]),
+                        }
+                        for input_id, prediction, labels in values
+                    ]
+                )
+                content = {
+                    "experiment_id": experiment_id,
+                    "model_definition_id": model_id,
+                    "horizon": horizon,
+                    **score,
+                    "prediction_fingerprint": prediction_fingerprint,
+                }
+                record = {
+                    "directional_evaluation_id": "directional-evaluation/"
+                    + json_fingerprint({"model": model_id, "horizon": horizon})[:32],
+                    **content,
+                    "content_hash": json_fingerprint(content),
+                }
+
+                def insert_evaluation(record=record) -> None:
+                    self._insert_or_verify("directional_evaluations", record)
+
+                self._commit_task(
+                    row[0], attempts[row[0]], 0.0, insert_evaluation,
+                    {
+                        "execution_backend": "Mac coordinator",
+                        "hostname": platform.node(),
+                    },
+                )
+            return
         source_root = self.root / self.configuration.source_directory
         benchmark_id = self.connection.execute(
             "SELECT benchmark_configuration_id FROM experiments WHERE experiment_id=?",

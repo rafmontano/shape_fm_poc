@@ -72,6 +72,45 @@ class RollingWindowUnitTests(unittest.TestCase):
         )
         self.assertEqual(compute_window_preparation_batch.name, "compute window-preparation batch")
 
+    def test_training_and_official_inputs_share_the_exact_bounded_contract(self) -> None:
+        """Equal raw 64-vectors clean identically; full-history slicing is not accepted."""
+        raw = [float(index % 7) for index in range(64)]
+        common = {
+            "preprocessing_mode": "robust",
+            "transformation": "standardise_sample_v1",
+            "seasonality": 7,
+        }
+        jobs = [
+            {
+                **common,
+                "id": identity,
+                "windows": [{"window_id": identity, "input": raw}],
+            }
+            for identity in ("training-reference", "official-input")
+        ]
+        response = shared_distributed_execution.window_preparation_batch(
+            jobs, "src/r/02_01_preprocess_series.R", 180.0, 1
+        )
+        training = response["results"][0]["windows"][0]
+        official = response["results"][1]["windows"][0]
+        self.assertEqual(training["cleaned_hash"], official["cleaned_hash"])
+        self.assertEqual(training["transformed_input"], official["transformed_input"])
+        self.assertEqual(training["prepared_reference"], official["prepared_reference"])
+
+        full_history = [1000.0] * 64 + raw
+        separately_cleaned = shared_distributed_execution.clean_batch(
+            [{"id": "full", "context": full_history, "mode": "robust", "seasonality": 7}],
+            "src/r/02_01_preprocess_series.R",
+            180.0,
+            1,
+        )["results"][0]["values"][-64:]
+        separately_transformed = shared_distributed_execution.transform(
+            separately_cleaned, "standardise_sample_v1"
+        )
+        self.assertNotEqual(
+            official["transformed_input"], list(separately_transformed.values)
+        )
+
     def test_flow_runner_requires_explicit_local_bounds(self) -> None:
         """The migrated entry cannot silently turn distributed work into local work."""
         arguments = {

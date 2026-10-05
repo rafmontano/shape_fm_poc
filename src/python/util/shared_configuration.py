@@ -39,8 +39,9 @@ class ExperimentConfigurationError(ValueError):
 # v3 opts into period tuning, v4 selects portable sample standardisation, and
 # v5 defines the original rolling-window/S1 contract; v6 corrects split
 # arithmetic; v7 adds the approved R pool; v8 adds the bounded one-variant
-# all-model acceptance; v9 activates the forecast contract and M4 benchmarks.
-SUPPORTED_CONFIGURATION_VERSIONS = {1, 2, 3, 4, 5, 6, 7, 8, 9}
+# all-model acceptance; v9 activates the forecast contract and M4 benchmarks;
+# v10 activates the approved directional DTW baseline without forecast rows.
+SUPPORTED_CONFIGURATION_VERSIONS = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
 # Stable production IDs map to the native, allowlisted FFORMA method registry.
 R_MODEL_METHODS = {
     name: f"{name}_forec" for name in
@@ -215,7 +216,8 @@ class ExperimentConfiguration:
         Outputs: Independent evaluator-options mapping.
         """
         options = deepcopy(self.resolved["evaluation"]["options"])
-        options["batch_size"] = int(self.execution["batch_sizes"]["gift_eval"])
+        if self.version < 10:
+            options["batch_size"] = int(self.execution["batch_sizes"]["gift_eval"])
         return options
 
     @property
@@ -445,18 +447,18 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
         raise ExperimentConfigurationError("pipeline.processes must define ordered Processes 01-06")
     expected_preprocessing = {
         "default": "robust",
-        "modes": ["robust"] if version in {8, 9} else ["standard", "robust"],
+        "modes": ["robust"] if version in {8, 9, 10} else ["standard", "robust"],
     }
     if pipeline["preprocessing"] != expected_preprocessing:
         raise ExperimentConfigurationError(
             f"v{version} preprocessing must select only robust"
-            if version in {8, 9}
+            if version in {8, 9, 10}
             else "preprocessing must expose standard and robust with robust as default"
         )
     expected_transformations = {
         "methods": [
             "standardise_sample_v1"
-        ] if version in {8, 9} else [
+        ] if version in {8, 9, 10} else [
             "identity",
             "standardise_sample_v1" if version >= 4 else "minmax_then_standardize",
         ]
@@ -478,7 +480,7 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
             raise ExperimentConfigurationError(
                 "pipeline.window_preparation.context_length must be a positive integer"
             )
-    elif version in {5, 6, 7, 8, 9}:
+    elif version in {5, 6, 7, 8, 9, 10}:
         _require_keys(pipeline, {"window_preparation"}, "pipeline")
         window_preparation = _require_mapping(
             pipeline["window_preparation"], "pipeline.window_preparation"
@@ -596,6 +598,8 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
     if pipeline["adjustment"] != "identity":
         raise ExperimentConfigurationError("unsupported adjustment method")
     expected_combination = (
+        {"method": "none", "weights": {}}
+        if version == 10 else
         {"method": "m4_comb", "weights": {
             "ses": 1.0 / 3.0, "holt": 1.0 / 3.0, "damped": 1.0 / 3.0,
         }}
@@ -647,7 +651,45 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
         if tuning_enabled
         else {"auto_arima", "chronos_2"}
     )
-    if version in {7, 8, 9}:
+    if version == 10:
+        expected_directional = {
+            "method": "one_nearest_neighbour",
+            "engine": {
+                "package": "aeon",
+                "version": "1.6.0",
+                "function": "aeon.distances.dtw_distance",
+            },
+            "input": {
+                "definition": "standardise_sample_v1",
+                "length": 64,
+                "dtype": "float64",
+            },
+            "labels": {
+                "definition": "directional_strict_v1",
+                "horizons": list(range(1, 15)),
+            },
+            "reference": {
+                "membership": "S1",
+                "partition": "train",
+                "cap": None,
+                "sampling": "none",
+            },
+            "constraint": {
+                "name": "sakoe_chiba",
+                "candidate_proportions": [index / 100 for index in range(100)],
+                "effective_width": "int(window * 64)",
+            },
+            "local_cost": "squared_euclidean",
+            "width_selection": "one_per_horizon",
+            "calibration_tie_rule": "smallest_effective_width",
+            "neighbour_tie_rule": "lowest_stable_reference_identity",
+            "probabilities": False,
+        }
+        if models != {"directional_dtw": expected_directional}:
+            raise ExperimentConfigurationError(
+                "v10 models must define the approved direct-aeon directional DTW baseline"
+            )
+    elif version in {7, 8, 9}:
         expected_pool = (
             set(R_FORECAST_METHODS) | {"chronos_2"}
             if version == 9 else
@@ -721,7 +763,7 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
     if (
         archived.get("providers") != approved_archived
         or not isinstance(enabled_archived, list)
-        or not enabled_archived
+        or (not enabled_archived and version != 10)
         or len(enabled_archived) != len(set(enabled_archived))
         or any(provider not in approved_archived for provider in enabled_archived)
         or archived.get("forecast_capability") != "mean_only"
@@ -739,8 +781,11 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
         {"method", "gift_eval", "options", "provisional_candidate", "submission_metadata"},
         "evaluation",
     )
-    if evaluation["method"] != "gift_eval":
-        raise ExperimentConfigurationError("evaluation.method must be gift_eval")
+    expected_evaluation_method = "directional_accuracy" if version == 10 else "gift_eval"
+    if evaluation["method"] != expected_evaluation_method:
+        raise ExperimentConfigurationError(
+            f"evaluation.method must be {expected_evaluation_method}"
+        )
     gift_eval = _require_mapping(evaluation["gift_eval"], "evaluation.gift_eval")
     _require_keys(
         gift_eval,
@@ -757,6 +802,10 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
     ):
         raise ExperimentConfigurationError("invalid GIFT-Eval dependency settings")
     expected_evaluation_options = {
+        "label_definition": "directional_strict_v1",
+        "horizons": list(range(1, 15)),
+        "missing_labels": "error",
+    } if version == 10 else {
         "axis": None,
         "mask_invalid_label": True,
         "allow_nan_forecast": False,
@@ -832,8 +881,11 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
         "import", "plan", "preprocess", "transform", "auto_arima", "chronos",
         "combine", "gift_eval",
     }
-    if version in {5, 6, 7, 8, 9}:
+    if version in {5, 6, 7, 8, 9, 10}:
         expected_batch_sizes.add("window_preparation")
+    if version == 10:
+        expected_batch_sizes -= {"auto_arima", "chronos", "combine", "gift_eval"}
+        expected_batch_sizes |= {"directional_calibration", "directional_prediction"}
     if tuning_enabled or version in {7, 8, 9}:
         expected_batch_sizes.add("r_forecast")
     batch_sizes = _require_mapping(default["batch_sizes"], "execution.default.batch_sizes")
@@ -844,7 +896,11 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
         raise ExperimentConfigurationError(
             "execution.default.batch_sizes must define positive integer process batches"
         )
-    expected_timeouts = {"r", "chronos_startup", "chronos_request", "gift_eval"}
+    expected_timeouts = (
+        {"r", "directional_dtw"}
+        if version == 10
+        else {"r", "chronos_startup", "chronos_request", "gift_eval"}
+    )
     timeouts = _require_mapping(
         default["worker_timeouts_seconds"], "execution.default.worker_timeouts_seconds"
     )
@@ -855,7 +911,11 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
         raise ExperimentConfigurationError(
             "execution.default.worker_timeouts_seconds must define positive worker timeouts"
         )
-    expected_threads = {"r", "chronos", "dask_worker"}
+    expected_threads = (
+        {"r", "classifier", "dask_worker"}
+        if version == 10
+        else {"r", "chronos", "dask_worker"}
+    )
     threads = _require_mapping(default["thread_limits"], "execution.default.thread_limits")
     if set(threads) != expected_threads or any(
         isinstance(item, bool) or not isinstance(item, int) or item < 1
@@ -891,12 +951,18 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
             raise ExperimentConfigurationError(
                 "v4 acceptance must describe the sequential Gate 1-3 run"
             )
-    elif version in {5, 6, 7, 8, 9}:
+    elif version in {5, 6, 7, 8, 9, 10}:
         expected_acceptance = {
             "mode": "dask",
-            "workflow": "forecast_pool" if version in {7, 8, 9} else "window_preparation",
+            "workflow": (
+                "directional_dtw"
+                if version == 10
+                else "forecast_pool"
+                if version in {7, 8, 9}
+                else "window_preparation"
+            ),
             "execution_profile": "poc2_seasonal_recovery",
-            "profile_version": 3 if version in {7, 8, 9} else 2,
+            "profile_version": 3 if version in {7, 8, 9, 10} else 2,
             "workers": {"mac_cpu": 8, "ubuntu_cpu": 15, "total": 23},
             "system_memory_min_available_gib": {"mac": 3, "ubuntu": 16},
         }
@@ -935,14 +1001,25 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
         ):
             raise ExperimentConfigurationError("invalid final-acceptance resource settings")
     paths = _require_mapping(execution["paths"], "execution.paths")
-    required_paths = {
-        "project_environment",
-        "chronos_environment",
-        "chronos_worker",
-        "r_preprocess_worker",
-        "r_auto_arima_worker",
-        "r_m4comp2018_worker",
-    }
+    required_paths = (
+        {
+            "project_environment",
+            "classifiers_environment",
+            "classifiers_lock",
+            "directional_dtw_worker",
+            "r_preprocess_worker",
+            "r_m4comp2018_worker",
+        }
+        if version == 10
+        else {
+            "project_environment",
+            "chronos_environment",
+            "chronos_worker",
+            "r_preprocess_worker",
+            "r_auto_arima_worker",
+            "r_m4comp2018_worker",
+        }
+    )
     if tuning_enabled or version in {7, 8, 9}:
         required_paths.add("r_forecast_worker")
     if set(paths) != required_paths or any(
@@ -967,7 +1044,7 @@ def resolve_experiment_configuration(value: dict[str, Any]) -> ExperimentConfigu
     validate_experiment_configuration(value)
     original = deepcopy(value)
     resolved = deepcopy(value)
-    if resolved["configuration_version"] in {5, 6, 7, 8, 9}:
+    if resolved["configuration_version"] in {5, 6, 7, 8, 9, 10}:
         frequencies = resolved["pipeline"]["window_preparation"]["frequencies"]
         for settings in frequencies.values():
             settings["stride"] = settings["input_length"] + settings["future_horizon"]
@@ -977,19 +1054,33 @@ def resolve_experiment_configuration(value: dict[str, Any]) -> ExperimentConfigu
     variant_count = cleaning_count * transformation_count
     model_count = len(resolved["models"])
     candidate_count = model_count + 1
-    resolved["derived"] = {
-        "variant_count": variant_count,
-        "candidate_count": candidate_count,
-        "expected_task_counts": {
+    directional = resolved["configuration_version"] == 10
+    expected_counts = (
+        {
+            "1": series_count,
+            "2": series_count,
+            "3": series_count,
+            "4": 1 + series_count * 14,
+            "5": 1,
+            "6": 14,
+        }
+        if directional
+        else {
             "1": series_count,
             "2": series_count * cleaning_count,
             "3": series_count * variant_count,
             "4": series_count * variant_count * model_count,
             "5": series_count * variant_count * candidate_count,
             "6": variant_count * candidate_count,
-        },
-        "expected_forecast_rows": series_count * variant_count * candidate_count,
-        "expected_evaluation_rows": variant_count * candidate_count,
+        }
+    )
+    resolved["derived"] = {
+        "variant_count": variant_count,
+        "candidate_count": candidate_count,
+        "expected_task_counts": expected_counts,
+        "expected_forecast_rows": 0 if directional else series_count * variant_count * candidate_count,
+        "expected_directional_prediction_rows": series_count * 14 if directional else 0,
+        "expected_evaluation_rows": 14 if directional else variant_count * candidate_count,
     }
     return ExperimentConfiguration(original=original, resolved=resolved)
 

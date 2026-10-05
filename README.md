@@ -126,6 +126,15 @@ The [version-9 execution evidence](docs/poc2-forecast-contract-m4-combination-ex
 records the completed graph, exact lineage, two-host contribution, resource
 safety and an immutable scientific restart without interpreting model accuracy.
 
+The ID 021 directional-only configuration is
+`config/experiments/poc2_m4_daily_100_directional_dtw.json` (version 10). It
+reuses bounded rolling-window preparation and strict labels, calibrates one
+direct-aeon 1NN-DTW width per horizon, writes 1,400 binary directional
+predictions, records Process 05 as deterministic no-work, and evaluates fourteen
+horizons in Process 06. It writes no forecast rows. See the
+[approved architecture](docs/poc2-id021-dtw-baseline.md); acceptance and
+publication remain pending.
+
 For independent Stage 2 QA, inspect the disposable fixture named in the acceptance
 record with `status` and `results`; distinguish its labelled synthetic forecast
 rows from native model evidence. Check one stored result per R method, requested
@@ -294,6 +303,7 @@ src/python/02_preprocess.py              Process 02 wrapper
 src/python/03_transform.py               Process 03 wrapper
 src/python/04_forecast.py                Process 04 wrapper
 src/python/04_02_forecast_chronos.py     Chronos forecasting substep
+src/python/04_04_directional_dtw.py      direct-aeon directional DTW executable
 src/python/05_combine.py                 Process 05 wrapper
 src/python/06_evaluate.py                Process 06 wrapper
 src/python/06_01_evaluate_gift_eval.py   official evaluation substep
