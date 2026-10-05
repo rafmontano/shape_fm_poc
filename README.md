@@ -132,8 +132,10 @@ reuses bounded rolling-window preparation and strict labels, calibrates one
 direct-aeon 1NN-DTW width per horizon, writes 1,400 binary directional
 predictions, records Process 05 as deterministic no-work, and evaluates fourteen
 horizons in Process 06. It writes no forecast rows. See the
-[approved architecture](docs/poc2-id021-dtw-baseline.md); acceptance and
-publication remain pending.
+[closed architecture](docs/poc2-id021-dtw-baseline.md) and
+[accepted execution evidence](docs/poc2-id021-dtw-execution-evidence.md).
+ID 021 was accepted and approved for publication on 6 October 2026; ID 022 was
+not started.
 
 For independent Stage 2 QA, inspect the disposable fixture named in the acceptance
 record with `status` and `results`; distinguish its labelled synthetic forecast

@@ -38,11 +38,11 @@ not substitute seasonal naive or another model for methods without a supplied
 fallback.
 ID 018 was closed by the researcher on 5 October 2026 after accepting
 `docs/poc2-fforma-method-parity-execution-evidence.md`. Preserve that scientific
-and execution boundary. ID 021 is approved as a separate implementation
-checkpoint under `docs/poc2-id021-dtw-baseline.md`: use only direct
-`aeon.distances.dtw_distance` at aeon 1.6.0, preserve the bounded-preprocessing
-and directional-label contracts, and do not infer publication or closure from
-implementation or execution evidence.
+and execution boundary. ID 021 was closed and approved for publication on
+6 October 2026 under `docs/poc2-id021-dtw-baseline.md`; preserve its direct
+`aeon.distances.dtw_distance` 1.6.0 engine, bounded-preprocessing and
+directional-label contracts. Its accepted two-machine result is recorded in
+`docs/poc2-id021-dtw-execution-evidence.md`. ID 022 was not started.
 
 Apply the standing [Python utility naming standard](docs/code-standards.md#python-utility-file-organisation):
 `pNN_MM_` for process-owned helpers, `shared_` for shared components, and no

@@ -1,9 +1,11 @@
 # POC2 ID 021 directional DTW baseline
 
-Status: Approved architecture for implementation on 5 October 2026. The direct
-`aeon.distances.dtw_distance` engine at aeon 1.6.0 supersedes the withdrawn
-sktime candidate. Implementation and local validation do not constitute
-scientific acceptance or authorise GitHub publication.
+Status: Closed and approved for publication on 6 October 2026. The base
+architecture was approved on 5 October 2026; the aeon-only engine amendment,
+execution evidence, and final Researcher/Chief Architect acceptance followed on
+6 October 2026. The direct `aeon.distances.dtw_distance` engine at aeon 1.6.0
+supersedes the withdrawn sktime candidate. See the
+[accepted execution evidence](poc2-id021-dtw-execution-evidence.md).
 
 ## Scientific definition
 
@@ -108,8 +110,8 @@ evaluations and zero DTW forecast rows. Accuracy is recorded but is not a pass
 threshold. Resource, retry, failure, elapsed-time and host-contribution evidence
 is required, followed by a no-new-work restart.
 
-An unpublished local implementation checkpoint may be transferred directly to
-Ubuntu for this test. GitHub publication, a closure record and scientific
-acceptance require later Researcher and Chief Developer approval. Abandoned
-`id021-100-series*` and `id021-bounded-*` artifacts from the withdrawn engine
-must not be reused.
+The accepted implementation and provenance-correction checkpoints were
+transferred directly to Ubuntu for the two-machine test. The Researcher and
+Chief Architect accepted the resulting evidence and authorised publication on
+6 October 2026. Abandoned `id021-100-series*` and `id021-bounded-*` artifacts
+from the withdrawn engine were not reused. ID 022 was not started.

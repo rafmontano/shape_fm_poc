@@ -99,11 +99,17 @@ Each environment has a readable `pyproject.toml`, committed `uv.lock`, local
 | GIFT-Eval | `environments/gift-eval` | pinned official GIFT-Eval submodule and evaluation dependencies |
 | Chronos-2 | `environments/chronos-2` | Chronos 2.2.2 and its compatible PyTorch stack |
 | Mantis | `environments/mantis` | Mantis 1.1.0 and its separate compatible PyTorch stack |
-| Conventional classifiers | `environments/classifiers` | sktime 0.40.1, scikit-learn 1.7.2, Rotation Forest, ROCKET, and distance classifiers |
+| Conventional classifiers | `environments/classifiers` | aeon 1.6.0 direct DTW, sktime 0.40.1, scikit-learn 1.7.2, Rotation Forest, ROCKET, and unrelated existing classifiers |
 | TensorFlow classifiers | `environments/tensorflow` | InceptionTime and an isolated platform-specific TensorFlow stack |
 
 TensorFlow is never combined with PyTorch. Mantis and Chronos-2 remain separate
 because their foundation-model dependency ranges can evolve independently.
+
+ID 021 calls `aeon.distances.dtw_distance` directly from the classifiers
+environment; it does not use an aeon classifier abstraction or sktime as a DTW
+engine. Sktime remains installed for unrelated classifier interfaces. Adding
+aeon 1.6.0 changed the locked transitive SciPy resolution from 1.18.1 to 1.17.1;
+the accepted lock supports both macOS ARM64 and Ubuntu x86-64.
 
 The core lock pins Prefect 3.8.7 and prefect-dask 0.3.7 alongside Dask 2026.8.0.
 Setup verifies all four exact versions. Workflow commands keep coordinator-local
