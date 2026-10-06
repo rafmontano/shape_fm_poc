@@ -2569,17 +2569,21 @@ class ExperimentCoordinator:
             else "directional_dtw_worker"
         )
         worker_path = self.root / paths[worker_key]
+        worker_relative_path = str(worker_path.relative_to(self.root))
         lock_path = self.root / paths["classifiers_lock"]
-        source_paths = [
-            worker_path,
-            Path(__file__).resolve(),
-            self.root / "src/python/util/shared_transformations.py",
-            self.root / "src/python/util/shared_labels.py",
-            self.root / "src/python/util/window_preparation.py",
-        ]
+        source_paths = {
+            worker_relative_path: worker_path,
+            str(Path(__file__).resolve().relative_to(self.root)): Path(__file__).resolve(),
+            "src/python/util/shared_transformations.py": self.root
+            / "src/python/util/shared_transformations.py",
+            "src/python/util/shared_labels.py": self.root
+            / "src/python/util/shared_labels.py",
+            "src/python/util/window_preparation.py": self.root
+            / "src/python/util/window_preparation.py",
+        }
         source_hashes = {
-            str(path.relative_to(self.root)): hashlib.sha256(path.read_bytes()).hexdigest()
-            for path in source_paths
+            relative_path: hashlib.sha256(path.read_bytes()).hexdigest()
+            for relative_path, path in source_paths.items()
         }
         completed = subprocess.run(
             [
@@ -2628,9 +2632,7 @@ class ExperimentCoordinator:
             "repository_revision": revision,
             "scientific_source_fingerprint": json_fingerprint(source_hashes),
             "scientific_source_files": source_hashes,
-            "worker_file_fingerprint": source_hashes[
-                worker_key
-            ],
+            "worker_file_fingerprint": source_hashes[worker_relative_path],
             "classifier_lock_fingerprint": hashlib.sha256(lock_path.read_bytes()).hexdigest(),
             "runtime_versions": runtime_versions,
             "numeric_dtype": "float64",

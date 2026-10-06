@@ -486,12 +486,22 @@ class WindowPreparationCoordinator:
         self.parent = duckdb.connect(str(self.parent_path))
         try:
             self.configuration = load_database_configuration(self.parent_path, self.parent)
-            if self.configuration.version not in {5, 6, 7, 10, 11}:
+            definition = self.configuration.resolved["pipeline"].get(
+                "window_preparation"
+            )
+            required_fields = {
+                "selected_frequencies",
+                "frequencies",
+                "preprocessing_mode",
+                "transformation",
+                "split",
+            }
+            if not isinstance(definition, dict) or not required_fields <= set(definition):
                 raise ValueError(
-                    "rolling-window preparation requires configuration version "
-                    "5, 6, 7, 10 or 11"
+                    "rolling-window preparation requires the complete "
+                    "pipeline.window_preparation capability"
                 )
-            self.definition = self.configuration.resolved["pipeline"]["window_preparation"]
+            self.definition = definition
             self.preparation_id = "window-preparation/" + json_fingerprint(
                 {
                     "parent": self.configuration.scientific_hash,

@@ -549,9 +549,10 @@ input length and future horizon; resolution derives and persists stride as
 `input_length + future_horizon`. The production document selects only M4 Daily.
 It does not claim full multi-dataset GIFT-Eval support.
 
-The shared coordinator accepts configuration versions 5, 6, 7, 10 and 11.
-Versions 10 and 11 reuse this same preparation boundary for directional DTW and
-the DTW/Mantis comparison respectively; version 11 does not introduce another
+The shared coordinator requires the complete centrally validated rolling-window
+capability: selected frequencies, frequency settings, preprocessing,
+transformation and split definitions. Directional DTW and the DTW/Mantis
+comparison reuse this same preparation boundary rather than introducing another
 window-preparation path.
 
 The coordinator protects the official training boundary and sends bounded,

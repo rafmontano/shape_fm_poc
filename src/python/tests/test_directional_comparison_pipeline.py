@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -53,6 +54,55 @@ class DirectionalComparisonPipelineTests(unittest.TestCase):
             configuration.workflow["models"]["directional_mantis_rf"]["classifier"],
             "random_forest",
         )
+
+    def test_v11_directional_implementation_fingerprints_resolved_training_worker(self):
+        """The genuine implementation path keys source hashes by worker file path."""
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "implementation.duckdb"
+            initialize_experiment_database(database, V11)
+            with ExperimentCoordinator(database) as coordinator:
+                worker_relative_path = coordinator.configuration.execution_paths[
+                    "directional_dtw_training_worker"
+                ]
+                worker_path = coordinator.root / worker_relative_path
+                expected_worker_hash = hashlib.sha256(worker_path.read_bytes()).hexdigest()
+                first = coordinator._directional_implementation(
+                    "reference-fingerprint", {"preparation": "fixed"}
+                )
+                second = coordinator._directional_implementation(
+                    "reference-fingerprint", {"preparation": "fixed"}
+                )
+                original_read_bytes = Path.read_bytes
+
+                def changed_worker_contents(path):
+                    contents = original_read_bytes(path)
+                    return (
+                        contents + b"\n# changed scientific worker fixture\n"
+                        if path.resolve() == worker_path.resolve()
+                        else contents
+                    )
+
+                with patch.object(Path, "read_bytes", changed_worker_contents):
+                    changed = coordinator._directional_implementation(
+                        "reference-fingerprint", {"preparation": "fixed"}
+                    )
+
+            self.assertEqual(
+                first["scientific_source_files"][worker_relative_path],
+                expected_worker_hash,
+            )
+            self.assertEqual(first["worker_file_fingerprint"], expected_worker_hash)
+            self.assertEqual(
+                first["implementation_fingerprint"],
+                second["implementation_fingerprint"],
+            )
+            self.assertNotEqual(
+                changed["worker_file_fingerprint"], first["worker_file_fingerprint"]
+            )
+            self.assertNotEqual(
+                changed["implementation_fingerprint"],
+                first["implementation_fingerprint"],
+            )
 
     def test_v10_database_migrates_additively_without_rewriting_configuration(self):
         with tempfile.TemporaryDirectory() as directory:

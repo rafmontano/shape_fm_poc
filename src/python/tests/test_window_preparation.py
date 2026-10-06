@@ -51,6 +51,9 @@ LEGACY_CONFIGURATION = ROOT / "config/experiments/poc2_m4_daily_100_rolling_wind
 VERSION_11_CONFIGURATION = (
     ROOT / "config/experiments/poc2_m4_daily_100_directional_dtw_mantis_rf.json"
 )
+STANDARDISATION_CONFIGURATION = (
+    ROOT / "config/experiments/poc2_m4_daily_100_standardised.json"
+)
 LOCAL_TEST_LIMITS = {"max_series": 100, "max_windows": 200}
 
 
@@ -502,6 +505,21 @@ class WindowPersistenceTests(unittest.TestCase):
     def tearDown(self) -> None:
         """Delete all fixture-owned files."""
         self.temporary.cleanup()
+
+    def test_configuration_without_rolling_capability_is_rejected_and_closed(self) -> None:
+        """A centrally valid non-rolling configuration fails without leaking its writer."""
+        parent = self.parent.with_name("standardisation-only.duckdb")
+        child = self.child.with_name("unused-windows.duckdb")
+        initialize_experiment_database(parent, STANDARDISATION_CONFIGURATION)
+        with self.assertRaisesRegex(
+            ValueError, "complete pipeline.window_preparation capability"
+        ):
+            WindowPreparationCoordinator(parent, child)
+        with duckdb.connect(str(parent)) as connection:
+            self.assertEqual(
+                connection.execute("SELECT max(version) FROM schema_versions").fetchone(),
+                (11,),
+            )
 
     def test_version_11_executes_real_process_03_window_preparation(self) -> None:
         """The version-11 parent runs the bounded preparation path to durable output."""
