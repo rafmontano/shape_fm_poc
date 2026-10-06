@@ -35,7 +35,11 @@ from util.shared_distributed_execution import (
     CHRONOS_GPU_RESOURCE,
     worker_resource_snapshot,
 )
-from util.shared_execution_profiles import ExecutionProfile, ExecutionSettings
+from util.shared_execution_profiles import (
+    ExecutionProfile,
+    ExecutionSettings,
+    resolve_execution_profile,
+)
 from util.shared_experiment_execution import ExperimentCoordinator
 from util.p01_02_import_execution import ImportCoordinator
 from util.shared_workflow_orchestration import gate_flow, research_writer_locks
@@ -686,27 +690,17 @@ class _TwoMachineCluster:
         self.root = root
         self.configuration = configuration
         self.configuration_hash = configuration.scientific_hash
-        # Machine environment: SHAPEFM_* values override source fallbacks for hosts,
-        # installation, and Dask addresses; effective values are retained in evidence.
-        self.ubuntu_host = os.environ.get(
-            "SHAPEFM_UBUNTU_HOST", "rafmontano@WSUbuntu1.local"
-        )
-        self.ubuntu_root = os.environ.get(
-            "SHAPEFM_UBUNTU_ROOT",
-            "/home/rafmontano/Documents/PhD/2026/projects/shape_fm_poc",
-        )
-        self.mac_host = os.environ.get("SHAPEFM_MAC_HOST", "RMMacbookPro.local")
-        self.bind_host = os.environ.get("SHAPEFM_MAC_BIND_HOST") or _run(
-            ["ipconfig", "getifaddr", "en0"], root=root, check=False
-        ).stdout.strip()
-        if not self.bind_host:
-            raise RuntimeError("set SHAPEFM_MAC_BIND_HOST to the Mac LAN IPv4 address")
-        self.scheduler_address = os.environ.get(
-            "SHAPEFM_DASK_ADDRESS", "tcp://127.0.0.1:8786"
-        )
-        self.worker_address = os.environ.get(
-            "SHAPEFM_DASK_WORKER_ADDRESS", f"tcp://{self.mac_host}:8786"
-        )
+        profile, _ = resolve_execution_profile("poc2_seasonal_recovery")
+        environment = profile.machine_environment
+        if environment is None or len(environment.remotes) != 1:
+            raise RuntimeError("acceptance requires one resolved remote machine")
+        remote = environment.remotes[0].machine
+        self.ubuntu_host = remote.ssh_target
+        self.ubuntu_root = remote.project_root
+        self.mac_host = environment.coordinator.machine.hostname
+        self.service_ports = environment.services
+        self.scheduler_address = environment.scheduler_address
+        self.worker_address = environment.scheduler_address
         self.runtime = root / "data/dask"
         self.processes: list[subprocess.Popen[Any]] = []
 
@@ -905,9 +899,9 @@ class _TwoMachineCluster:
                 "--host",
                 "0.0.0.0",
                 "--port",
-                "8786",
+                str(self.service_ports.dask_scheduler_port),
                 "--dashboard-address",
-                "127.0.0.1:8787",
+                f"0.0.0.0:{self.service_ports.dask_dashboard_port}",
             ],
             "acceptance-scheduler.log",
         )
@@ -928,7 +922,7 @@ class _TwoMachineCluster:
                 "--name",
                 "acceptance-mac-cpu",
                 "--host",
-                self.bind_host,
+                self.mac_host,
                 "--resources",
                 "CPU=1",
                 "--memory-limit",

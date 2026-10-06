@@ -344,6 +344,7 @@ def validate_directional_cluster(
     mantis_worker_script: str | None = None,
     mantis_lock: str | None = None,
     expected_mantis_lock_fingerprint: str | None = None,
+    expected_machine_workers: dict[str, dict[str, int]] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Require the approved CPU topology, exact source, and locked aeon runtime."""
     client.wait_for_workers(expected_workers, timeout=timeout)
@@ -377,17 +378,37 @@ def validate_directional_cluster(
         and not report["resources"].get(CHRONOS_GPU_RESOURCE, 0)
         for report in reports.values()
     )
-    actual_topology = (len(reports), mac_workers, ubuntu_workers, len(gpu_addresses))
-    expected_topology = (
-        expected_workers,
-        expected_mac_workers,
-        expected_ubuntu_workers,
-        expected_gpu_workers,
-    )
-    if actual_topology != expected_topology:
-        failures.append(
-            f"worker topology total/mac/ubuntu={actual_topology}, expected {expected_topology}"
+    if expected_machine_workers is not None:
+        actual_by_host: dict[str, dict[str, int]] = {}
+        for report in reports.values():
+            host = report["hostname"].split(".", 1)[0].lower()
+            values = actual_by_host.setdefault(host, {"cpu_workers": 0, "gpu_workers": 0})
+            field = (
+                "gpu_workers"
+                if report["resources"].get(CHRONOS_GPU_RESOURCE, 0) == 1
+                else "cpu_workers"
+            )
+            values[field] += 1
+        expected_by_host = {
+            host.split(".", 1)[0].lower(): values
+            for host, values in expected_machine_workers.items()
+        }
+        if actual_by_host != expected_by_host or len(reports) != expected_workers:
+            failures.append(
+                f"worker topology by host={actual_by_host}, expected {expected_by_host}"
+            )
+    else:
+        actual_topology = (len(reports), mac_workers, ubuntu_workers, len(gpu_addresses))
+        expected_topology = (
+            expected_workers,
+            expected_mac_workers,
+            expected_ubuntu_workers,
+            expected_gpu_workers,
         )
+        if actual_topology != expected_topology:
+            failures.append(
+                f"worker topology total/mac/ubuntu={actual_topology}, expected {expected_topology}"
+            )
     for address, report in reports.items():
         if report["source_manifest"] != expected_source or report["source_mismatches"]:
             failures.append(
@@ -497,6 +518,7 @@ def validate_tuning_cluster(
     expected_tuning_workers: int,
     timeout: float,
     expected_manifest: dict[str, str],
+    expected_machine_workers: dict[str, int] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Require the approved CPU topology, exact source, and tuning dependencies."""
     client.wait_for_workers(expected_workers, timeout=timeout)
@@ -509,18 +531,38 @@ def validate_tuning_cluster(
         report["resources"].get(TUNING_R_RESOURCE, 0) == 1
         for report in reports.values()
     )
-    expected_topology = (
-        expected_workers,
-        expected_mac_workers,
-        expected_ubuntu_workers,
-        expected_tuning_workers,
-    )
-    actual_topology = (len(reports), mac_workers, ubuntu_workers, tuning_workers)
-    if actual_topology != expected_topology:
-        failures.append(
-            "worker topology "
-            f"total/mac/ubuntu/tuning={actual_topology}, expected {expected_topology}"
+    if expected_machine_workers is not None:
+        actual_by_host: dict[str, int] = {}
+        for report in reports.values():
+            host = report["hostname"].split(".", 1)[0].lower()
+            actual_by_host[host] = actual_by_host.get(host, 0) + 1
+        expected_by_host = {
+            host.split(".", 1)[0].lower(): count
+            for host, count in expected_machine_workers.items()
+        }
+        if (
+            actual_by_host != expected_by_host
+            or len(reports) != expected_workers
+            or tuning_workers != expected_tuning_workers
+        ):
+            failures.append(
+                "worker topology "
+                f"by-host/tuning={actual_by_host}/{tuning_workers}, expected "
+                f"{expected_by_host}/{expected_tuning_workers}"
+            )
+    else:
+        expected_topology = (
+            expected_workers,
+            expected_mac_workers,
+            expected_ubuntu_workers,
+            expected_tuning_workers,
         )
+        actual_topology = (len(reports), mac_workers, ubuntu_workers, tuning_workers)
+        if actual_topology != expected_topology:
+            failures.append(
+                "worker topology "
+                f"total/mac/ubuntu/tuning={actual_topology}, expected {expected_topology}"
+            )
     expected_source = source_manifest_fingerprint(expected_manifest)
     expected_r = {
         "R": "4.6.1",
@@ -1045,7 +1087,7 @@ def directional_dtw_batch(
     model_storage: dict[str, Any] | None,
     frequency: str | None,
     timeout: float,
-    memory_min_available_gib: dict[str, float],
+    memory_min_available_gib: dict[str, Any],
     swap_growth_limit_gib: float,
     retry_count: int = 0,
 ) -> dict[str, Any]:
@@ -1121,7 +1163,23 @@ def directional_dtw_batch(
             "dask_spilled_disk_bytes": 0,
         }
     host_kind = "mac" if platform.system() == "Darwin" else "ubuntu"
-    available_floor = float(memory_min_available_gib[host_kind]) * 1024**3
+    by_host = memory_min_available_gib.get("by_hostname", {})
+    current = platform.node().split(".", 1)[0].lower()
+    matches = [
+        float(value)
+        for hostname, value in by_host.items()
+        if hostname.split(".", 1)[0].lower() == current
+    ]
+    if by_host and len(matches) != 1:
+        raise RuntimeError(
+            f"directional worker {platform.node()} has no unique configured memory floor"
+        )
+    floor_gib = (
+        matches[0]
+        if matches
+        else float(memory_min_available_gib[host_kind])
+    )
+    available_floor = floor_gib * 1024**3
     swap_growth = max(0, int(swap_after.used) - int(swap_before.used))
     if min(memory_before.available, memory_after.available) < available_floor:
         raise RuntimeError(
@@ -1277,6 +1335,29 @@ def random_forest_classification_batch(
     return response
 
 
+def _resolved_host_memory_floor(memory_safety: dict[str, Any]) -> float:
+    """Resolve this worker's floor from generic host evidence or legacy fields."""
+    by_host = memory_safety.get("minimum_available_gib_by_hostname")
+    if by_host:
+        current = socket.gethostname().split(".", 1)[0].lower()
+        matches = [
+            float(value)
+            for hostname, value in by_host.items()
+            if hostname.split(".", 1)[0].lower() == current
+        ]
+        if len(matches) != 1:
+            raise RuntimeError(
+                f"worker {socket.gethostname()} has no unique configured memory floor"
+            )
+        return matches[0]
+    is_mac = socket.gethostname() == memory_safety["mac_hostname"]
+    return float(
+        memory_safety["mac_minimum_available_gib"]
+        if is_mac
+        else memory_safety["ubuntu_minimum_available_gib"]
+    )
+
+
 def window_preparation_batch(
     batch: list[dict[str, Any]],
     script: str,
@@ -1310,13 +1391,8 @@ def window_preparation_batch(
             )
     monitor_context = nullcontext(None)
     if memory_safety is not None:
-        is_mac = socket.gethostname() == memory_safety["mac_hostname"]
         monitor_context = tuning_memory_reservation(
-            minimum_available_gib=float(
-                memory_safety["mac_minimum_available_gib"]
-                if is_mac
-                else memory_safety["ubuntu_minimum_available_gib"]
-            ),
+            minimum_available_gib=_resolved_host_memory_floor(memory_safety),
             fit_budget_gib=float(memory_safety["fit_budget_gib"]),
             timeout_seconds=float(memory_safety["admission_timeout_seconds"]),
             poll_interval_seconds=float(memory_safety["poll_interval_seconds"]),
@@ -1414,12 +1490,8 @@ def feature_extraction_batch(
     started = time.monotonic()
     monitor_context = nullcontext(None)
     if memory_safety is not None:
-        is_mac = socket.gethostname() == memory_safety["mac_hostname"]
         monitor_context = tuning_memory_reservation(
-            minimum_available_gib=float(
-                memory_safety["mac_minimum_available_gib"] if is_mac
-                else memory_safety["ubuntu_minimum_available_gib"]
-            ),
+            minimum_available_gib=_resolved_host_memory_floor(memory_safety),
             fit_budget_gib=float(memory_safety["fit_budget_gib"]),
             timeout_seconds=float(memory_safety["admission_timeout_seconds"]),
             poll_interval_seconds=float(memory_safety["poll_interval_seconds"]),
@@ -1485,12 +1557,8 @@ def autoarima_batch(
     started = time.monotonic()
     monitor_context = nullcontext(None)
     if memory_safety is not None:
-        is_mac = socket.gethostname() == memory_safety["mac_hostname"]
         monitor_context = tuning_memory_reservation(
-            minimum_available_gib=float(
-                memory_safety["mac_minimum_available_gib"] if is_mac
-                else memory_safety["ubuntu_minimum_available_gib"]
-            ),
+            minimum_available_gib=_resolved_host_memory_floor(memory_safety),
             fit_budget_gib=float(memory_safety["fit_budget_gib"]),
             timeout_seconds=float(memory_safety["admission_timeout_seconds"]),
             poll_interval_seconds=float(memory_safety["poll_interval_seconds"]),
@@ -1912,15 +1980,42 @@ def validate_cluster(
     if expected_topology is not None:
         local = socket.gethostname()
         cpu = [r for r in reports.values() if r["resources"].get("CPU") == 1]
-        actual = (sum(r["hostname"] == local for r in cpu),
-                  sum(r["hostname"] != local for r in cpu), gpu_workers)
-        expected = tuple(expected_topology[key] for key in
-                         ("mac_cpu_workers", "ubuntu_cpu_workers", "ubuntu_gpu_workers"))
-        if actual != expected or len(cpu) + gpu_workers != len(reports):
-            failures.append(f"CPU/GPU topology {actual}, expected {expected}")
-        if any(r["hostname"] == local and r["resources"].get(CHRONOS_GPU_RESOURCE)
-               for r in reports.values()):
-            failures.append("GPU workers must run on Ubuntu, not the coordinator")
+        if "workers_by_machine" in expected_topology:
+            actual_by_host: dict[str, dict[str, int]] = {}
+            for report in reports.values():
+                host = report["hostname"].split(".", 1)[0].lower()
+                values = actual_by_host.setdefault(
+                    host, {"cpu_workers": 0, "gpu_workers": 0}
+                )
+                field = (
+                    "gpu_workers"
+                    if report["resources"].get(CHRONOS_GPU_RESOURCE, 0)
+                    else "cpu_workers"
+                )
+                values[field] += 1
+            expected_by_host = {
+                expected_topology["hostnames_by_machine"][machine_id]
+                .split(".", 1)[0]
+                .lower(): {
+                    "cpu_workers": values["cpu_workers"],
+                    "gpu_workers": values["gpu_workers"],
+                }
+                for machine_id, values in expected_topology["workers_by_machine"].items()
+            }
+            if actual_by_host != expected_by_host:
+                failures.append(
+                    f"CPU/GPU topology by host {actual_by_host}, expected {expected_by_host}"
+                )
+        else:
+            actual = (sum(r["hostname"] == local for r in cpu),
+                      sum(r["hostname"] != local for r in cpu), gpu_workers)
+            expected = tuple(expected_topology[key] for key in
+                             ("mac_cpu_workers", "ubuntu_cpu_workers", "ubuntu_gpu_workers"))
+            if actual != expected or len(cpu) + gpu_workers != len(reports):
+                failures.append(f"CPU/GPU topology {actual}, expected {expected}")
+            if any(r["hostname"] == local and r["resources"].get(CHRONOS_GPU_RESOURCE)
+                   for r in reports.values()):
+                failures.append("GPU workers must run on Ubuntu, not the coordinator")
         for address, report in reports.items():
             resources = report["resources"]
             expected_autoarima = int(report["hostname"] != local and resources.get("CPU") == 1)

@@ -57,12 +57,21 @@ including these execution globals and derived values.
 
 ## Machine environment
 
-`SHAPEFM_UBUNTU_HOST`, `SHAPEFM_UBUNTU_ROOT`, `SHAPEFM_MAC_HOST`,
-`SHAPEFM_MAC_BIND_HOST`, `SHAPEFM_DASK_ADDRESS`, and
-`SHAPEFM_DASK_WORKER_ADDRESS` select the current machines and network endpoints.
-`CUDA_VISIBLE_DEVICES`, Hugging Face cache variables, host identity, and actual
-device state are machine environment and execution evidence, not experiment
-identity. Effective host, dependency, resource, and code state is recorded.
+The approved [machine-environment decision](machine-environment.md) makes
+`config/machines.json` the shared authority for stable machine identifiers,
+hostnames, project roots, capabilities and service ports. The selected entry in
+`config/execution_profiles.json` chooses exactly one coordinator, enabled worker
+hosts and worker allocations. The experiment configuration references the
+profile; it does not duplicate machine details.
+
+`PREFECT_API_URL` and Dask addresses are derived runtime values. Normal execution
+does not require the researcher to export them. `SHAPEFM_COORDINATOR_ADDRESS`
+is the centrally validated, recorded temporary hostname/address override; it is
+not a competing default and may not be a loopback or bind address.
+`CUDA_VISIBLE_DEVICES`, Hugging Face cache variables,
+host identity, and actual device state are machine environment and execution
+evidence, not experiment identity. Effective topology, endpoints, dependencies,
+resources and code state are recorded.
 
 ## Code constants
 
@@ -73,7 +82,7 @@ identity. Effective host, dependency, resource, and code state is recorded.
 | Dask resource labels and worker-cache mechanics | implementation coordination, not researcher choices |
 | source filenames and required external result columns | pinned external format contracts |
 | cleaning, transformation, combination and metric implementations | versioned implementations selected by experiment globals |
-| scheduler ports, PID/log names, polling and telemetry cadence | internal control and diagnostics |
+| PID/log names, polling and telemetry cadence | internal control and diagnostics |
 | pinned package defaults not intentionally exposed by ShapeFM | controlled by code and lockfile versions |
 
 Developer calibration grids, repetitions, tolerances, and historical evidence
@@ -81,8 +90,9 @@ remain calibration/test constants. The existing entries in
 `config/execution_profiles.json` include historical setup/calibration settings;
 they are not evidence that the old 2+4 profile is the approved heavy-test profile.
 That file also owns the implemented `poc2_seasonal_recovery` profile. Its current
-version 3 identity records 8 Mac CPU workers, 15 Ubuntu CPU workers and 15
-logical Ubuntu GPU slots. For R-only tuning, all 23 CPU workers are eligible;
+version 4 identity selects `macbook_pro` as coordinator and records 8 MacBook CPU
+workers plus 15 Ubuntu CPU workers and 15 logical Ubuntu GPU slots. The prior v3
+profile remains historical evidence. For R-only tuning, all 23 CPU workers are eligible;
 AutoARIMA uses the Ubuntu-only capability, while ETS uses the shared capability
 subject to profile-owned memory admission. Runtime configuration does not
 introduce a competing scientific experiment authority.

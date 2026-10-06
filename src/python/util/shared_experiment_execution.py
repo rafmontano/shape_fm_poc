@@ -365,6 +365,7 @@ class ExperimentCoordinator:
             )
         )
         self._hardware_cache: dict[str, dict[str, Any]] = {}
+        self._active_machine_environment = None
 
     def close(self) -> None:
         """Close the coordinator's writable DuckDB connection."""
@@ -1489,6 +1490,7 @@ class ExperimentCoordinator:
         else:
             profile, overrides = execution
             configured_settings = ExecutionSettings()
+        self._active_machine_environment = profile.machine_environment
         settings = execution_settings or configured_settings
         if (
             process == 4
@@ -1535,8 +1537,9 @@ class ExperimentCoordinator:
             expected_gpu_name = None
             try:
                 if self.configuration.version in {10, 11}:
-                    mac_workers = int(profile.dask_mac_cpu_workers or 0)
-                    ubuntu_workers = int(profile.dask_ubuntu_cpu_workers or 0)
+                    topology = profile.distributed_topology(
+                        self.configuration.version == 11
+                    )
                     paths = self.configuration.execution_paths
                     lock_path = self.root / paths["classifiers_lock"]
                     gpu_workers = 0
@@ -1554,9 +1557,24 @@ class ExperimentCoordinator:
                     )
                     cluster = validate_directional_cluster(
                         dask_client,
-                        expected_workers=mac_workers + ubuntu_workers + gpu_workers,
-                        expected_mac_workers=mac_workers,
-                        expected_ubuntu_workers=ubuntu_workers,
+                        expected_workers=topology["cpu_workers"] + gpu_workers,
+                        expected_mac_workers=0,
+                        expected_ubuntu_workers=0,
+                        expected_machine_workers=(
+                            {
+                                machine.machine.hostname: {
+                                    "cpu_workers": topology["workers_by_machine"]
+                                    [machine.machine.machine_id]["cpu_workers"],
+                                    "gpu_workers": (
+                                        gpu_workers
+                                        if "cuda" in machine.machine.capabilities
+                                        else 0
+                                    ),
+                                }
+                                for machine in profile.machine_environment.machines
+                            }
+                            if profile.machine_environment else None
+                        ),
                         timeout=settings.dask_timeout_seconds,
                         expected_manifest=repository_source_manifest(),
                         classifiers_environment=paths["classifiers_environment"],
@@ -1582,15 +1600,24 @@ class ExperimentCoordinator:
                     )
                 elif ("chronos_2" not in self.config["models"] or
                         process == 4 and self.configuration.seasonal_period_tuning is not None):
-                    mac_workers = int(profile.dask_mac_cpu_workers or 0)
-                    ubuntu_workers = int(profile.dask_ubuntu_cpu_workers or 0)
+                    topology = profile.distributed_topology(False)
                     cluster = validate_tuning_cluster(
                         dask_client,
-                        expected_workers=mac_workers + ubuntu_workers,
-                        expected_mac_workers=mac_workers,
-                        expected_ubuntu_workers=ubuntu_workers,
-                        expected_tuning_workers=int(profile.dask_mac_tuning_workers or 0)
-                        + int(profile.dask_ubuntu_tuning_workers or 0),
+                        expected_workers=topology["cpu_workers"],
+                        expected_mac_workers=0,
+                        expected_ubuntu_workers=0,
+                        expected_tuning_workers=sum(
+                            value["tuning_workers"]
+                            for value in topology["workers_by_machine"].values()
+                        ),
+                        expected_machine_workers=(
+                            {
+                                machine.machine.hostname: topology["workers_by_machine"]
+                                [machine.machine.machine_id]["cpu_workers"]
+                                for machine in profile.machine_environment.machines
+                            }
+                            if profile.machine_environment else None
+                        ),
                         timeout=settings.dask_timeout_seconds,
                         expected_manifest=repository_source_manifest(),
                     )
@@ -1623,7 +1650,8 @@ class ExperimentCoordinator:
                         expected_gpu_workers=settings.dask_expected_gpu_workers,
                         expected_manifest=repository_source_manifest(),
                         expected_topology=(profile.distributed_topology(settings.dask_expected_gpu_workers > 0)
-                                           if profile.dask_mac_cpu_workers is not None else None),
+                                           if profile.machine_environment is not None
+                                           or profile.dask_mac_cpu_workers is not None else None),
                     )
             except BaseException:
                 dask_client.close()
@@ -2654,14 +2682,11 @@ class ExperimentCoordinator:
                     execution["worker_timeouts_seconds"]["directional_dtw"]
                 ),
                 "memory_min_available_gib": {
-                    "mac": float(
-                        profile.dask_mac_memory_min_available_gib
-                        or profile.system_memory_min_available_gib
-                    ),
-                    "ubuntu": float(
-                        profile.dask_ubuntu_memory_min_available_gib
-                        or profile.system_memory_min_available_gib
-                    ),
+                    "mac": profile.coordinator_memory_floor(),
+                    "ubuntu": profile.accelerator_host_memory_floor(),
+                    "coordinator": profile.coordinator_memory_floor(),
+                    "accelerator_host": profile.accelerator_host_memory_floor(),
+                    "by_hostname": profile.memory_floors_by_hostname(),
                 },
                 "swap_growth_limit_gib": float(
                     profile.dask_swap_growth_limit_gib or 0.25
@@ -3199,18 +3224,28 @@ class ExperimentCoordinator:
         settings = self.configuration.model_storage
         storage = ModelStorage(self.root / settings["root"], settings["experiment"])
         local_path = storage.path("directional_mantis_rf", "D", horizon)
-        if worker.get("hostname") == platform.node() and local_path.is_file():
+        worker_host = str(worker.get("hostname", "")).split(".", 1)[0].lower()
+        local_host = platform.node().split(".", 1)[0].lower()
+        if worker_host == local_host and local_path.is_file():
             return evidence
         if local_path.is_file() and not settings["overwrite"]:
             return storage.save(
                 None, "directional_mantis_rf", "D", horizon, overwrite=False
             )
-        host = os.environ.get("SHAPEFM_UBUNTU_HOST", "rafmontano@WSUbuntu1.local")
-        ubuntu_root = os.environ.get(
-            "SHAPEFM_UBUNTU_ROOT",
-            "/home/rafmontano/Documents/PhD/2026/projects/shape_fm_poc",
-        )
-        remote = Path(ubuntu_root) / settings["root"] / evidence["relative_path"]
+        if self._active_machine_environment is None:
+            raise RuntimeError("remote artifact consolidation requires resolved machines")
+        matches = [
+            item
+            for item in self._active_machine_environment.remotes
+            if item.machine.hostname.split(".", 1)[0].lower() == worker_host
+        ]
+        if len(matches) != 1:
+            raise RuntimeError(
+                f"cannot resolve artifact worker hostname {worker.get('hostname')!r}"
+            )
+        machine = matches[0].machine
+        host = machine.ssh_target
+        remote = Path(machine.project_root) / settings["root"] / evidence["relative_path"]
         incoming = self.root / ".amp/in" / f"rf-h{horizon:02d}-{uuid.uuid4().hex}.joblib"
         incoming.parent.mkdir(parents=True, exist_ok=True)
         try:
@@ -3234,28 +3269,28 @@ class ExperimentCoordinator:
             incoming.unlink(missing_ok=True)
 
     def _synchronize_model_directory_to_ubuntu(self) -> None:
-        """Copy the complete authoritative experiment model directory once before prediction."""
+        """Copy authoritative fitted models to every enabled remote before prediction."""
         settings = self.configuration.model_storage
         source = self.root / settings["root"] / settings["experiment"]
         if not source.is_dir():
             raise RuntimeError("authoritative fitted-model directory is missing")
-        host = os.environ.get("SHAPEFM_UBUNTU_HOST", "rafmontano@WSUbuntu1.local")
-        ubuntu_root = os.environ.get(
-            "SHAPEFM_UBUNTU_ROOT",
-            "/home/rafmontano/Documents/PhD/2026/projects/shape_fm_poc",
-        )
-        remote_root = Path(ubuntu_root) / settings["root"]
-        subprocess.run(
-            self._secure_ssh_arguments(
-                host, f"mkdir -p {shlex.quote(str(remote_root))}"
-            ),
-            cwd=self.root, check=True, capture_output=True, text=True, timeout=60,
-        )
-        subprocess.run(
-            ["scp", *self._secure_ssh_arguments(host), "-r", str(source),
-             f"{host}:{remote_root}/"],
-            cwd=self.root, check=True, capture_output=True, text=True, timeout=600,
-        )
+        if self._active_machine_environment is None:
+            raise RuntimeError("model synchronization requires resolved machines")
+        for resolved in self._active_machine_environment.remotes:
+            machine = resolved.machine
+            host = machine.ssh_target
+            remote_root = Path(machine.project_root) / settings["root"]
+            subprocess.run(
+                self._secure_ssh_arguments(
+                    host, f"mkdir -p {shlex.quote(str(remote_root))}"
+                ),
+                cwd=self.root, check=True, capture_output=True, text=True, timeout=60,
+            )
+            subprocess.run(
+                ["scp", *self._secure_ssh_arguments(host), "-r", str(source),
+                 f"{host}:{remote_root}/"],
+                cwd=self.root, check=True, capture_output=True, text=True, timeout=600,
+            )
 
     def _store_v11_dtw_predictions(self, experiment_id: str) -> None:
         """Mirror accepted DTW outputs into the additive model-neutral contract."""

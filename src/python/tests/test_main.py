@@ -357,6 +357,33 @@ class RestoredProcessActionTests(unittest.TestCase):
             ProcessAction().run(database, None, (1,))
         self.assertFalse(database.exists())
 
+    def test_unavailable_enabled_machine_blocks_before_database_creation(self):
+        """Distributed endpoint failure cannot create new scientific state."""
+        database = self.root / "unreachable.duckdb"
+        configuration = (
+            ROOT / "config/experiments/"
+            "poc2_m4_daily_100_directional_dtw_mantis_rf.json"
+        )
+        cluster = MagicMock()
+        cluster.start.side_effect = RuntimeError("enabled machine is unreachable")
+        with (
+            patch(
+                "util.shared_distributed_cluster.ManagedTuningCluster",
+                return_value=cluster,
+            ),
+            patch.object(action_module, "initialize_experiment_database") as initialize,
+            self.assertRaisesRegex(RuntimeError, "enabled machine is unreachable"),
+        ):
+            ProcessAction().run(
+                database,
+                configuration,
+                (4,),
+                execution_profile="poc2_seasonal_recovery",
+            )
+        initialize.assert_not_called()
+        self.assertFalse(database.exists())
+        cluster.stop.assert_called_once()
+
     def test_existing_database_rejects_competing_configuration(self):
         """Resume keeps stored DuckDB configuration authoritative."""
         database = self.root / "existing.duckdb"
@@ -398,7 +425,9 @@ class RestoredProcessActionTests(unittest.TestCase):
             execution, settings, selected, evidence = ProcessAction()._execution(
                 configuration, (4,), "poc2_seasonal_recovery", None
             )
-        factory.assert_called_once_with(execution[0], requires_gpu=True)
+        factory.assert_called_once_with(
+            execution[0], configuration=configuration, requires_gpu=True
+        )
         self.assertIs(selected, cluster)
         self.assertEqual(settings.dask_expected_workers, 38)
         self.assertEqual(settings.dask_expected_gpu_workers, 15)
@@ -424,7 +453,7 @@ class RestoredProcessActionTests(unittest.TestCase):
                 requires_gpu=True,
             )
         factory.assert_called_once_with(
-            execution[0], requires_gpu=True, gpu_workers=1
+            execution[0], configuration=configuration, requires_gpu=True, gpu_workers=1
         )
         self.assertIs(selected, cluster)
         self.assertEqual(settings.dask_expected_workers, 24)

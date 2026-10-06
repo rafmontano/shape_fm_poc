@@ -1,0 +1,21 @@
+{
+  "configuration_version": 1,
+  "machines": {
+    "macbook_pro": {
+      "hostname": "RMMacbookPro.local",
+      "project_root": "/Users/monta/Documents/Projects/shape_fm_poc",
+      "capabilities": ["cpu", "mps"]
+    },
+    "ubuntu_primary": {
+      "hostname": "WSUbuntu1.local",
+      "ssh_user": "rafmontano",
+      "project_root": "/home/rafmontano/Documents/PhD/2026/projects/shape_fm_poc",
+      "capabilities": ["cpu", "cuda"]
+    }
+  },
+  "services": {
+    "prefect_port": 4200,
+    "dask_scheduler_port": 8786,
+    "dask_dashboard_port": 8787
+  }
+}

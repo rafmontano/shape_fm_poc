@@ -73,11 +73,11 @@ numbered gates and optional preparation workflows remain unchanged.
 ```mermaid
 flowchart TB
     entry["Researcher interface<br/>00_main.py and central configuration"]
-    workflow["Workflow layer on Mac<br/>Prefect experiment, gate and substep flows"]
-    dispatch["Compute scheduling layer<br/>Dask with the approved execution profile<br/>Mac CPU and Ubuntu CPU or GPU pools"]
+    workflow["Workflow layer on selected coordinator<br/>Prefect experiment, gate and substep flows"]
+    dispatch["Compute scheduling layer<br/>Dask with the approved execution profile<br/>enabled CPU and accelerator pools"]
     adapters["Provider objects and adapters<br/>Bounded jobs and native R or Python objects"]
     science["Scientific object methods and small functions<br/>forecast, Chronos-2, tsai and GIFT-Eval"]
-    writer["Storage object on Mac<br/>Validate results and commit through one writer"]
+    writer["Storage object on selected coordinator<br/>Validate results and commit through one writer"]
     research[("DuckDB research storage<br/>Configuration, accepted results and checkpoints")]
     history[("Local SQLite operational storage<br/>Prefect run history only")]
 
@@ -92,12 +92,14 @@ flowchart TB
 ```
 
 In words: Prefect coordinates the work, Dask distributes eligible computation,
-adapters supply native inputs, existing libraries calculate, and the Mac
-validates and saves results. Small coordinator-local work does not need a Dask
-job. SQLite records workflow history; it is not another research dataset.
-DuckDB includes the existing parent/child window databases where applicable.
-Worker numbers and safety limits come from the execution profile, not this
-diagram. Mantis training and future scientific extensions are not added here.
+adapters supply native inputs, existing libraries calculate, and the selected
+coordinator validates and saves results. The current profile selects the MacBook
+Pro; a future approved profile may select the Mac Studio. Small coordinator-local
+work does not need a Dask job. SQLite records workflow history; it is not another
+research dataset. DuckDB includes the existing parent/child window databases
+where applicable. Worker numbers and safety limits come from the execution
+profile, not this diagram. Mantis training and future scientific extensions are
+not added here.
 
 ## Mandatory use and future changes
 
@@ -177,7 +179,10 @@ Progress must explain the gate/substep, accepted and outstanding work, failures,
 host contributions and throttling reasons without requiring platform expertise.
 
 Use one self-hosted Prefect service with persistent local operational metadata
-on the coordinator. SQLite is the approved starting backend; Prefect documents
+on the coordinator. Resolve that coordinator and its enabled workers through the
+approved [machine inventory](machine-environment.md) and execution profile;
+derive private-LAN endpoints without requiring a researcher-managed IP address.
+SQLite is the approved starting backend; Prefect documents
 it for [lightweight single-server operation](https://docs.prefect.io/v3/concepts/server).
 Start or reuse the required services through the existing entry workflow, with
 explicit ownership and safe cleanup. No cloud account, Kubernetes, external
@@ -274,8 +279,8 @@ history and concise logs, without logging full data arrays. Prefect
 it must not replace DuckDB completion checks or duplicate research datasets.
 An existing path alone is not proof that an output matches the experiment.
 Workers get bounded payloads or accessible validated artifact references, never writable
-DuckDB connections or unusable paths local to another host. The Mac coordinator
-remains the sole research database writer, committing results incrementally.
+DuckDB connections or unusable paths local to another host. The selected
+coordinator remains the sole research database writer, committing results incrementally.
 Keep database writes coordinator-local and serialised, outside the distributed
 compute pool. Refuse overlapping writer workflows against the same database.
 

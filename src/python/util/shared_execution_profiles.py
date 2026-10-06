@@ -20,11 +20,12 @@ import selectors
 import signal
 import subprocess
 import threading
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
 
 from .p01_02_import_execution import repository_root
+from .shared_machine_environment import MachineEnvironment, resolve_machine_environment
 
 
 # Code constant: IEC bytes per gibibyte used by memory-limit calculations.
@@ -32,7 +33,7 @@ GIB = 1024**3
 # Execution-global policy identity: the sole approved distributed profile for
 # ordinary heavy seasonal tuning. Historical snapshots remain stored in DuckDB.
 APPROVED_HEAVY_TUNING_PROFILE = "poc2_seasonal_recovery"
-APPROVED_HEAVY_TUNING_PROFILE_VERSION = 3
+APPROVED_HEAVY_TUNING_PROFILE_VERSION = 4
 # Code constant: profile fields admitted by the execution-override interface.
 WORKER_FIELDS = (
     "cleaning_workers",
@@ -81,10 +82,17 @@ class ExecutionProfile:
     dask_memory_poll_interval_seconds: float | None = None
     dask_memory_breach_grace_seconds: float | None = None
     dask_swap_growth_limit_gib: float | None = None
+    machine_environment: MachineEnvironment | None = field(
+        default=None, repr=False, compare=False
+    )
 
     def to_dict(self) -> dict[str, Any]:
         """Return this object's dict representation for serialization and provenance comparison."""
-        return asdict(self)
+        values = asdict(self)
+        values["machine_environment"] = (
+            self.machine_environment.to_dict() if self.machine_environment else None
+        )
+        return values
 
     @property
     def fingerprint(self) -> str:
@@ -101,6 +109,8 @@ class ExecutionProfile:
         work. Outputs: Exact Mac CPU, Ubuntu CPU, Ubuntu GPU, and total counts;
         GPU workers are zero for CPU-only work. No processes are started.
         """
+        if self.machine_environment is not None:
+            return self.machine_environment.topology(requires_gpu)
         mac_cpu = int(self.dask_mac_cpu_workers or 0)
         ubuntu_cpu = int(self.dask_ubuntu_cpu_workers or 0)
         ubuntu_gpu = int(self.dask_ubuntu_gpu_workers or 0) if requires_gpu else 0
@@ -112,6 +122,50 @@ class ExecutionProfile:
             "total_workers": mac_cpu + ubuntu_cpu + ubuntu_gpu,
             "requires_gpu": requires_gpu,
         }
+
+    def memory_floors_by_hostname(self) -> dict[str, float]:
+        """Return profile-owned host memory floors keyed by configured hostname."""
+        if self.machine_environment is None:
+            return {}
+        return {
+            machine.machine.hostname: float(
+                machine.allocation.memory_min_available_gib
+                or self.system_memory_min_available_gib
+            )
+            for machine in self.machine_environment.machines
+        }
+
+    def coordinator_memory_floor(self) -> float:
+        """Return the selected coordinator's profile-owned host memory floor."""
+        if self.machine_environment is None:
+            return float(
+                self.dask_mac_memory_min_available_gib
+                or self.system_memory_min_available_gib
+            )
+        allocation = self.machine_environment.coordinator.allocation
+        return float(
+            allocation.memory_min_available_gib
+            or self.system_memory_min_available_gib
+        )
+
+    def accelerator_host_memory_floor(self) -> float:
+        """Return the strictest enabled CUDA-host memory floor."""
+        if self.machine_environment is None:
+            return float(
+                self.dask_ubuntu_memory_min_available_gib
+                or self.system_memory_min_available_gib
+            )
+        floors = [
+            float(
+                machine.allocation.memory_min_available_gib
+                or self.system_memory_min_available_gib
+            )
+            for machine in self.machine_environment.machines
+            if "cuda" in machine.machine.capabilities
+        ]
+        if not floors:
+            raise ValueError("execution profile has no enabled CUDA machine")
+        return max(floors)
 
 
 @dataclass(frozen=True)
@@ -152,7 +206,24 @@ def load_execution_profiles(path: Path | None = None) -> dict[str, ExecutionProf
     """Purpose: Load named hardware profiles from JSON. Inputs: ``path`` is an optional filesystem ``Path``; ``None`` selects the repository configuration file. Outputs: A mapping from JSON profile names to immutable ``ExecutionProfile`` objects; reads one UTF-8 file and performs no writes."""
     path = path or repository_root() / "config/execution_profiles.json"
     raw = json.loads(path.read_text(encoding="utf-8"))
-    return {name: ExecutionProfile(name=name, **values) for name, values in raw.items()}
+    profiles = {}
+    for name, source in raw.items():
+        values = dict(source)
+        coordinator = values.pop("coordinator", None)
+        machines = values.pop("machines", None)
+        if (coordinator is None) != (machines is None):
+            raise ValueError(
+                f"profile {name} must define coordinator and machines together"
+            )
+        environment = (
+            resolve_machine_environment(coordinator, machines)
+            if coordinator is not None
+            else None
+        )
+        profiles[name] = ExecutionProfile(
+            name=name, machine_environment=environment, **values
+        )
+    return profiles
 
 
 def resolve_execution_profile(
@@ -170,6 +241,8 @@ def resolve_execution_profile(
     unknown = sorted(set(clean_overrides) - set(ExecutionProfile.__dataclass_fields__))
     if unknown:
         raise ValueError(f"unknown execution overrides: {', '.join(unknown)}")
+    if "machine_environment" in clean_overrides:
+        raise ValueError("machine environment overrides must use the central resolver")
     if (
         profiles[name].required_accelerator is not None
         and "required_accelerator" in clean_overrides
@@ -208,6 +281,10 @@ def resolve_execution_profile(
         minimum = 1 if field == "dask_max_in_flight" else 0
         if value is not None and value < minimum:
             raise ValueError(f"{field} must be at least {minimum} when configured")
+    if profile.machine_environment is not None:
+        topology = profile.machine_environment.topology(requires_gpu=False)
+        if topology["cpu_workers"] < 1:
+            raise ValueError("distributed profile requires at least one CPU worker")
     if (
         profile.dask_mac_tuning_workers is not None
         and profile.dask_mac_cpu_workers is not None

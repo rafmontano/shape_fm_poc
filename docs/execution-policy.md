@@ -114,11 +114,45 @@ does not authorise scientific changes. The later
 authorises Stage 2 and checkpoint publication. Deferred CPU-overlap and
 scheduler-loss checks move into Stage 2; the safeguards above are not relaxed.
 
+Runtime profile v4 implements the separately approved machine-environment
+decision without changing those v3 capacities or safeguards. It replaces active
+Mac/Ubuntu-specific allocation fields with `coordinator` and logical `machines`
+entries resolved against `config/machines.json`; historical v3 evidence remains
+unchanged.
+
+## Machine inventory and coordinator selection
+
+Approved on 6 October 2026: use the
+[machine-environment decision](machine-environment.md) for host discovery and
+coordinator selection. `config/machines.json` describes stable hosts, project
+roots, capabilities and service ports. The selected execution profile chooses
+exactly one coordinator, enabled machines and their worker allocations.
+
+The current active profile continues to select the MacBook Pro as coordinator
+and Ubuntu as worker; all approved capacities and safety limits in this policy
+remain unchanged. The design does not claim that the future Mac Studio has been
+calibrated. After it arrives, add its inventory record, calibrate it, and approve
+a profile before it performs research work.
+
+The selected coordinator owns Prefect, the Dask scheduler, the sole writable
+DuckDB connection and the authoritative external fitted-model directory. Normal
+execution derives `PREFECT_API_URL` and Dask endpoints from the coordinator's
+configured hostname and service ports. It must not require a manually exported
+IP address. Bind services only to the private LAN for the owned run, validate
+reachability from every enabled worker before scientific mutation, and stop all
+owned services afterward.
+
+An enabled unavailable machine blocks execution; ShapeFM does not silently
+downscale. A disabled machine may be off. Moving an existing experiment to a new
+coordinator requires a deliberate verified transfer of both DuckDB and its
+external fitted-model directory, after which only the receiving coordinator may
+write. Do not introduce automatic state migration in the MVP.
+
 ## Memory safety and workload placement
 
-Keep one thread per R job and avoid nested parallelism. Python on the Mac is
-the sole DuckDB writer; remote workers receive serializable inputs and return
-results, never database connections.
+Keep one thread per R job and avoid nested parallelism. Python on the selected
+coordinator is the sole DuckDB writer; remote workers receive serializable inputs
+and return results, never database connections.
 
 Capacity is not permission to run eight memory-intensive fits simultaneously
 on the 16 GiB Mac. The completed recovery reported an Ubuntu R child reaching
@@ -194,6 +228,9 @@ relevant submodules/locks on both hosts. Restart only test-owned workers.
 
 Keep native environments local. Do not copy Mac virtual environments, compiled
 R libraries, secrets, databases, results or machine-specific settings to Ubuntu.
+The reviewed tracked `config/machines.json` inventory is shared project
+configuration and is synchronised with source; machine-local overrides,
+credentials, environments and caches are not.
 Restore required missing packages from approved locks using the existing
 non-destructive installation approach, without unapproved upgrades or resets.
 If conflicts prevent safe synchronisation, stop before testing and report them.

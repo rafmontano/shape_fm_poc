@@ -652,6 +652,20 @@ def seasonal_tuning_batch(
     results = []
     admissions = []
     system = platform.system()
+    hostname = platform.node().split(".", 1)[0].lower()
+    floor_matches = [
+        value
+        for key, value in memory_floors_gib.items()
+        if key.split(".", 1)[0].lower() == hostname
+    ]
+    if len(floor_matches) == 1:
+        floor = float(floor_matches[0])
+    elif system in memory_floors_gib:
+        floor = float(memory_floors_gib[system])
+    else:
+        raise RuntimeError(
+            f"worker {platform.node()} has no unique configured memory floor"
+        )
     for payload in batch:
         models = {task["model"] for task in payload["tasks"]}
         if len(models) != 1:
@@ -659,7 +673,7 @@ def seasonal_tuning_batch(
         model = models.pop()
         reservation = (
             tuning_memory_reservation(
-                float(memory_floors_gib[system]),
+                floor,
                 float(fit_budgets_gib[model]),
                 timeout_seconds=float(memory_controls["admission_timeout_seconds"]),
                 poll_interval_seconds=float(memory_controls["poll_interval_seconds"]),
@@ -912,8 +926,7 @@ def _execute_tuned_forecasts(
     if distributed:
         worker_arguments = (
             paths["r_preprocess_worker"], paths["r_forecast_worker"], timeout, threads,
-            {"Darwin": float(profile.dask_mac_memory_min_available_gib),
-             "Linux": float(profile.dask_ubuntu_memory_min_available_gib)},
+            profile.memory_floors_by_hostname(),
             {"auto_arima": float(profile.dask_autoarima_fit_budget_gib),
              "ets": float(profile.dask_ets_fit_budget_gib)},
             {"admission_timeout_seconds": float(profile.dask_memory_admission_timeout_seconds),

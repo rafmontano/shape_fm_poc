@@ -43,8 +43,6 @@ class ForecastSafetyPolicy:
     def from_profile(cls, profile: Any, mac_hostname: str) -> "ForecastSafetyPolicy":
         """Resolve ordinary forecast safeguards solely from an ExecutionProfile."""
         required = {
-            "dask_mac_memory_min_available_gib": profile.dask_mac_memory_min_available_gib,
-            "dask_ubuntu_memory_min_available_gib": profile.dask_ubuntu_memory_min_available_gib,
             "dask_autoarima_fit_budget_gib": profile.dask_autoarima_fit_budget_gib,
             "dask_memory_admission_timeout_seconds": profile.dask_memory_admission_timeout_seconds,
             "dask_memory_poll_interval_seconds": profile.dask_memory_poll_interval_seconds,
@@ -57,8 +55,9 @@ class ForecastSafetyPolicy:
         return cls(
             autoarima={
                 "mac_hostname": mac_hostname,
-                "mac_minimum_available_gib": required["dask_mac_memory_min_available_gib"],
-                "ubuntu_minimum_available_gib": required["dask_ubuntu_memory_min_available_gib"],
+                "mac_minimum_available_gib": profile.coordinator_memory_floor(),
+                "ubuntu_minimum_available_gib": profile.accelerator_host_memory_floor(),
+                "minimum_available_gib_by_hostname": profile.memory_floors_by_hostname(),
                 "fit_budget_gib": required["dask_autoarima_fit_budget_gib"],
                 "admission_timeout_seconds": required["dask_memory_admission_timeout_seconds"],
                 "poll_interval_seconds": required["dask_memory_poll_interval_seconds"],
@@ -67,7 +66,7 @@ class ForecastSafetyPolicy:
             },
             accelerator={
                 "minimum_available_gib": profile.accelerator_memory_min_available_gib,
-                "host_minimum_available_gib": required["dask_ubuntu_memory_min_available_gib"],
+                "host_minimum_available_gib": profile.accelerator_host_memory_floor(),
                 "admission_timeout_seconds": required["dask_memory_admission_timeout_seconds"],
                 "poll_interval_seconds": required["dask_memory_poll_interval_seconds"],
                 "breach_grace_seconds": required["dask_memory_breach_grace_seconds"],

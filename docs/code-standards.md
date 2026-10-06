@@ -352,8 +352,11 @@ Every active production global setting belongs to one of four classes:
    actually used is recorded with the DuckDB execution event. Approved
    execution globals may change when an experiment resumes.
 3. **Machine environment.** Identifies a host, address, port, installation,
-   device, or cache. It remains in a machine profile or environment variable;
-   its effective non-secret value is recorded as execution evidence.
+   device, or cache. Stable shared machine facts live in the approved
+   [machine inventory](machine-environment.md); execution profiles select the
+   coordinator and enabled workers. Environment variables are explicit temporary
+   overrides, not ordinary hidden defaults. Effective non-secret values are
+   recorded as execution evidence.
 4. **Code constant.** Defines a local implementation, schema, or protocol and
    is not a researcher-controlled setting. It remains documented in code.
 
@@ -680,8 +683,10 @@ Do not silently switch to local heavy execution if Ubuntu is unavailable.
 Implementation must test mismatch rejection and real cross-host computation;
 documentation or connected-worker counts alone do not establish compliance.
 
-- The Mac runs the coordinator and Dask scheduler.
-- Only the coordinator writes to DuckDB.
+- The execution profile selects one coordinator; the current profile selects the
+  MacBook Pro, and a future approved profile may select the Mac Studio.
+- The selected coordinator runs Prefect and Dask scheduling and is the only
+  DuckDB writer.
 - Workers receive ordinary tasks and return ordinary results.
 - Execution mode and worker count do not alter scientific identity.
 - Completed tasks are not repeated after restart.

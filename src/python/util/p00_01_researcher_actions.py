@@ -25,7 +25,7 @@ from typing import Any
 import duckdb
 
 from tests.acceptance import run_acceptance
-from .shared_configuration import PROCESS_NAMES
+from .shared_configuration import PROCESS_NAMES, load_experiment_configuration
 from .shared_database import initialize_experiment_database, load_database_configuration
 from .shared_execution_event_storage import ExecutionEventStorage
 from .shared_execution_profiles import (APPROVED_HEAVY_TUNING_PROFILE, ExecutionSettings,
@@ -89,25 +89,30 @@ class ProcessAction:
     def _run(self, database: Path, configuration_path: Path | None, processes: tuple[int, ...],
              execution_profile: str | None, local_heavy_exception: str | None) -> dict[str, Any]:
         """Execute selected gates and always release an acquired managed cluster."""
-        if database.exists():
+        creating = not database.exists()
+        if not creating:
             if configuration_path is not None:
                 raise ValueError("--configuration is only valid when creating a new database")
         elif configuration_path is None:
             raise ValueError("--configuration is required when creating a new database")
-        else:
-            initialize_experiment_database(database, configuration_path)
-        configuration = load_database_configuration(database)
-        storage = ProcessStorage(database)
+        configuration = (
+            load_experiment_configuration(configuration_path)
+            if creating
+            else load_database_configuration(database)
+        )
+        requires_gpu = bool(
+            4 in processes
+            and {"chronos_2", "directional_mantis_rf"}
+            & set(configuration.resolved["models"])
+        )
         execution, settings, cluster, cluster_evidence = self._execution(
             configuration, processes, execution_profile, local_heavy_exception,
-            requires_gpu=(4 in processes and storage.forecast_requires_gpu(
-                bool(
-                    {"chronos_2", "directional_mantis_rf"}
-                    & set(configuration.resolved["models"])
-                )
-            )) if execution_profile else None,
+            requires_gpu=requires_gpu if execution_profile else None,
         )
         try:
+            if creating:
+                initialize_experiment_database(database, configuration_path)
+            storage = ProcessStorage(database)
             events = ExecutionEventStorage(database)
             states = {number: status for number, status, _ in storage.process_rows()}
             for process_id in processes:
@@ -231,18 +236,22 @@ class ProcessAction:
             )
             topology = {
                 **topology,
-                "ubuntu_gpu_workers": gpu_workers,
+                "gpu_workers": gpu_workers,
                 "total_workers": topology["cpu_workers"] + gpu_workers,
             }
         guard_settings = ExecutionSettings(mode="dask", dask_scheduler_address="managed",
             dask_expected_workers=topology["total_workers"],
-            dask_expected_gpu_workers=topology["ubuntu_gpu_workers"],
+            dask_expected_gpu_workers=topology.get(
+                "gpu_workers", topology.get("ubuntu_gpu_workers", 0)
+            ),
             dask_max_in_flight=int(profile.dask_max_in_flight or 1), dask_retries=0)
         validate_heavy_tuning_execution(profile, guard_settings, overrides)
         cluster_options = {"requires_gpu": requires_gpu}
         if gpu_workers is not None:
             cluster_options["gpu_workers"] = gpu_workers
-        cluster = ManagedTuningCluster(profile, **cluster_options)
+        cluster = ManagedTuningCluster(
+            profile, configuration=configuration, **cluster_options
+        )
         try:
             evidence = cluster.start()
         except BaseException:
@@ -254,7 +263,9 @@ class ProcessAction:
         settings = ExecutionSettings(mode="dask", dask_scheduler_address=cluster.scheduler_address,
             dask_timeout_seconds=float(configuration.execution["dask_timeout_seconds"]),
             dask_expected_workers=topology["total_workers"],
-            dask_expected_gpu_workers=topology["ubuntu_gpu_workers"],
+            dask_expected_gpu_workers=topology.get(
+                "gpu_workers", topology.get("ubuntu_gpu_workers", 0)
+            ),
             dask_max_in_flight=int(profile.dask_max_in_flight or 1), dask_retries=0)
         return execution, settings, cluster, evidence
 
@@ -426,6 +437,19 @@ class WindowPreparationAction:
         from .shared_distributed_execution import package_version_probe, validate_tuning_cluster
 
         profile, _ = resolve_execution_profile(profile_name)
+        topology = profile.distributed_topology(False)
+        environment = profile.machine_environment
+        if environment is None:
+            raise RuntimeError("distributed preparation requires resolved machines")
+        expected_machines = {
+            machine.machine.hostname: topology["workers_by_machine"]
+            [machine.machine.machine_id]["cpu_workers"]
+            for machine in environment.machines
+        }
+        floors = profile.memory_floors_by_hostname()
+        remote_floor = max(
+            floors[machine.machine.hostname] for machine in environment.remotes
+        )
         cluster = ManagedTuningCluster(profile)
         try:
             evidence = cluster.start()
@@ -433,19 +457,24 @@ class WindowPreparationAction:
             try:
                 workers = validate_tuning_cluster(
                     client,
-                    expected_workers=int(profile.dask_mac_cpu_workers or 0) + int(profile.dask_ubuntu_cpu_workers or 0),
-                    expected_mac_workers=int(profile.dask_mac_cpu_workers or 0),
-                    expected_ubuntu_workers=int(profile.dask_ubuntu_cpu_workers or 0),
-                    expected_tuning_workers=int(profile.dask_mac_tuning_workers or 0) + int(profile.dask_ubuntu_tuning_workers or 0),
+                    expected_workers=topology["cpu_workers"],
+                    expected_mac_workers=0,
+                    expected_ubuntu_workers=0,
+                    expected_tuning_workers=sum(
+                        value["tuning_workers"]
+                        for value in topology["workers_by_machine"].values()
+                    ),
+                    expected_machine_workers=expected_machines,
                     timeout=180, expected_manifest=manifest_rows,
                 )
                 versions = client.run(package_version_probe, "tsai")
                 if set(versions.values()) != {"1.0.1"}:
                     raise RuntimeError(f"window workers do not share pinned tsai 1.0.1: {versions}")
                 safety = {
-                    "mac_hostname": platform.node(),
-                    "mac_minimum_available_gib": profile.dask_mac_memory_min_available_gib,
-                    "ubuntu_minimum_available_gib": profile.dask_ubuntu_memory_min_available_gib,
+                    "mac_hostname": environment.coordinator.machine.hostname,
+                    "mac_minimum_available_gib": profile.coordinator_memory_floor(),
+                    "ubuntu_minimum_available_gib": remote_floor,
+                    "minimum_available_gib_by_hostname": floors,
                     "fit_budget_gib": profile.dask_ets_fit_budget_gib,
                     "admission_timeout_seconds": profile.dask_memory_admission_timeout_seconds,
                     "poll_interval_seconds": profile.dask_memory_poll_interval_seconds,
@@ -558,6 +587,19 @@ class FeatureExtractionAction:
         )
 
         profile, _ = resolve_execution_profile(profile_name)
+        topology = profile.distributed_topology(False)
+        environment = profile.machine_environment
+        if environment is None:
+            raise RuntimeError("distributed feature extraction requires resolved machines")
+        expected_machines = {
+            machine.machine.hostname: topology["workers_by_machine"]
+            [machine.machine.machine_id]["cpu_workers"]
+            for machine in environment.machines
+        }
+        floors = profile.memory_floors_by_hostname()
+        remote_floor = max(
+            floors[machine.machine.hostname] for machine in environment.remotes
+        )
         cluster = ManagedTuningCluster(profile)
         try:
             evidence = cluster.start()
@@ -565,20 +607,23 @@ class FeatureExtractionAction:
             try:
                 workers = validate_tuning_cluster(
                     client,
-                    expected_workers=int(profile.dask_mac_cpu_workers or 0)
-                    + int(profile.dask_ubuntu_cpu_workers or 0),
-                    expected_mac_workers=int(profile.dask_mac_cpu_workers or 0),
-                    expected_ubuntu_workers=int(profile.dask_ubuntu_cpu_workers or 0),
-                    expected_tuning_workers=int(profile.dask_mac_tuning_workers or 0)
-                    + int(profile.dask_ubuntu_tuning_workers or 0),
+                    expected_workers=topology["cpu_workers"],
+                    expected_mac_workers=0,
+                    expected_ubuntu_workers=0,
+                    expected_tuning_workers=sum(
+                        value["tuning_workers"]
+                        for value in topology["workers_by_machine"].values()
+                    ),
+                    expected_machine_workers=expected_machines,
                     timeout=180,
                     expected_manifest=manifest_rows,
                 )
                 descriptions_by_worker = client.run(feature_provider_description)
                 safety = {
-                    "mac_hostname": platform.node(),
-                    "mac_minimum_available_gib": profile.dask_mac_memory_min_available_gib,
-                    "ubuntu_minimum_available_gib": profile.dask_ubuntu_memory_min_available_gib,
+                    "mac_hostname": environment.coordinator.machine.hostname,
+                    "mac_minimum_available_gib": profile.coordinator_memory_floor(),
+                    "ubuntu_minimum_available_gib": remote_floor,
+                    "minimum_available_gib_by_hostname": floors,
                     "fit_budget_gib": profile.dask_ets_fit_budget_gib,
                     "admission_timeout_seconds": profile.dask_memory_admission_timeout_seconds,
                     "poll_interval_seconds": profile.dask_memory_poll_interval_seconds,

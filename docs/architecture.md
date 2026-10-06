@@ -9,7 +9,8 @@ combination and adjustment.
 
 The [approved workflow standard and software-layer diagram](poc2-workflow-orchestration-decision.md#software-layers)
 define the implementation for existing and future workflows: Prefect orchestration,
-Dask compute scheduling, native R/Python adapters, and one Mac DuckDB writer.
+Dask compute scheduling, native R/Python adapters, and one coordinator-selected
+DuckDB writer.
 Approved on 2 October 2026; Stage 1 was accepted for progression with limitations
 on 3 October, and pragmatic Stage 2 is authorised. Full migration remains open. The
 [mandatory object-oriented standard](code-standards.md#mandatory-object-oriented-implementation)
@@ -18,6 +19,13 @@ orchestrate their operations. See the retained initial evidence in the
 [acceptance record](poc2-workflow-orchestration-acceptance.md). Follow the
 [AMP-Code instructions](amp-poc2-workflow-orchestration-instructions.md) for the
 implementation boundary and update this map with later workflow changes.
+
+The [approved machine-environment decision](machine-environment.md) makes the
+current MacBook/Ubuntu topology configuration-driven. A shared inventory owns
+stable host facts, while the execution profile selects one coordinator and its
+enabled workers. Prefect and Dask endpoints are derived from the coordinator
+hostname. This preserves the present MacBook coordinator and permits a future
+Mac Studio coordinator without a source-code branch.
 
 ### Approved file organisation follow up
 
@@ -122,7 +130,7 @@ researcher entry → Prefect experiment → retained gate / tuning / window flow
                                              │
                                   native scientific adapters
                                              │
-                                validate → Mac DuckDB commit
+                           validate → coordinator DuckDB commit
                                              │
                                  read-only result retrieval
 ```
@@ -207,7 +215,7 @@ approved methods; it does not preserve every legacy module for its own sake.
                           │                                      │
                           └─ read-only retrieval       native R / Chronos provider
                                                                  │
-                                                   validated Mac DuckDB commit
+                                              validated coordinator DuckDB commit
 ```
 
 Prefect-Dask serializes parent flow parameters as task context. Consequently,
@@ -277,15 +285,15 @@ software-layer diagram is linked above. The target layers are listed below;
 the initial implementation remains under refactoring and review:
 
 1. **Research interface.** `src/python/00_main.py` is the sole public command.
-2. **Prefect workflow layer on Mac.** Readable experiment, gate and preparation
+2. **Prefect workflow layer on the selected coordinator.** Readable experiment, gate and preparation
    flows orchestrate meaningful object operations and retain operational history
    in local SQLite. Scientific result persistence and task caching are disabled.
-3. **Dask compute layer.** Eligible bounded jobs use the approved Mac/Ubuntu
-   pools and execution profile; local coordinator work remains local.
+3. **Dask compute layer.** Eligible bounded jobs use the machines enabled by the
+   approved execution profile; local coordinator work remains local.
 4. **Native objects/adapters.** Configured source/provider objects encapsulate
    Python/R library operations and small reusable functions; remote computation
    has no writable database access.
-5. **Acceptance/storage layer on Mac.** A coordinator-local storage object owns
+5. **Acceptance/storage layer on the selected coordinator.** A coordinator-local storage object owns
    serialized commits of validated authoritative research state to DuckDB.
 
 ![ShapeFM technical layers](images/shapefm_technical_layers.png)
@@ -337,8 +345,9 @@ remain independent of worker placement and concurrency. Each successful result
 and task completion is committed atomically by the coordinator. Failed or
 interrupted work remains retryable; completed work is skipped on restart.
 
-The Dask scheduler is transient and non-authoritative. The Mac hosts the
-coordinator and scheduler. The [approved execution policy](execution-policy.md)
+The Dask scheduler is transient and non-authoritative. The selected coordinator
+hosts Prefect and the Dask scheduler and remains the sole writer. The current
+profile selects the MacBook Pro. The [approved execution policy](execution-policy.md)
 governs worker capacity, memory-safe admission and availability exceptions.
 Objective 1's one-CPU/one-GPU topology is a historical limited acceptance case,
 not the heavy-test default. Chronos work uses `CHRONOS_GPU_SLOT` on the physical
@@ -565,7 +574,7 @@ completed child with an interrupted parent run record without recomputation.
 
 ID 013 extends this independent workflow with `directional_strict_v1`. The R
 input-only cleaning boundary returns the final cleaned value on the original
-scale; the Mac coordinator compares each untouched parent future with that
+scale; the selected coordinator compares each untouched parent future with that
 explicit reference through the shared Python calculation. Child schema version
 3 stores one compact nullable label vector and its definition/reference lineage
 against the existing window identity. Window arrays, futures and S1 membership

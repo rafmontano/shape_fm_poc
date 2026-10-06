@@ -70,7 +70,11 @@ lockfiles, source, configuration, documentation, and tests remain trackable.
 
 The [approved workflow standard and software-layer diagram](docs/poc2-workflow-orchestration-decision.md)
 govern this and future workflow development: Prefect coordinates, Dask schedules
-compute, and the Mac remains the sole DuckDB writer. The researcher closed
+compute, and the coordinator selected by the execution profile remains the sole
+DuckDB writer. The tracked [machine inventory](config/machines.json) supplies
+stable host facts and service ports; normal distributed execution derives its
+Prefect and Dask endpoints without a manually exported Mac IP or
+`PREFECT_API_URL`. The researcher closed
 Stage 1 on 3 October 2026 with known limitations and authorised pragmatic Stage 2
 consolidation and the reviewed GitHub checkpoint. See the
 [acceptance record](docs/poc2-workflow-orchestration-acceptance.md). Prefect records
@@ -314,7 +318,9 @@ src/python/util/p01_01_import_flow.py     import coordinating flow
 src/python/util/p04_01_forecast_flow.py   forecasting coordinating flow
 src/python/util/p05_01_forecast_combination.py combination calculation
 src/python/util/shared_experiment_execution.py cross-gate coordinator
+src/python/util/shared_machine_environment.py machine inventory and topology resolver
 src/python/util/shared_workflow_orchestration.py Prefect flows, tasks, writer locks
+config/machines.json                    stable machine identities and service ports
 src/python/util/window_preparation.py    rolling-window/S1 coordinator and retrieval
 src/python/tests/                        unit, integration, and acceptance tests
 src/r/02_01_preprocess_series.R          R preprocessing substep

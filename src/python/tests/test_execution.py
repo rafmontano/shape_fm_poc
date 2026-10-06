@@ -37,6 +37,7 @@ from util.shared_execution_profiles import (
     validate_heavy_tuning_execution,
 )
 from util.shared_configuration import load_experiment_configuration
+from util.shared_machine_environment import resolve_machine_environment
 from util.shared_experiment_execution import (
     ExperimentCoordinator,
     _length_aware_batches,
@@ -107,28 +108,26 @@ class ExecutionProfileTests(unittest.TestCase):
             (2, 4, 16, 12),
         )
         recovery, _ = resolve_execution_profile("poc2_seasonal_recovery")
-        self.assertEqual(
-            (
-                recovery.profile_version,
-                recovery.dask_mac_cpu_workers,
-                recovery.dask_ubuntu_cpu_workers,
-                recovery.dask_ubuntu_gpu_workers,
-                recovery.dask_mac_tuning_workers,
-                recovery.dask_ubuntu_tuning_workers,
-                recovery.dask_max_in_flight,
-                recovery.dask_autoarima_max_in_flight,
-                recovery.dask_ets_max_in_flight,
-                recovery.dask_autoarima_fit_budget_gib,
-            ),
-            (3, 8, 15, 15, 8, 15, 23, 8, 15, 12),
-        )
+        self.assertEqual(recovery.profile_version, 4)
+        self.assertEqual(recovery.dask_max_in_flight, 23)
+        self.assertEqual(recovery.dask_autoarima_max_in_flight, 8)
+        self.assertEqual(recovery.dask_ets_max_in_flight, 15)
+        self.assertEqual(recovery.dask_autoarima_fit_budget_gib, 12)
         self.assertEqual(recovery.accelerator_memory_min_available_gib, 4.0)
+        self.assertIsNotNone(recovery.machine_environment)
+        environment = recovery.machine_environment
+        self.assertEqual(environment.coordinator_id, "macbook_pro")
+        self.assertEqual(environment.prefect_api_url,
+                         "http://RMMacbookPro.local:4200/api")
+        self.assertEqual(environment.scheduler_address,
+                         "tcp://RMMacbookPro.local:8786")
         self.assertEqual(
-            recovery.distributed_topology(False),
+            recovery.distributed_topology(False)["workers_by_machine"],
             {
-                "mac_cpu_workers": 8, "ubuntu_cpu_workers": 15,
-                "ubuntu_gpu_workers": 0, "cpu_workers": 23,
-                "total_workers": 23, "requires_gpu": False,
+                "macbook_pro": {"cpu_workers": 8, "gpu_workers": 0,
+                                "tuning_workers": 8},
+                "ubuntu_primary": {"cpu_workers": 15, "gpu_workers": 0,
+                                   "tuning_workers": 15},
             },
         )
         self.assertEqual(recovery.distributed_topology(True)["total_workers"], 38)
@@ -170,7 +169,7 @@ class ExecutionProfileTests(unittest.TestCase):
             replace(profile, profile_version=2),
             replace(profile, accelerator_memory_min_available_gib=3.0),
         ):
-            with self.assertRaisesRegex(RuntimeError, "profile poc2_seasonal_recovery v3"):
+            with self.assertRaisesRegex(RuntimeError, "profile poc2_seasonal_recovery v4"):
                 validate_heavy_tuning_execution(drifted, settings, {})
 
     def test_managed_cluster_resolves_cpu_only_and_gpu_topology(self) -> None:
@@ -179,26 +178,22 @@ class ExecutionProfileTests(unittest.TestCase):
         from util.shared_distributed_cluster import ManagedTuningCluster
 
         profile, _ = resolve_execution_profile("poc2_seasonal_recovery")
-        probe = MagicMock(stdout="192.0.2.1\n")
-        with patch("util.shared_distributed_cluster.subprocess.run", return_value=probe):
-            cpu = ManagedTuningCluster(profile)
-            gpu = ManagedTuningCluster(profile, requires_gpu=True)
-            bounded_gpu = ManagedTuningCluster(
-                profile, requires_gpu=True, gpu_workers=1
+        cpu = ManagedTuningCluster(profile)
+        gpu = ManagedTuningCluster(profile, requires_gpu=True)
+        bounded_gpu = ManagedTuningCluster(profile, requires_gpu=True, gpu_workers=1)
+        self.assertEqual(cpu.topology["gpu_workers"], 0)
+        self.assertEqual(cpu.topology["total_workers"], 23)
+        self.assertEqual(gpu.topology["gpu_workers"], 15)
+        self.assertEqual(gpu.topology["total_workers"], 38)
+        self.assertEqual(bounded_gpu.topology["gpu_workers"], 1)
+        self.assertEqual(bounded_gpu.topology["total_workers"], 24)
+        with self.assertRaisesRegex(ValueError, "exceeds enabled profile capacity"):
+            ManagedTuningCluster(profile, requires_gpu=True, gpu_workers=16)
+        with self.assertRaisesRegex(ValueError, "positive accelerator memory floor"):
+            ManagedTuningCluster(
+                replace(profile, accelerator_memory_min_available_gib=0),
+                requires_gpu=True,
             )
-            self.assertEqual(cpu.topology["ubuntu_gpu_workers"], 0)
-            self.assertEqual(cpu.topology["total_workers"], 23)
-            self.assertEqual(gpu.topology["ubuntu_gpu_workers"], 15)
-            self.assertEqual(gpu.topology["total_workers"], 38)
-            self.assertEqual(bounded_gpu.topology["ubuntu_gpu_workers"], 1)
-            self.assertEqual(bounded_gpu.topology["total_workers"], 24)
-            with self.assertRaisesRegex(ValueError, "approved profile capacity"):
-                ManagedTuningCluster(profile, requires_gpu=True, gpu_workers=16)
-            with self.assertRaisesRegex(ValueError, "positive accelerator memory floor"):
-                ManagedTuningCluster(
-                    replace(profile, accelerator_memory_min_available_gib=0),
-                    requires_gpu=True,
-                )
 
     def test_managed_cluster_partial_remote_cleanup_releases_local_processes(self) -> None:
         """A remote cleanup failure cannot strand owned local process groups."""
@@ -207,56 +202,165 @@ class ExecutionProfileTests(unittest.TestCase):
         profile, _ = resolve_execution_profile("poc2_seasonal_recovery")
         process = MagicMock(pid=123)
         process.poll.return_value = None
-        probe = MagicMock(stdout="192.0.2.1\n")
         with (
-            patch("util.shared_distributed_cluster.subprocess.run", return_value=probe),
             patch("util.shared_distributed_cluster.os.killpg") as kill_group,
         ):
             cluster = ManagedTuningCluster(profile)
-            cluster.remote_started = True
+            cluster.remote_started = {"ubuntu_primary"}
             cluster.processes = [process]
             cluster._ssh = MagicMock(side_effect=subprocess.SubprocessError("offline"))
             cluster.stop()
-        self.assertFalse(cluster.remote_started)
+        self.assertEqual(cluster.remote_started, set())
         self.assertEqual(cluster.processes, [])
         kill_group.assert_called_once_with(123, 15)
-        process.wait.assert_called_once_with(timeout=5)
+        process.wait.assert_called_once_with(timeout=10)
 
-    def test_managed_cluster_propagates_reachable_prefect_api(self) -> None:
-        """Remote workers use the coordinator service and cannot start local APIs."""
+    def test_managed_cluster_derives_and_propagates_service_endpoints(self) -> None:
+        """Workers use coordinator-hostname endpoints without researcher exports."""
         from util.shared_distributed_cluster import ManagedTuningCluster
 
         profile, _ = resolve_execution_profile("poc2_seasonal_recovery")
-        probe = MagicMock(stdout="192.0.2.1\n")
-        with (
-            patch.dict(os.environ, {}, clear=True),
-            patch("util.shared_distributed_cluster.subprocess.run", return_value=probe),
-        ):
-            missing = ManagedTuningCluster(profile)
-            with self.assertRaisesRegex(RuntimeError, "PREFECT_API_URL"):
-                missing.preflight()
-
-        with (
-            patch.dict(
-                os.environ,
-                {
-                    "PREFECT_API_URL": "http://192.0.2.1:4200/api",
-                    "SHAPEFM_MAC_BIND_HOST": "192.0.2.1",
-                },
-                clear=True,
-            ),
-            patch("util.shared_distributed_cluster.time.sleep"),
-        ):
+        with patch.dict(os.environ, {}, clear=True):
             cluster = ManagedTuningCluster(profile)
             cluster.preflight = MagicMock(return_value={})
             cluster._start_local = MagicMock()
-            cluster._ssh = MagicMock(return_value="")
+            cluster._wait_for_prefect = MagicMock()
+            cluster._verify_remote_endpoint = MagicMock()
+            cluster._ssh = MagicMock()
             evidence = cluster.start()
-        remote_command = cluster._ssh.call_args.args[0]
-        self.assertIn("PREFECT_API_URL=http://192.0.2.1:4200/api", remote_command)
+        remote_command = cluster._ssh.call_args.args[1]
+        self.assertIn("PREFECT_API_URL=http://RMMacbookPro.local:4200/api", remote_command)
         self.assertIn("PREFECT_SERVER_EPHEMERAL_ENABLED=false", remote_command)
-        self.assertEqual(evidence["prefect_api_url"], "http://192.0.2.1:4200/api")
-        cluster.remote_started = False
+        self.assertEqual(evidence["prefect_api_url"],
+                         "http://RMMacbookPro.local:4200/api")
+        self.assertEqual(evidence["scheduler_address"],
+                         "tcp://RMMacbookPro.local:8786")
+        self.assertNotIn("127.0.0.1", json.dumps(evidence))
+        cluster.remote_started.clear()
+        cluster.stop()
+
+    def test_managed_cluster_startup_failure_restores_prefect_environment(self) -> None:
+        """A controlled service failure cleans up automatic client settings."""
+        from util.shared_distributed_cluster import ManagedTuningCluster
+
+        profile, _ = resolve_execution_profile("poc2_seasonal_recovery")
+        cluster = ManagedTuningCluster(profile)
+        cluster.preflight = MagicMock(return_value={})
+        cluster._start_local = MagicMock()
+        cluster._wait_for_prefect = MagicMock(
+            side_effect=RuntimeError("Prefect did not start")
+        )
+        with patch.dict(
+            os.environ,
+            {
+                "PREFECT_API_URL": "http://existing.example:4200/api",
+                "PREFECT_SERVER_EPHEMERAL_ENABLED": "true",
+            },
+            clear=False,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "Prefect did not start"):
+                cluster.start()
+            self.assertEqual(
+                os.environ["PREFECT_API_URL"],
+                "http://existing.example:4200/api",
+            )
+            self.assertEqual(os.environ["PREFECT_SERVER_EPHEMERAL_ENABLED"], "true")
+
+    def test_machine_inventory_validation_override_and_future_coordinator(self) -> None:
+        """A synthetic Mac Studio topology resolves without production branching."""
+        inventory = {
+            "configuration_version": 1,
+            "machines": {
+                "mac_studio": {
+                    "hostname": "Studio.example",
+                    "project_root": "/srv/shape_fm_poc",
+                    "capabilities": ["cpu", "mps"],
+                },
+                "worker": {
+                    "hostname": "Worker.example",
+                    "ssh_user": "researcher",
+                    "project_root": "/opt/shape_fm_poc",
+                    "capabilities": ["cpu", "cuda"],
+                },
+            },
+            "services": {
+                "prefect_port": 14200,
+                "dask_scheduler_port": 18786,
+                "dask_dashboard_port": 18787,
+            },
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "machines.json"
+            path.write_text(json.dumps(inventory), encoding="utf-8")
+            allocations = {
+                "mac_studio": {"enabled": True, "cpu_workers": 2},
+                "worker": {"enabled": True, "cpu_workers": 3, "gpu_capacity": 1},
+            }
+            resolved = resolve_machine_environment(
+                "mac_studio", allocations, path, environment={}
+            )
+            self.assertEqual(resolved.coordinator.machine.machine_id, "mac_studio")
+            self.assertEqual(resolved.prefect_api_url,
+                             "http://Studio.example:14200/api")
+            self.assertEqual(resolved.topology(True)["total_workers"], 6)
+            overridden = resolve_machine_environment(
+                "mac_studio", allocations, path,
+                environment={"SHAPEFM_COORDINATOR_ADDRESS": "192.0.2.8"},
+            )
+            self.assertEqual(overridden.scheduler_address, "tcp://192.0.2.8:18786")
+            self.assertEqual(overridden.client_host, "192.0.2.8")
+            self.assertEqual(dict(overridden.overrides),
+                             {"coordinator_address": "192.0.2.8"})
+            local_only = resolve_machine_environment(
+                "mac_studio",
+                {
+                    "mac_studio": {"enabled": True, "cpu_workers": 2},
+                    "worker": {"enabled": False, "cpu_workers": 3,
+                               "gpu_capacity": 1},
+                },
+                path,
+                environment={},
+            )
+            self.assertEqual(local_only.remotes, ())
+            self.assertEqual(local_only.topology(False)["total_workers"], 2)
+            disabled = {**allocations, "mac_studio": {"enabled": False}}
+            with self.assertRaisesRegex(ValueError, "exactly one enabled"):
+                resolve_machine_environment("mac_studio", disabled, path, environment={})
+            with self.assertRaisesRegex(ValueError, "unknown profile machine"):
+                resolve_machine_environment(
+                    "mac_studio", {"missing": {"enabled": True}}, path, environment={}
+                )
+            with self.assertRaisesRegex(ValueError, "lacks CUDA"):
+                resolve_machine_environment(
+                    "mac_studio",
+                    {"mac_studio": {"enabled": True, "gpu_capacity": 1}},
+                    path,
+                    environment={},
+                )
+            invalid = {**inventory, "unexpected": True}
+            path.write_text(json.dumps(invalid), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "unknown machine inventory"):
+                resolve_machine_environment(
+                    "mac_studio", allocations, path, environment={}
+                )
+
+    def test_operational_topology_does_not_change_scientific_configuration(self) -> None:
+        """Coordinator address overrides remain outside scientific identity."""
+        path = Path(__file__).resolve().parents[3] / (
+            "config/experiments/poc2_m4_daily_100_directional_dtw_mantis_rf.json"
+        )
+        before = load_experiment_configuration(path)
+        with patch.dict(
+            os.environ, {"SHAPEFM_COORDINATOR_ADDRESS": "192.0.2.9"}, clear=False
+        ):
+            profile, _ = resolve_execution_profile("poc2_seasonal_recovery")
+            after = load_experiment_configuration(path)
+        self.assertEqual(before.scientific_hash, after.scientific_hash)
+        self.assertEqual(
+            profile.machine_environment.prefect_api_url,
+            "http://192.0.2.9:4200/api",
+        )
+        self.assertNotIn("192.0.2.9", json.dumps(after.scientific_configuration))
 
     def test_run_process_propagates_expected_gpu_worker_count_to_validation(self) -> None:
         """Dask process execution passes its expected GPU count to cluster validation."""

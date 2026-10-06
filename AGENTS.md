@@ -69,6 +69,17 @@ boundary. Checkpoint 2 is accepted. The local Checkpoint 3 version-11 workflow
 and additive-storage candidate is implemented and awaiting Chief Developer
 review; bounded execution, two-machine acceptance and publication remain pending.
 
+The machine-environment and coordinator-selection architecture was approved on
+6 October 2026. Follow `docs/machine-environment.md` and
+`docs/amp-poc2-machine-environment-instructions.md`. A tracked machine inventory
+describes stable hosts, paths and capabilities; the selected execution profile
+chooses exactly one coordinator and its enabled workers. Normal execution derives
+Prefect and Dask endpoints and must not require a manually exported Mac IP or
+`PREFECT_API_URL`. The current profile keeps the MacBook Pro as coordinator and
+Ubuntu as worker; a future Mac Studio must become coordinator by configuration
+and calibration, not a source-code branch. The pending ID 026--028 acceptance is
+the implementation's real two-machine validation.
+
 Apply the standing [Python utility naming standard](docs/code-standards.md#python-utility-file-organisation):
 `pNN_MM_` for process-owned helpers, `shared_` for shared components, and no
 artificial gate number for independent workflows. Code held for possible reuse
@@ -95,9 +106,10 @@ checkpoints; technical review does not replace researcher acceptance.
 
 Prefect owns workflow orchestration; Dask schedules eligible computation.
 Existing R/Python scientific functions and native adapters perform calculations.
-The Mac coordinator is the sole research DuckDB writer. Prefect operational
-history is not a second scientific store. Keep one researcher entry point and
-consume central configuration and the approved execution profile.
+The coordinator selected by the execution profile is the sole research DuckDB
+writer. Prefect operational history is not a second scientific store. Keep one
+researcher entry point and consume central configuration, the machine inventory,
+and the approved execution profile.
 
 Do not duplicate scheduler/retry logic, bypass validation, invent worker limits
 or silently change scientific settings. Document source contracts and test the

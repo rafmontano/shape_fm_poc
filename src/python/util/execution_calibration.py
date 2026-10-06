@@ -1054,9 +1054,22 @@ def calibrate_dask_profile(
             }
         )
         safety_reasons = []
+        floors = (
+            {
+                machine.machine.hostname.split(".", 1)[0].lower(): float(
+                    machine.allocation.memory_min_available_gib or 0
+                )
+                for machine in profile.machine_environment.machines
+            }
+            if profile.machine_environment is not None
+            else {}
+        )
         for hostname, values in telemetry["hosts"].items():
             minimum_gib = values["minimum_system_available_memory_bytes"] / GIB
-            required = 16.0 if hostname == "WSUbuntu1" else 3.0
+            required = floors.get(hostname.split(".", 1)[0].lower())
+            if required is None:
+                safety_reasons.append(f"{hostname} is outside the resolved machine profile")
+                continue
             if minimum_gib < required:
                 safety_reasons.append(
                     f"{hostname} available memory {minimum_gib:.2f} GiB below {required:.0f} GiB"

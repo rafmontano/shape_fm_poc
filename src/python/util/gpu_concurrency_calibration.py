@@ -45,6 +45,7 @@ from util.shared_distributed_execution import (
 )
 from util.execution_calibration import _scientific_comparison
 from util.shared_experiment_execution import _length_aware_batches
+from util.shared_execution_profiles import resolve_execution_profile
 from util.shared_transformations import inverse
 
 
@@ -546,23 +547,23 @@ class _GpuCluster:
         """
         self.label = label
         self.settings = settings
-        # Machine environment: SHAPEFM_* values override source fallbacks for host,
-        # installation, and bind address; effective values are written to trial evidence.
-        self.ubuntu_host = os.environ.get(
-            "SHAPEFM_UBUNTU_HOST", "rafmontano@WSUbuntu1.local"
-        )
-        self.ubuntu_root = os.environ.get(
-            "SHAPEFM_UBUNTU_ROOT",
-            "/home/rafmontano/Documents/PhD/2026/projects/shape_fm_poc",
-        )
-        self.mac_host = os.environ.get("SHAPEFM_MAC_HOST", "RMMacbookPro.local")
-        self.bind_host = os.environ.get("SHAPEFM_MAC_BIND_HOST") or _run(
-            ["ipconfig", "getifaddr", "en0"], check=False
-        ).stdout.strip()
-        if not self.bind_host:
-            raise RuntimeError("set SHAPEFM_MAC_BIND_HOST to the Mac LAN IPv4 address")
-        self.scheduler_address = "tcp://127.0.0.1:8786"
-        self.worker_address = f"tcp://{self.mac_host}:8786"
+        profile, _ = resolve_execution_profile("poc2_seasonal_recovery")
+        environment = profile.machine_environment
+        if environment is None:
+            raise RuntimeError("GPU calibration requires a resolved machine environment")
+        cuda_remotes = [
+            value
+            for value in environment.remotes
+            if "cuda" in value.machine.capabilities
+        ]
+        if len(cuda_remotes) != 1:
+            raise RuntimeError("GPU calibration requires exactly one enabled remote CUDA machine")
+        self.remote_machine = cuda_remotes[0].machine
+        self.service_ports = environment.services
+        self.ubuntu_host = self.remote_machine.ssh_target
+        self.ubuntu_root = self.remote_machine.project_root
+        self.scheduler_address = environment.scheduler_address
+        self.worker_address = environment.scheduler_address
         self.runtime = ROOT / "data/dask"
         self.scheduler: subprocess.Popen[Any] | None = None
         self._stop_lock = threading.Lock()
@@ -648,9 +649,9 @@ class _GpuCluster:
                 "--host",
                 "0.0.0.0",
                 "--port",
-                "8786",
+                str(self.service_ports.dask_scheduler_port),
                 "--dashboard-address",
-                "127.0.0.1:8787",
+                f"0.0.0.0:{self.service_ports.dask_dashboard_port}",
             ],
             cwd=ROOT,
             env={
