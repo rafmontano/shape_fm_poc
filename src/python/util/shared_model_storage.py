@@ -1,0 +1,155 @@
+# ==============================================================================
+# shared_model_storage.py
+#
+# Purpose: Own trusted fitted-meta-learner paths and atomic joblib persistence.
+# Inputs: A configured model root, experiment namespace, and logical model scope.
+# Outputs: Verified external joblib files and clear load/save lifecycle evidence.
+# Run from: Imported by Process 04 training and prediction workers.
+# ==============================================================================
+
+"""Small filesystem authority for trusted project-owned fitted model objects."""
+
+from __future__ import annotations
+
+import hashlib
+import os
+import shutil
+import uuid
+from pathlib import Path
+from typing import Any
+
+import joblib
+
+
+class ModelStorageError(RuntimeError):
+    """Identify missing, unreadable, or invalid fitted-model storage operations."""
+
+
+class ModelStorage:
+    """Resolve, atomically save, and load one experiment's fitted meta-learners."""
+
+    def __init__(self, root: Path | str, experiment: str):
+        """Retain one configured root and validated experiment namespace."""
+        self.root = Path(root).expanduser().resolve()
+        self.experiment = self._segment(experiment, "experiment")
+
+    @staticmethod
+    def _segment(value: Any, field: str) -> str:
+        """Reject empty or path-like logical identity segments."""
+        if (
+            not isinstance(value, str)
+            or not value
+            or value in {".", ".."}
+            or Path(value).name != value
+        ):
+            raise ValueError(f"{field} must be one safe path segment")
+        return value
+
+    @staticmethod
+    def _scope(horizon_scope: int | str) -> str:
+        """Map the approved multi-horizon or numbered-horizon scope to a filename."""
+        if horizon_scope == "all_horizons":
+            return "model_all_horizons.joblib"
+        if (
+            isinstance(horizon_scope, bool)
+            or not isinstance(horizon_scope, int)
+            or horizon_scope not in range(1, 15)
+        ):
+            raise ValueError("horizon_scope must be all_horizons or an integer within 1..14")
+        return f"model_h{horizon_scope:02d}.joblib"
+
+    def path(self, model: str, frequency: str, horizon_scope: int | str) -> Path:
+        """Return the centrally resolved path for one approved logical model scope."""
+        model_name = self._segment(model, "model")
+        if model_name not in {"directional_dtw", "directional_mantis_rf"}:
+            raise ValueError(f"unsupported fitted model: {model_name}")
+        frequency_name = self._segment(frequency, "frequency")
+        return (
+            self.root
+            / self.experiment
+            / model_name
+            / frequency_name
+            / self._scope(horizon_scope)
+        )
+
+    def exists(self, model: str, frequency: str, horizon_scope: int | str) -> bool:
+        """Report actual fitted-file availability without consulting task state."""
+        return self.path(model, frequency, horizon_scope).is_file()
+
+    def _evidence(self, path: Path, status: str) -> dict[str, Any]:
+        """Describe one verified artifact without creating a separate catalogue."""
+        return {
+            "status": status,
+            "relative_path": str(path.relative_to(self.root)),
+            "size_bytes": path.stat().st_size,
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        }
+
+    def save(
+        self,
+        model_object: Any,
+        model: str,
+        frequency: str,
+        horizon_scope: int | str,
+        *,
+        overwrite: bool = False,
+    ) -> dict[str, Any]:
+        """Validate a temporary joblib file, then atomically publish it."""
+        path = self.path(model, frequency, horizon_scope)
+        if path.is_file() and not overwrite:
+            return self._evidence(path, "skipped_existing")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+        status = "overwritten" if path.is_file() else "trained"
+        try:
+            joblib.dump(model_object, temporary)
+            joblib.load(temporary)
+            os.replace(temporary, path)
+        except BaseException as exc:
+            temporary.unlink(missing_ok=True)
+            raise ModelStorageError(
+                f"failed to save fitted model {model}/{frequency}/{horizon_scope}: {exc}"
+            ) from exc
+        return self._evidence(path, status)
+
+    def load(self, model: str, frequency: str, horizon_scope: int | str) -> Any:
+        """Load one required trusted model or fail with its exact logical scope."""
+        path = self.path(model, frequency, horizon_scope)
+        if not path.is_file():
+            raise ModelStorageError(
+                f"missing fitted model {model}/{frequency}/{horizon_scope}: {path}"
+            )
+        try:
+            return joblib.load(path)
+        except BaseException as exc:
+            raise ModelStorageError(
+                f"invalid or unreadable fitted model {model}/{frequency}/{horizon_scope}: {path}: {exc}"
+            ) from exc
+
+    def adopt(
+        self,
+        source: Path | str,
+        model: str,
+        frequency: str,
+        horizon_scope: int | str,
+        *,
+        overwrite: bool = False,
+    ) -> dict[str, Any]:
+        """Validate and atomically adopt one worker-staged joblib file without reserializing it."""
+        source_path = Path(source)
+        path = self.path(model, frequency, horizon_scope)
+        if path.is_file() and not overwrite:
+            return self._evidence(path, "skipped_existing")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+        status = "overwritten" if path.is_file() else "trained"
+        try:
+            shutil.copyfile(source_path, temporary)
+            joblib.load(temporary)
+            os.replace(temporary, path)
+        except BaseException as exc:
+            temporary.unlink(missing_ok=True)
+            raise ModelStorageError(
+                f"failed to adopt fitted model {model}/{frequency}/{horizon_scope}: {exc}"
+            ) from exc
+        return self._evidence(path, status)

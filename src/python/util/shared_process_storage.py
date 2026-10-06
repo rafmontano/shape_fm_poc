@@ -63,14 +63,15 @@ class ProcessStorage:
             connection.close()
 
     def forecast_requires_gpu(self, configured: bool) -> bool:
-        """Resolve GPU need from pending durable work, or configured models before planning."""
-        expected, _ = self._contracts(4)
+        """Resolve GPU need from pending Chronos or Mantis work, or pre-plan configuration."""
         with duckdb.connect(str(self.database), read_only=True) as connection:
             total, pending = connection.execute(
-                f"""SELECT count(*), count(*) FILTER (WHERE e.candidate='chronos_2'
-                   AND (t.status IS NULL OR t.status!='completed'))
-                   FROM ({expected}) e LEFT JOIN experiment_tasks t
-                   ON {self._task_join(4)} AND t.stage=4"""
+                """SELECT count(*), count(*) FILTER (
+                       WHERE candidate IN (
+                           'chronos_2', 'directional_mantis_rf:representations'
+                       ) AND status!='completed'
+                   )
+                   FROM experiment_tasks WHERE stage=4"""
             ).fetchone()
         return bool(pending) if total else configured
 
@@ -95,8 +96,8 @@ class ProcessStorage:
                         "SELECT configuration_version FROM experiment_configuration"
                     ).fetchone()[0]
                 )
-                if version == 10 and process_id >= 3:
-                    return self._validate_directional(connection, process_id)
+                if version in {10, 11} and process_id >= 3:
+                    return self._validate_directional(connection, process_id, version)
                 expected_sql, output_sql = self._contracts(process_id)
                 expected = int(connection.execute(f"SELECT count(*) FROM ({expected_sql}) expected").fetchone()[0])
                 task_count = int(connection.execute(
@@ -127,9 +128,8 @@ class ProcessStorage:
         return {"output_validated": True, "expected_task_count": expected,
                 "stored_task_count": stored}
 
-    @staticmethod
     def _validate_directional(
-        connection: duckdb.DuckDBPyConnection, process_id: int
+        self, connection: duckdb.DuckDBPyConnection, process_id: int, version: int
     ) -> dict[str, Any]:
         """Validate directional task identities and their non-forecast durable outputs."""
         series_count = int(
@@ -139,7 +139,11 @@ class ProcessStorage:
                    FROM experiment_configuration"""
             ).fetchone()[0]
         )
-        expected = {3: series_count, 4: 1 + series_count * 14, 5: 1, 6: 14}[
+        expected = (
+            {3: series_count, 4: 1 + series_count * 14 + 1 + 28, 5: 1, 6: 28}
+            if version == 11
+            else {3: series_count, 4: 1 + series_count * 14, 5: 1, 6: 14}
+        )[
             process_id
         ]
         task_count, completed = connection.execute(
@@ -176,6 +180,94 @@ class ProcessStorage:
                 raise RuntimeError("stored directional preparation is incomplete or invalid")
             stored = inputs
         elif process_id == 4:
+            if version == 11:
+                from .shared_database import load_database_configuration
+                from .shared_model_storage import ModelStorage
+
+                configuration = load_database_configuration(self.database, connection)
+                model_settings = configuration.model_storage
+                model_storage = ModelStorage(
+                    Path(__file__).resolve().parents[3] / model_settings["root"],
+                    model_settings["experiment"],
+                )
+                model_storage.load("directional_dtw", "D", "all_horizons")
+                for horizon in range(1, 15):
+                    model_storage.load("directional_mantis_rf", "D", horizon)
+                dtw_models = int(connection.execute(
+                    "SELECT count(*) FROM directional_model_definitions"
+                ).fetchone()[0])
+                composite_models = int(connection.execute(
+                    "SELECT count(*) FROM directional_composite_model_definitions"
+                ).fetchone()[0])
+                representations, invalid_representations = connection.execute(
+                    """SELECT count(*), count(*) FILTER (
+                         WHERE representation_dimension!=256
+                            OR representation_dtype!='float32'
+                            OR len(representation_values)!=256)
+                       FROM directional_representations"""
+                ).fetchone()
+                training_representations, official_representations = connection.execute(
+                    """SELECT count(*) FILTER (WHERE role='training'),
+                              count(*) FILTER (WHERE role='official_evaluation')
+                       FROM directional_representations"""
+                ).fetchone()
+                representation_executions = int(connection.execute(
+                    "SELECT count(*) FROM directional_representation_executions"
+                ).fetchone()[0])
+                represented_execution_members = int(connection.execute(
+                    "SELECT count(*) FROM directional_representation_execution_members"
+                ).fetchone()[0])
+                runs = int(connection.execute(
+                    "SELECT count(*) FROM directional_classifier_runs"
+                ).fetchone()[0])
+                scores = int(connection.execute(
+                    "SELECT count(*) FROM directional_calibration_scores"
+                ).fetchone()[0])
+                widths = int(connection.execute(
+                    "SELECT count(*) FROM directional_selected_widths"
+                ).fetchone()[0])
+                predictions = int(connection.execute(
+                    "SELECT count(*) FROM model_directional_predictions"
+                ).fetchone()[0])
+                dtw_lineage = int(connection.execute(
+                    "SELECT count(*) FROM directional_dtw_prediction_lineage"
+                ).fetchone()[0])
+                classifier_lineage = int(connection.execute(
+                    "SELECT count(*) FROM directional_classifier_prediction_lineage"
+                ).fetchone()[0])
+                official_lineage_mismatches = int(connection.execute(
+                    """SELECT count(*) FROM directional_representations AS r
+                       JOIN directional_evaluation_inputs AS i ON i.evaluation_input_id=r.input_id
+                       WHERE r.role!='official_evaluation'
+                          OR r.input_fingerprint!=i.transformed_input_hash
+                          OR r.preparation_fingerprint!=i.preparation_fingerprint"""
+                ).fetchone()[0])
+                forecasts = int(connection.execute(
+                    """SELECT count(*) FROM forecasts
+                       WHERE candidate IN ('directional_dtw','directional_mantis_rf')"""
+                ).fetchone()[0])
+                reference_count = representations - series_count
+                if (
+                    dtw_models != 1 or composite_models != 1
+                    or representations != 595 or reference_count != 495
+                    or training_representations != 495
+                    or official_representations != series_count
+                    or representation_executions != 1
+                    or represented_execution_members != representations
+                    or invalid_representations or official_lineage_mismatches
+                    or scores != 64 * 14 or widths != 14
+                    or runs != 14 or predictions != series_count * 28
+                    or dtw_lineage != series_count * 14
+                    or classifier_lineage != series_count * 14
+                    or forecasts
+                ):
+                    raise RuntimeError("stored directional comparison outputs are invalid")
+                stored = dtw_models + composite_models + predictions
+                return {
+                    "output_validated": True,
+                    "expected_task_count": expected,
+                    "stored_task_count": int(stored),
+                }
             model_count = int(
                 connection.execute(
                     "SELECT count(*) FROM directional_model_definitions"
@@ -224,15 +316,20 @@ class ProcessStorage:
             if stored != 1:
                 raise RuntimeError("directional Process 05 no-work identity is missing")
         else:
+            table = (
+                "model_directional_evaluations"
+                if version == 11
+                else "directional_evaluations"
+            )
             stored, invalid = connection.execute(
-                """SELECT count(*), count(*) FILTER (
+                f"""SELECT count(*), count(*) FILTER (
                          WHERE e.evaluation_count!=? OR e.correct_count<0
                             OR e.correct_count>e.evaluation_count
                             OR e.accuracy<0 OR e.accuracy>1)
-                   FROM directional_evaluations AS e""",
+                   FROM {table} AS e""",
                 [series_count],
             ).fetchone()
-            if stored != 14 or invalid:
+            if stored != (28 if version == 11 else 14) or invalid:
                 raise RuntimeError("stored directional evaluations are incomplete or invalid")
         return {
             "output_validated": True,

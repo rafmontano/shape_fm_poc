@@ -183,10 +183,17 @@ class ExecutionProfileTests(unittest.TestCase):
         with patch("util.shared_distributed_cluster.subprocess.run", return_value=probe):
             cpu = ManagedTuningCluster(profile)
             gpu = ManagedTuningCluster(profile, requires_gpu=True)
+            bounded_gpu = ManagedTuningCluster(
+                profile, requires_gpu=True, gpu_workers=1
+            )
             self.assertEqual(cpu.topology["ubuntu_gpu_workers"], 0)
             self.assertEqual(cpu.topology["total_workers"], 23)
             self.assertEqual(gpu.topology["ubuntu_gpu_workers"], 15)
             self.assertEqual(gpu.topology["total_workers"], 38)
+            self.assertEqual(bounded_gpu.topology["ubuntu_gpu_workers"], 1)
+            self.assertEqual(bounded_gpu.topology["total_workers"], 24)
+            with self.assertRaisesRegex(ValueError, "approved profile capacity"):
+                ManagedTuningCluster(profile, requires_gpu=True, gpu_workers=16)
             with self.assertRaisesRegex(ValueError, "positive accelerator memory floor"):
                 ManagedTuningCluster(
                     replace(profile, accelerator_memory_min_available_gib=0),

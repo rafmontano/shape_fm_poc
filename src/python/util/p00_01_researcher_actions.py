@@ -101,7 +101,11 @@ class ProcessAction:
         execution, settings, cluster, cluster_evidence = self._execution(
             configuration, processes, execution_profile, local_heavy_exception,
             requires_gpu=(4 in processes and storage.forecast_requires_gpu(
-                "chronos_2" in configuration.resolved["models"])) if execution_profile else None,
+                bool(
+                    {"chronos_2", "directional_mantis_rf"}
+                    & set(configuration.resolved["models"])
+                )
+            )) if execution_profile else None,
         )
         try:
             events = ExecutionEventStorage(database)
@@ -218,12 +222,27 @@ class ProcessAction:
         if requires_gpu is None:
             requires_gpu = "chronos_2" in configuration.resolved["models"]
         topology = profile.distributed_topology(requires_gpu)
+        gpu_workers = None
+        if requires_gpu and getattr(configuration, "version", 0) == 11:
+            gpu_workers = int(
+                configuration.resolved["execution"]["final_acceptance"][
+                    "mantis_gpu_processes"
+                ]
+            )
+            topology = {
+                **topology,
+                "ubuntu_gpu_workers": gpu_workers,
+                "total_workers": topology["cpu_workers"] + gpu_workers,
+            }
         guard_settings = ExecutionSettings(mode="dask", dask_scheduler_address="managed",
             dask_expected_workers=topology["total_workers"],
             dask_expected_gpu_workers=topology["ubuntu_gpu_workers"],
             dask_max_in_flight=int(profile.dask_max_in_flight or 1), dask_retries=0)
         validate_heavy_tuning_execution(profile, guard_settings, overrides)
-        cluster = ManagedTuningCluster(profile, requires_gpu=requires_gpu)
+        cluster_options = {"requires_gpu": requires_gpu}
+        if gpu_workers is not None:
+            cluster_options["gpu_workers"] = gpu_workers
+        cluster = ManagedTuningCluster(profile, **cluster_options)
         try:
             evidence = cluster.start()
         except BaseException:

@@ -30,7 +30,7 @@ from .shared_configuration import (
 
 
 # Code constant: latest DuckDB migration version implemented by this source revision.
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 # Bootstrap/interface default: legacy library database path; an explicit path from the
 # coordinator overrides it, and the path does not define scientific identity.
 DEFAULT_DATABASE = Path("data/shapefm.duckdb")
@@ -650,6 +650,138 @@ CREATE TABLE IF NOT EXISTS deterministic_no_work (
     created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
     UNIQUE (experiment_id, process_id)
 );
+
+CREATE TABLE IF NOT EXISTS directional_representation_definitions (
+    representation_definition_id VARCHAR PRIMARY KEY,
+    experiment_id VARCHAR NOT NULL,
+    scientific_definition JSON NOT NULL,
+    content_hash VARCHAR NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp
+);
+
+CREATE TABLE IF NOT EXISTS directional_representations (
+    representation_id VARCHAR PRIMARY KEY,
+    representation_definition_id VARCHAR NOT NULL,
+    input_id VARCHAR NOT NULL,
+    source_series_id VARCHAR NOT NULL,
+    role VARCHAR NOT NULL CHECK (role IN ('training', 'official_evaluation')),
+    input_fingerprint VARCHAR NOT NULL,
+    preparation_definition_id VARCHAR NOT NULL,
+    preparation_fingerprint VARCHAR NOT NULL,
+    membership_fingerprint VARCHAR NOT NULL,
+    representation_values DOUBLE[] NOT NULL,
+    representation_dtype VARCHAR NOT NULL CHECK (representation_dtype = 'float32'),
+    representation_dimension INTEGER NOT NULL CHECK (representation_dimension = 256),
+    representation_fingerprint VARCHAR NOT NULL,
+    content_hash VARCHAR NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
+    UNIQUE (representation_definition_id, input_id)
+);
+
+CREATE TABLE IF NOT EXISTS directional_representation_executions (
+    representation_execution_id VARCHAR PRIMARY KEY,
+    representation_definition_id VARCHAR NOT NULL,
+    worker_provenance JSON NOT NULL,
+    worker_provenance_fingerprint VARCHAR NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp
+);
+
+CREATE TABLE IF NOT EXISTS directional_representation_execution_members (
+    representation_id VARCHAR PRIMARY KEY,
+    representation_execution_id VARCHAR NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp
+);
+
+CREATE TABLE IF NOT EXISTS directional_classifier_definitions (
+    classifier_definition_id VARCHAR PRIMARY KEY,
+    experiment_id VARCHAR NOT NULL,
+    scientific_definition JSON NOT NULL,
+    content_hash VARCHAR NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp
+);
+
+CREATE TABLE IF NOT EXISTS directional_classifier_runs (
+    classifier_run_id VARCHAR PRIMARY KEY,
+    classifier_definition_id VARCHAR NOT NULL,
+    classification_dataset_id VARCHAR NOT NULL,
+    horizon INTEGER NOT NULL CHECK (horizon BETWEEN 1 AND 14),
+    training_fingerprint VARCHAR NOT NULL,
+    evaluation_fingerprint VARCHAR NOT NULL,
+    output_fingerprint VARCHAR NOT NULL,
+    content_hash VARCHAR NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
+    UNIQUE (classifier_definition_id, classification_dataset_id, horizon)
+);
+
+CREATE TABLE IF NOT EXISTS directional_classifier_executions (
+    classifier_execution_id VARCHAR PRIMARY KEY,
+    classifier_run_id VARCHAR NOT NULL,
+    classification_response_id VARCHAR NOT NULL,
+    worker_provenance JSON NOT NULL,
+    worker_provenance_fingerprint VARCHAR NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp
+);
+
+CREATE TABLE IF NOT EXISTS directional_composite_model_definitions (
+    model_definition_id VARCHAR PRIMARY KEY,
+    experiment_id VARCHAR NOT NULL,
+    variant_id VARCHAR NOT NULL,
+    representation_definition_id VARCHAR NOT NULL,
+    classifier_definition_id VARCHAR NOT NULL,
+    scientific_definition JSON NOT NULL,
+    preparation_fingerprint VARCHAR NOT NULL,
+    membership_fingerprint VARCHAR NOT NULL,
+    content_hash VARCHAR NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
+    UNIQUE (experiment_id, variant_id, representation_definition_id, classifier_definition_id)
+);
+
+CREATE TABLE IF NOT EXISTS model_directional_predictions (
+    prediction_id VARCHAR PRIMARY KEY,
+    experiment_id VARCHAR NOT NULL,
+    model_definition_id VARCHAR NOT NULL,
+    evaluation_input_id VARCHAR NOT NULL,
+    horizon INTEGER NOT NULL CHECK (horizon BETWEEN 1 AND 14),
+    prediction TINYINT NOT NULL CHECK (prediction IN (0, 1)),
+    classifier_run_id VARCHAR,
+    training_fingerprint VARCHAR NOT NULL,
+    evaluation_fingerprint VARCHAR NOT NULL,
+    output_fingerprint VARCHAR NOT NULL,
+    content_hash VARCHAR NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
+    UNIQUE (experiment_id, model_definition_id, evaluation_input_id, horizon)
+);
+
+CREATE TABLE IF NOT EXISTS directional_dtw_prediction_lineage (
+    prediction_id VARCHAR PRIMARY KEY,
+    nearest_reference_identity VARCHAR NOT NULL,
+    nearest_distance DOUBLE NOT NULL,
+    effective_width INTEGER NOT NULL CHECK (effective_width BETWEEN 0 AND 63),
+    content_hash VARCHAR NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp
+);
+
+CREATE TABLE IF NOT EXISTS directional_classifier_prediction_lineage (
+    prediction_id VARCHAR PRIMARY KEY,
+    representation_id VARCHAR NOT NULL,
+    classifier_run_id VARCHAR NOT NULL,
+    content_hash VARCHAR NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp
+);
+
+CREATE TABLE IF NOT EXISTS model_directional_evaluations (
+    directional_evaluation_id VARCHAR PRIMARY KEY,
+    experiment_id VARCHAR NOT NULL,
+    model_definition_id VARCHAR NOT NULL,
+    horizon INTEGER NOT NULL CHECK (horizon BETWEEN 1 AND 14),
+    correct_count INTEGER NOT NULL CHECK (correct_count >= 0),
+    evaluation_count INTEGER NOT NULL CHECK (evaluation_count > 0),
+    accuracy DOUBLE NOT NULL,
+    prediction_fingerprint VARCHAR NOT NULL,
+    content_hash VARCHAR NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
+    UNIQUE (experiment_id, model_definition_id, horizon)
+);
 """
 
 
@@ -828,7 +960,12 @@ def migrate_database(path: Path = DEFAULT_DATABASE) -> Path:
         connection.execute(
             "INSERT INTO schema_versions (version, description) VALUES (?, ?) "
             "ON CONFLICT (version) DO NOTHING",
-            [SCHEMA_VERSION, "Directional DTW preparation, calibration, prediction and evaluation"],
+            [10, "Directional DTW preparation, calibration, prediction and evaluation"],
+        )
+        connection.execute(
+            "INSERT INTO schema_versions (version, description) VALUES (?, ?) "
+            "ON CONFLICT (version) DO NOTHING",
+            [SCHEMA_VERSION, "Model-neutral directional representations, classifiers and predictions"],
         )
         connection.execute("COMMIT")
     except BaseException:

@@ -44,6 +44,31 @@ and execution boundary. ID 021 was closed and approved for publication on
 directional-label contracts. Its accepted two-machine result is recorded in
 `docs/poc2-id021-dtw-execution-evidence.md`. ID 022 was not started.
 
+POC2 ID 026 fitted-model storage requirements and architecture were approved on
+6 October 2026. Follow `docs/poc2-id026-fitted-model-storage-requirements.md`
+and `docs/poc2-id026-fitted-model-storage.md`; implement the current local
+checkpoint from `docs/amp-poc2-id026-028-model-storage-instructions.md`. The
+shared external model store
+applies to expensive fitted meta-learners, initially DTW and Mantis/Random
+Forest, not ordinary forecast-pool methods. Retrofit both directional models
+without changing their accepted mathematics: DTW owns one complete
+frequency-level multi-horizon artifact, and Mantis owns one fitted Random
+Forest artifact per horizon. Prediction loads existing artifacts and never
+trains; missing artifacts must be created by the preceding training substep.
+
+POC2 IDs 027 and 028 were approved as one Mantis directional increment on
+6 October 2026. Follow `docs/poc2-id027-028-mantis-directional.md` and
+`docs/amp-poc2-id027-028-mantis-instructions.md`. Implement
+`directional_mantis_rf` as a composition of a frozen historical Mantis
+representation provider and a reusable Random Forest classifier, not a
+monolithic import or a second experiment runner. Preserve the closed DTW
+baseline and require a new same-input experiment containing both directional
+models. DTW and Mantis must reference the same canonical Process 03 membership,
+prepared inputs and labels; provider-specific conversions begin only after that
+boundary. Checkpoint 2 is accepted. The local Checkpoint 3 version-11 workflow
+and additive-storage candidate is implemented and awaiting Chief Developer
+review; bounded execution, two-machine acceptance and publication remain pending.
+
 Apply the standing [Python utility naming standard](docs/code-standards.md#python-utility-file-organisation):
 `pNN_MM_` for process-owned helpers, `shared_` for shared components, and no
 artificial gate number for independent workflows. Code held for possible reuse

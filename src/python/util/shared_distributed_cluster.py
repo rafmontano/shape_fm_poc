@@ -94,7 +94,12 @@ class ManagedTuningCluster:
     it starts and never transfers source, environments, databases, or results.
     """
 
-    def __init__(self, profile: ExecutionProfile, requires_gpu: bool = False):
+    def __init__(
+        self,
+        profile: ExecutionProfile,
+        requires_gpu: bool = False,
+        gpu_workers: int | None = None,
+    ):
         """Resolve machine settings and workload topology before process startup."""
         required = (
             profile.dask_mac_cpu_workers,
@@ -123,6 +128,21 @@ class ManagedTuningCluster:
             raise ValueError("every managed CPU worker must be eligible for tuning work")
         self.profile = profile
         self.topology = profile.distributed_topology(requires_gpu)
+        if gpu_workers is not None:
+            configured_gpu_workers = int(profile.dask_ubuntu_gpu_workers or 0)
+            if (
+                not requires_gpu
+                or isinstance(gpu_workers, bool)
+                or not isinstance(gpu_workers, int)
+                or gpu_workers < 1
+                or gpu_workers > configured_gpu_workers
+            ):
+                raise ValueError("GPU worker override must be within the approved profile capacity")
+            self.topology = {
+                **self.topology,
+                "ubuntu_gpu_workers": gpu_workers,
+                "total_workers": self.topology["cpu_workers"] + gpu_workers,
+            }
         if requires_gpu and self.topology["ubuntu_gpu_workers"] < 1:
             raise ValueError(f"profile {profile.name} does not define GPU workers")
         if requires_gpu and profile.accelerator_memory_min_available_gib <= 0:

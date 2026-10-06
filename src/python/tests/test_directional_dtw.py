@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import math
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -12,15 +13,9 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[3]
-WORKER_PATH = ROOT / "src/python/04_04_directional_dtw.py"
 if importlib.util.find_spec("aeon") is None:
     raise unittest.SkipTest("directional numerical tests require the classifiers environment")
-SPEC = importlib.util.spec_from_file_location("directional_dtw_worker", WORKER_PATH)
-if SPEC is None or SPEC.loader is None:
-    raise RuntimeError("cannot load directional DTW worker")
-DTW = importlib.util.module_from_spec(SPEC)
-sys.modules[SPEC.name] = DTW
-SPEC.loader.exec_module(DTW)
+from util import p04_04_directional_dtw as DTW
 
 
 def reference(
@@ -115,6 +110,62 @@ class DirectionalDTWTests(unittest.TestCase):
         self.assertEqual([item["horizon"] for item in result["predictions"]], [1, 4, 14])
         self.assertTrue(all(item["prediction"] == 1 for item in result["predictions"]))
         self.assertTrue(all(item["nearest_distance"] == 0.0 for item in result["predictions"]))
+
+    def test_one_saved_multi_horizon_object_reproduces_in_memory_prediction(self):
+        """The fitted artifact stores references once and preserves predictions after load."""
+        from util.shared_model_storage import ModelStorage
+
+        references = [reference("reference/a", "series/a", 2.0, 1)]
+        runner, _ = self.runner(references)
+        payload = {"references": references}
+        fingerprint = DTW.content_fingerprint(payload)
+        fitted = runner.fitted_model((3,) * 14, fingerprint)
+        job = [{"id": "block", "effective_width": 3, "horizons": [1, 4, 14],
+                "queries": [{"identity": "evaluation/a", "values": [2.0] * 64}]}]
+        with tempfile.TemporaryDirectory() as directory:
+            storage = ModelStorage(directory, "fixture")
+            storage.save(fitted, "directional_dtw", "D", "all_horizons")
+            loaded = storage.load("directional_dtw", "D", "all_horizons")
+            worker = ROOT / "src/python/04_07_predict_directional_dtw.py"
+            arguments = [
+                sys.executable, str(worker), "prediction", "--model-root", directory,
+                "--experiment", "fixture", "--frequency", "D",
+                "--reference-fingerprint", fingerprint,
+            ]
+            completed = subprocess.run(
+                arguments,
+                cwd=ROOT,
+                input=DTW.canonical_json({"jobs": job}),
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+            self.assertEqual(json.loads(completed.stdout)["operation"], "prediction")
+            stale = subprocess.run(
+                [*arguments[:-1], "0" * 64],
+                cwd=ROOT,
+                input=DTW.canonical_json({"jobs": job}),
+                text=True,
+                capture_output=True,
+            )
+            self.assertNotEqual(stale.returncode, 0)
+            self.assertIn("stale reference fingerprint", stale.stderr)
+            wrong_width = [{**job[0], "effective_width": 4}]
+            stale = subprocess.run(
+                arguments,
+                cwd=ROOT,
+                input=DTW.canonical_json({"jobs": wrong_width}),
+                text=True,
+                capture_output=True,
+            )
+            self.assertNotEqual(stale.returncode, 0)
+            self.assertIn("differs from fitted widths", stale.stderr)
+        self.assertEqual(
+            DTW.DirectionalDTWRunner.from_model(loaded).predict(job),
+            runner.predict(job),
+        )
+        self.assertEqual(len(loaded.references), 1)
+        self.assertEqual(len(loaded.selected_widths), 14)
 
     def test_invalid_values_are_rejected(self):
         invalid = reference("reference/a", "series/a", 0.0, 0)

@@ -339,6 +339,11 @@ def validate_directional_cluster(
     worker_script: str,
     classifiers_lock: str,
     expected_lock_fingerprint: str,
+    expected_gpu_workers: int = 0,
+    mantis_environment: str | None = None,
+    mantis_worker_script: str | None = None,
+    mantis_lock: str | None = None,
+    expected_mantis_lock_fingerprint: str | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Require the approved CPU topology, exact source, and locked aeon runtime."""
     client.wait_for_workers(expected_workers, timeout=timeout)
@@ -358,13 +363,26 @@ def validate_directional_cluster(
         "scikit-learn": "1.7.2",
         "numeric_dtype": "float64",
     }
-    mac_workers = sum(report["platform"] == "Darwin" for report in reports.values())
-    ubuntu_workers = sum(report["platform"] == "Linux" for report in reports.values())
-    actual_topology = (len(reports), mac_workers, ubuntu_workers)
+    gpu_addresses = [
+        address for address, report in reports.items()
+        if report["resources"].get(CHRONOS_GPU_RESOURCE, 0) == 1
+    ]
+    mac_workers = sum(
+        report["platform"] == "Darwin"
+        and not report["resources"].get(CHRONOS_GPU_RESOURCE, 0)
+        for report in reports.values()
+    )
+    ubuntu_workers = sum(
+        report["platform"] == "Linux"
+        and not report["resources"].get(CHRONOS_GPU_RESOURCE, 0)
+        for report in reports.values()
+    )
+    actual_topology = (len(reports), mac_workers, ubuntu_workers, len(gpu_addresses))
     expected_topology = (
         expected_workers,
         expected_mac_workers,
         expected_ubuntu_workers,
+        expected_gpu_workers,
     )
     if actual_topology != expected_topology:
         failures.append(
@@ -394,13 +412,80 @@ def validate_directional_cluster(
                     f"{address}: {field}={report[field]!r}, expected {EXPECTED_DASK_VERSION!r}"
                 )
         resources = report["resources"]
-        if resources.get("CPU", 0) != 1:
+        is_gpu_worker = resources.get(CHRONOS_GPU_RESOURCE, 0) == 1
+        if not is_gpu_worker and resources.get("CPU", 0) != 1:
             failures.append(f"{address}: worker does not advertise exactly one CPU")
-        if resources.get(CHRONOS_GPU_RESOURCE, 0):
+        if is_gpu_worker and expected_gpu_workers == 0:
             failures.append(f"{address}: directional CPU worker advertises a GPU slot")
+    if expected_gpu_workers:
+        if not all((mantis_environment, mantis_worker_script, mantis_lock,
+                    expected_mantis_lock_fingerprint)):
+            failures.append("Mantis GPU preflight settings are incomplete")
+        else:
+            mantis_reports = client.run(
+                mantis_worker_preflight,
+                expected_manifest,
+                mantis_environment,
+                mantis_worker_script,
+                mantis_lock,
+                workers=gpu_addresses,
+            )
+            for address, report in mantis_reports.items():
+                if report["source_mismatches"]:
+                    failures.append(f"{address}: stale Mantis source files")
+                if report["mantis_lock_fingerprint"] != expected_mantis_lock_fingerprint:
+                    failures.append(f"{address}: Mantis lock fingerprint differs")
+                description = report["mantis_runtime"]
+                if (
+                    description.get("definition", {}).get("package_version") != "1.1.0"
+                    or description.get("device") != "cuda"
+                ):
+                    failures.append(f"{address}: Mantis runtime contract differs")
     if failures:
         raise RuntimeError("directional DTW Dask preflight failed:\n" + "\n".join(failures))
     return reports
+
+
+def mantis_worker_preflight(
+    expected_manifest: dict[str, str],
+    mantis_environment: str,
+    worker_script: str,
+    mantis_lock: str,
+    dask_worker: Any = None,
+) -> dict[str, Any]:
+    """Verify synchronized source, lock and pinned offline CUDA Mantis runtime."""
+    local_manifest = {
+        relative: hashlib.sha256((ROOT / relative).read_bytes()).hexdigest()
+        if (ROOT / relative).is_file() else "missing"
+        for relative in expected_manifest
+    }
+    completed = subprocess.run(
+        [
+            str(ROOT / mantis_environment / "bin/python"),
+            str(ROOT / worker_script),
+            "describe",
+            "--device",
+            "cuda",
+        ],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    lock_path = ROOT / mantis_lock
+    return {
+        **_worker_provenance(worker=dask_worker),
+        "source_mismatches": sorted(
+            relative for relative, digest in expected_manifest.items()
+            if local_manifest.get(relative) != digest
+        ),
+        "mantis_lock_fingerprint": (
+            hashlib.sha256(lock_path.read_bytes()).hexdigest()
+            if lock_path.is_file() else "missing"
+        ),
+        "mantis_runtime": json.loads(completed.stdout),
+    }
 
 
 def validate_tuning_cluster(
@@ -957,6 +1042,8 @@ def directional_dtw_batch(
     classifier_environment: str,
     worker_script: str,
     reference_fingerprint: str,
+    model_storage: dict[str, Any] | None,
+    frequency: str | None,
     timeout: float,
     memory_min_available_gib: dict[str, float],
     swap_growth_limit_gib: float,
@@ -964,13 +1051,14 @@ def directional_dtw_batch(
 ) -> dict[str, Any]:
     """Run one compact directional block through the isolated locked executable."""
     cache = _immutable_cache_directory() / f"{reference_fingerprint}.json"
-    if not cache.is_file():
-        raise RuntimeError(
-            f"directional reference cache is not installed for {reference_fingerprint}"
-        )
-    cached_payload = json.loads(cache.read_text(encoding="utf-8"))
-    if json_fingerprint(cached_payload) != reference_fingerprint:
-        raise RuntimeError("directional reference cache failed content verification")
+    if operation == "calibration":
+        if not cache.is_file():
+            raise RuntimeError(
+                f"directional reference cache is not installed for {reference_fingerprint}"
+            )
+        cached_payload = json.loads(cache.read_text(encoding="utf-8"))
+        if json_fingerprint(cached_payload) != reference_fingerprint:
+            raise RuntimeError("directional reference cache failed content verification")
     numba_cache = _immutable_cache_directory().parent / "numba"
     numba_cache.mkdir(parents=True, exist_ok=True)
     environment = {
@@ -995,16 +1083,23 @@ def directional_dtw_batch(
             "dask_spilled_disk_bytes": 0,
         }
     started = time.monotonic()
-    completed = subprocess.run(
-        [
+    arguments = [
             str(ROOT / classifier_environment / "bin/python"),
             str(ROOT / worker_script),
             operation,
-            "--reference-cache",
-            str(cache),
-            "--reference-fingerprint",
-            reference_fingerprint,
-        ],
+    ]
+    if operation == "calibration":
+        arguments.extend(["--reference-cache", str(cache),
+                          "--reference-fingerprint", reference_fingerprint])
+    else:
+        if model_storage is None or frequency is None:
+            raise RuntimeError("DTW prediction requires configured model storage")
+        arguments.extend(["--model-root", str(ROOT / model_storage["root"]),
+                          "--experiment", model_storage["experiment"],
+                          "--frequency", frequency,
+                          "--reference-fingerprint", reference_fingerprint])
+    completed = subprocess.run(
+        arguments,
         cwd=ROOT,
         input=canonical_json({"jobs": batch}),
         check=True,
@@ -1058,6 +1153,128 @@ def directional_dtw_batch(
             ),
         },
     }
+
+
+def mantis_representation_batch(
+    batch: list[dict[str, Any]],
+    mantis_environment: str,
+    worker_script: str,
+    device: str,
+    timeout: float,
+    retry_count: int = 0,
+) -> dict[str, Any]:
+    """Run one label-free representation batch in the isolated Mantis runtime."""
+    started = time.monotonic()
+    completed = subprocess.run(
+        [
+            str(ROOT / mantis_environment / "bin/python"),
+            str(ROOT / worker_script),
+            "encode",
+            "--device",
+            device,
+            "--batch-size",
+            str(len(batch)),
+        ],
+        cwd=ROOT,
+        input=canonical_json({"jobs": batch}),
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+    response = json.loads(completed.stdout)
+    if response.get("operation") != "encode":
+        raise RuntimeError("Mantis worker returned a mismatched operation")
+    response["subprocess_runtime_seconds"] = time.monotonic() - started
+    response["worker"] = _worker_provenance(retry_count)
+    return response
+
+
+def install_immutable_classification_dataset(
+    fingerprint: str, payload: dict[str, Any], dask_worker: Any = None
+) -> dict[str, Any]:
+    """Install or verify one worker-local model-neutral classification dataset."""
+    if json_fingerprint(payload) != fingerprint:
+        raise RuntimeError("classification dataset payload does not match its fingerprint")
+    destination = _immutable_cache_directory(dask_worker).parent / "classification-datasets"
+    destination.mkdir(parents=True, exist_ok=True)
+    path = destination / f"{fingerprint}.json"
+    encoded = canonical_json(payload)
+    if path.exists():
+        existing = json.loads(path.read_text(encoding="utf-8"))
+        if existing != payload or json_fingerprint(existing) != fingerprint:
+            raise RuntimeError("classification dataset cache has conflicting content")
+    else:
+        temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+        temporary.write_text(encoded, encoding="utf-8")
+        try:
+            os.link(temporary, path)
+        except FileExistsError:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+            if existing != payload or json_fingerprint(existing) != fingerprint:
+                raise RuntimeError("classification dataset cache changed concurrently")
+        finally:
+            temporary.unlink(missing_ok=True)
+    return {"fingerprint": fingerprint, "path": str(path),
+            "worker": _worker_provenance(worker=dask_worker)}
+
+
+def random_forest_classification_batch(
+    batch: list[dict[str, Any]],
+    classifiers_environment: str,
+    worker_script: str,
+    dataset_fingerprint: str,
+    operation: str,
+    model_storage: dict[str, Any],
+    frequency: str,
+    timeout: float,
+    retry_count: int = 0,
+) -> dict[str, Any]:
+    """Run independently schedulable horizon jobs against one cached dataset."""
+    cache = (
+        _immutable_cache_directory().parent
+        / "classification-datasets"
+        / f"{dataset_fingerprint}.json"
+    )
+    if not cache.is_file():
+        raise RuntimeError("classification dataset cache is not installed")
+    dataset = json.loads(cache.read_text(encoding="utf-8"))
+    if json_fingerprint(dataset) != dataset_fingerprint:
+        raise RuntimeError("classification dataset cache failed content verification")
+    started = time.monotonic()
+    if operation not in {"train", "predict"}:
+        raise ValueError("Random Forest operation must be train or predict")
+    completed = subprocess.run(
+        [
+            str(ROOT / classifiers_environment / "bin/python"),
+            str(ROOT / worker_script),
+            operation,
+            "--model-root", str(ROOT / model_storage["root"]),
+            "--experiment", model_storage["experiment"],
+            "--frequency", frequency,
+            *(["--overwrite"] if operation == "train" and model_storage.get("overwrite") else []),
+        ],
+        cwd=ROOT,
+        input=canonical_json({"dataset": dataset, "jobs": batch}),
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        env={
+            **os.environ,
+            "OMP_NUM_THREADS": "1",
+            "OPENBLAS_NUM_THREADS": "1",
+            "MKL_NUM_THREADS": "1",
+            "VECLIB_MAXIMUM_THREADS": "1",
+            "NUMEXPR_NUM_THREADS": "1",
+        },
+    )
+    response = json.loads(completed.stdout)
+    if response.get("operation") != operation:
+        raise RuntimeError("classifier worker returned a mismatched operation")
+    response["subprocess_runtime_seconds"] = time.monotonic() - started
+    response["worker"] = _worker_provenance(retry_count)
+    return response
 
 
 def window_preparation_batch(

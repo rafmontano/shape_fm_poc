@@ -642,6 +642,33 @@ named file under `src/r/util/`.
 The Python-to-R contract must explicitly preserve values, missingness,
 frequency, start/end indices, horizon, identifiers, and error information.
 
+## Common scientific inputs and model adapters
+
+Models compared in one experiment use the same canonical upstream research
+objects wherever their scientific definitions permit. A shared process owns
+dataset membership, train/test partitions, forecast origins, preprocessing,
+transformations, labels and evaluation targets. Model branches reference those
+accepted objects; they do not silently create model-specific copies or repeat
+the shared preparation under different settings.
+
+A provider-specific adapter may begin only after the shared process boundary.
+It may perform the minimum representation change required by the model, such
+as converting an array dtype, resizing an accepted array, creating an R `ts`
+object or constructing a framework tensor. The adapter must:
+
+- preserve the source identity and common preparation fingerprint;
+- document and fingerprint the exact conversion;
+- avoid changing cohort membership, split assignment, cleaning,
+  standardisation, labels, forecast origin or evaluation target; and
+- expose a common output contract when models are compared by the same
+  research question.
+
+Different model internals do not by themselves make a comparison unequal. A
+fixed model may have no validation or tuning step while another model performs
+training-only calibration. Any departure from the common upstream population
+or preparation is a scientific architecture decision and requires explicit
+researcher approval before implementation.
+
 ## Distributed execution
 
 Python controls Dask and the experiment lifecycle.

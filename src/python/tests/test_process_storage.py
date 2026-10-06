@@ -48,6 +48,16 @@ class ProcessStorageTests(unittest.TestCase):
         with duckdb.connect(str(self.database)) as connection:
             connection.execute("UPDATE experiment_tasks SET status='failed' WHERE task_id='gpu'")
         self.assertTrue(storage.forecast_requires_gpu(True))
+        with duckdb.connect(str(self.database)) as connection:
+            connection.execute(
+                """UPDATE experiment_tasks
+                   SET candidate='directional_mantis_rf:representations', status='completed'
+                   WHERE task_id='gpu'"""
+            )
+        self.assertFalse(storage.forecast_requires_gpu(True))
+        with duckdb.connect(str(self.database)) as connection:
+            connection.execute("UPDATE experiment_tasks SET status='pending' WHERE task_id='gpu'")
+        self.assertTrue(storage.forecast_requires_gpu(False))
 
     def test_failed_fresh_validation_leaves_gate_failed_not_completed(self):
         storage = ProcessStorage(self.database)

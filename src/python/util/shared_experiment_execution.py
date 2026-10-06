@@ -16,6 +16,7 @@ import hashlib
 import math
 import os
 import platform
+import shlex
 import subprocess
 import time
 import uuid
@@ -91,6 +92,61 @@ DIRECTIONAL_RECORD_COLUMNS = {
     "deterministic_no_work": (
         "no_work_id", "experiment_id", "process_id", "reason", "content_hash",
     ),
+    "directional_representation_definitions": (
+        "representation_definition_id", "experiment_id", "scientific_definition",
+        "content_hash",
+    ),
+    "directional_representations": (
+        "representation_id", "representation_definition_id", "input_id",
+        "source_series_id", "role", "input_fingerprint",
+        "preparation_definition_id", "preparation_fingerprint",
+        "membership_fingerprint", "representation_values", "representation_dtype",
+        "representation_dimension", "representation_fingerprint", "content_hash",
+    ),
+    "directional_representation_executions": (
+        "representation_execution_id", "representation_definition_id",
+        "worker_provenance", "worker_provenance_fingerprint",
+    ),
+    "directional_representation_execution_members": (
+        "representation_id", "representation_execution_id",
+    ),
+    "directional_classifier_definitions": (
+        "classifier_definition_id", "experiment_id", "scientific_definition",
+        "content_hash",
+    ),
+    "directional_classifier_runs": (
+        "classifier_run_id", "classifier_definition_id", "classification_dataset_id",
+        "horizon", "training_fingerprint", "evaluation_fingerprint",
+        "output_fingerprint", "content_hash",
+    ),
+    "directional_classifier_executions": (
+        "classifier_execution_id", "classifier_run_id", "classification_response_id",
+        "worker_provenance", "worker_provenance_fingerprint",
+    ),
+    "directional_composite_model_definitions": (
+        "model_definition_id", "experiment_id", "variant_id",
+        "representation_definition_id", "classifier_definition_id",
+        "scientific_definition", "preparation_fingerprint",
+        "membership_fingerprint", "content_hash",
+    ),
+    "model_directional_predictions": (
+        "prediction_id", "experiment_id", "model_definition_id",
+        "evaluation_input_id", "horizon", "prediction", "classifier_run_id",
+        "training_fingerprint", "evaluation_fingerprint", "output_fingerprint",
+        "content_hash",
+    ),
+    "directional_dtw_prediction_lineage": (
+        "prediction_id", "nearest_reference_identity", "nearest_distance",
+        "effective_width", "content_hash",
+    ),
+    "directional_classifier_prediction_lineage": (
+        "prediction_id", "representation_id", "classifier_run_id", "content_hash",
+    ),
+    "model_directional_evaluations": (
+        "directional_evaluation_id", "experiment_id", "model_definition_id",
+        "horizon", "correct_count", "evaluation_count", "accuracy",
+        "prediction_fingerprint", "content_hash",
+    ),
 }
 
 
@@ -113,6 +169,17 @@ def expected_task_counts(
             4: 1 + instance_count * len(horizons),
             5: 1,
             6: len(horizons),
+        }
+    if set(workflow["models"]) == {"directional_dtw", "directional_mantis_rf"}:
+        horizons = workflow["models"]["directional_dtw"]["labels"]["horizons"]
+        if workflow["models"]["directional_mantis_rf"]["labels"]["horizons"] != horizons:
+            raise ValueError("directional providers must use identical horizons")
+        return {
+            2: instance_count,
+            3: instance_count,
+            4: 1 + instance_count * len(horizons) + 1 + 2 * len(horizons),
+            5: 1,
+            6: 2 * len(horizons),
         }
     cleaning_count = len(workflow["cleaning"])
     variant_count = cleaning_count * len(workflow["transformations"])
@@ -532,7 +599,8 @@ class ExperimentCoordinator:
             )
         if dry_run:
             task_counts = expected_task_counts(len(instances), self.config)
-            directional = self.configuration.version == 10
+            directional = self.configuration.version in {10, 11}
+            directional_models = 2 if self.configuration.version == 11 else 1
             return {
                 "scope": requested_scope,
                 "mode": "dry-run",
@@ -541,11 +609,19 @@ class ExperimentCoordinator:
                 "forecast_instances": len(instances),
                 "candidate_forecast_rows": 0 if directional else task_counts[5],
                 "directional_calibration_identities": 1 if directional else 0,
+                "mantis_representation_identities": (
+                    1 if self.configuration.version == 11 else 0
+                ),
+                "classifier_horizon_identities": (
+                    14 if self.configuration.version == 11 else 0
+                ),
                 "directional_prediction_identities": (
-                    len(instances) * 14 if directional else 0
+                    len(instances) * 14 * directional_models if directional else 0
                 ),
                 "process_05_no_work_identities": 1 if directional else 0,
-                "directional_evaluation_identities": 14 if directional else 0,
+                "directional_evaluation_identities": (
+                    14 * directional_models if directional else 0
+                ),
                 "official_evaluation_rows": 0 if directional else task_counts[6],
                 "benchmark_configuration": official["configuration_name"],
                 "task_counts": {
@@ -694,7 +770,7 @@ class ExperimentCoordinator:
                                 experiment_id, 3, instance_id, variant_id, None
                             )
                         )
-                        if self.configuration.version == 10:
+                        if self.configuration.version in {10, 11}:
                             for horizon in range(1, 15):
                                 task_rows.append(
                                     self._task_row(
@@ -702,7 +778,11 @@ class ExperimentCoordinator:
                                         4,
                                         instance_id,
                                         variant_id,
-                                        f"directional_dtw:h{horizon:02d}",
+                                        (
+                                            f"directional_dtw:predict:h{horizon:02d}"
+                                            if self.configuration.version == 11
+                                            else f"directional_dtw:h{horizon:02d}"
+                                        ),
                                     )
                                 )
                             continue
@@ -744,7 +824,7 @@ class ExperimentCoordinator:
         self.connection.execute("BEGIN TRANSACTION")
         try:
             evaluation_tasks = []
-            if self.configuration.version == 10:
+            if self.configuration.version in {10, 11}:
                 variant_id = variants[0][0]
                 evaluation_tasks.extend(
                     [
@@ -753,14 +833,22 @@ class ExperimentCoordinator:
                             4,
                             None,
                             variant_id,
-                            "directional_dtw:calibration",
+                            (
+                                "directional_dtw:train"
+                                if self.configuration.version == 11
+                                else "directional_dtw:calibration"
+                            ),
                         ),
                         self._task_row(
                             experiment_id,
                             5,
                             None,
                             variant_id,
-                            "directional_dtw:no_work",
+                            (
+                                "directional:no_work"
+                                if self.configuration.version == 11
+                                else "directional_dtw:no_work"
+                            ),
                         ),
                     ]
                 )
@@ -774,8 +862,48 @@ class ExperimentCoordinator:
                     )
                     for horizon in range(1, 15)
                 )
+                if self.configuration.version == 11:
+                    evaluation_tasks.append(
+                        self._task_row(
+                            experiment_id,
+                            4,
+                            None,
+                            variant_id,
+                            "directional_mantis_rf:representations",
+                        )
+                    )
+                    evaluation_tasks.extend(
+                        self._task_row(
+                            experiment_id,
+                            4,
+                            None,
+                            variant_id,
+                            f"directional_mantis_rf:train:h{horizon:02d}",
+                        )
+                        for horizon in range(1, 15)
+                    )
+                    evaluation_tasks.extend(
+                        self._task_row(
+                            experiment_id,
+                            4,
+                            None,
+                            variant_id,
+                            f"directional_mantis_rf:predict:h{horizon:02d}",
+                        )
+                        for horizon in range(1, 15)
+                    )
+                    evaluation_tasks.extend(
+                        self._task_row(
+                            experiment_id,
+                            6,
+                            None,
+                            variant_id,
+                            f"directional_mantis_rf:h{horizon:02d}",
+                        )
+                        for horizon in range(1, 15)
+                    )
             for variant_id, _, _ in variants:
-                if self.configuration.version == 10:
+                if self.configuration.version in {10, 11}:
                     continue
                 for candidate in (
                     *self.config["models"].keys(), self.config["combination"]["method"]
@@ -1278,12 +1406,38 @@ class ExperimentCoordinator:
         Outputs: Ordered incomplete task IDs and instance/variant/candidate dimensions
         read from DuckDB without changing task state.
         """
+        if process == 4 and self.configuration.version == 11:
+            self._reopen_missing_fitted_model_tasks(experiment_id)
         return self.connection.execute(
             """SELECT task_id, forecast_instance_id, variant_id, candidate
             FROM experiment_tasks WHERE experiment_id=? AND stage=? AND status!='completed'
             ORDER BY task_id""",
             [experiment_id, process],
         ).fetchall()
+
+    def _reopen_missing_fitted_model_tasks(self, experiment_id: str) -> None:
+        """Make real file absence override stale completed version-11 training state."""
+        from .shared_model_storage import ModelStorage
+
+        settings = self.configuration.model_storage
+        storage = ModelStorage(self.root / settings["root"], settings["experiment"])
+        missing = []
+        if not storage.exists("directional_dtw", "D", "all_horizons"):
+            missing.append("directional_dtw:train")
+        missing.extend(
+            f"directional_mantis_rf:train:h{horizon:02d}"
+            for horizon in range(1, 15)
+            if not storage.exists("directional_mantis_rf", "D", horizon)
+        )
+        if missing:
+            placeholders = ",".join("?" for _ in missing)
+            self.connection.execute(
+                f"""UPDATE experiment_tasks SET status='pending', completed_at=NULL,
+                           updated_at=current_timestamp,
+                           last_error='fitted model file is missing'
+                    WHERE experiment_id=? AND stage=4 AND candidate IN ({placeholders})""",
+                [experiment_id, *missing],
+            )
 
     def _check_process_prerequisite(self, experiment_id: str, process: int) -> None:
         """Purpose: Enforce persisted predecessor-process completion.
@@ -1380,26 +1534,52 @@ class ExperimentCoordinator:
                                      timeout=f"{settings.dask_timeout_seconds}s")
             expected_gpu_name = None
             try:
-                if self.configuration.version == 10:
+                if self.configuration.version in {10, 11}:
                     mac_workers = int(profile.dask_mac_cpu_workers or 0)
                     ubuntu_workers = int(profile.dask_ubuntu_cpu_workers or 0)
                     paths = self.configuration.execution_paths
                     lock_path = self.root / paths["classifiers_lock"]
+                    gpu_workers = 0
+                    if self.configuration.version == 11:
+                        gpu_workers = int(
+                            settings.dask_expected_gpu_workers
+                            if settings is not None
+                            else self.configuration.resolved["execution"]
+                            ["final_acceptance"]["workers"].get("ubuntu_gpu", 0)
+                        )
+                    mantis_lock_path = (
+                        self.root / paths["mantis_lock"]
+                        if self.configuration.version == 11
+                        else None
+                    )
                     cluster = validate_directional_cluster(
                         dask_client,
-                        expected_workers=mac_workers + ubuntu_workers,
+                        expected_workers=mac_workers + ubuntu_workers + gpu_workers,
                         expected_mac_workers=mac_workers,
                         expected_ubuntu_workers=ubuntu_workers,
                         timeout=settings.dask_timeout_seconds,
                         expected_manifest=repository_source_manifest(),
                         classifiers_environment=paths["classifiers_environment"],
-                        worker_script=paths["directional_dtw_worker"],
+                        worker_script=paths.get(
+                            "directional_dtw_training_worker",
+                            paths.get("directional_dtw_worker"),
+                        ),
                         classifiers_lock=paths["classifiers_lock"],
                         expected_lock_fingerprint=hashlib.sha256(
                             lock_path.read_bytes()
                         ).hexdigest(),
+                        expected_gpu_workers=gpu_workers,
+                        mantis_environment=paths.get("mantis_environment"),
+                        mantis_worker_script=paths.get("mantis_worker"),
+                        mantis_lock=paths.get("mantis_lock"),
+                        expected_mantis_lock_fingerprint=(
+                            hashlib.sha256(mantis_lock_path.read_bytes()).hexdigest()
+                            if mantis_lock_path is not None else None
+                        ),
                     )
-                    resolved_device = "cpu"
+                    resolved_device = (
+                        "cuda" if self.configuration.version == 11 else "cpu"
+                    )
                 elif ("chronos_2" not in self.config["models"] or
                         process == 4 and self.configuration.seasonal_period_tuning is not None):
                     mac_workers = int(profile.dask_mac_cpu_workers or 0)
@@ -1775,7 +1955,7 @@ class ExperimentCoordinator:
         Outputs: None; computes transformed vectors locally or on Dask and atomically
         persists values, parameters, lineage, fingerprints, and task completions.
         """
-        if self.configuration.version == 10:
+        if self.configuration.version in {10, 11}:
             if not rows:
                 return
             self._run_03_directional_preparation(
@@ -2126,12 +2306,63 @@ class ExperimentCoordinator:
         Chronos OOM batches, inverse-transforms outputs, and transactionally persists
         original-scale forecast arrays, provenance, hashes, and task state.
         """
-        if self.configuration.version == 10:
+        if self.configuration.version in {10, 11}:
             if not rows:
                 return
-            self._run_04_directional_dtw(
-                experiment_id, rows, attempts, profile, dask_client, settings
-            )
+            dtw_rows = [
+                row for row in rows if row[3].startswith("directional_dtw:")
+            ]
+            if self.configuration.version == 10 and dtw_rows:
+                self._run_04_directional_dtw(
+                    experiment_id, dtw_rows, attempts, profile, dask_client, settings
+                )
+            if self.configuration.version == 11:
+                mantis_rows = [
+                    row for row in rows
+                    if row[3].startswith("directional_mantis_rf:")
+                ]
+                dtw_training = [row for row in dtw_rows if row[3].endswith(":train")]
+                dtw_prediction = [row for row in dtw_rows if ":predict:" in row[3]]
+                mantis_training = [
+                    row for row in mantis_rows
+                    if row[3].endswith(":representations") or ":train:" in row[3]
+                ]
+                mantis_prediction = [
+                    row for row in mantis_rows if ":predict:" in row[3]
+                ]
+                if dtw_training:
+                    self._run_04_directional_dtw(
+                        experiment_id, dtw_training, attempts, profile,
+                        dask_client, settings,
+                    )
+                if mantis_training:
+                    self._run_04_directional_mantis_rf(
+                        experiment_id,
+                        mantis_training,
+                        attempts,
+                        profile,
+                        resolved_device=device,
+                        dask_client=dask_client,
+                        settings=settings,
+                    )
+                if dask_client is not None and (dtw_prediction or mantis_prediction):
+                    self._synchronize_model_directory_to_ubuntu()
+                if dtw_prediction:
+                    self._run_04_directional_dtw(
+                        experiment_id, dtw_prediction, attempts, profile,
+                        dask_client, settings,
+                    )
+                self._store_v11_dtw_predictions(experiment_id)
+                if mantis_prediction:
+                    self._run_04_directional_mantis_rf(
+                        experiment_id,
+                        mantis_prediction,
+                        attempts,
+                        profile,
+                        resolved_device=device,
+                        dask_client=dask_client,
+                        settings=settings,
+                    )
             return
         if self.configuration.seasonal_period_tuning is not None:
             from .p04_04_seasonal_period_tuning import (
@@ -2304,7 +2535,12 @@ class ExperimentCoordinator:
     ) -> dict[str, Any]:
         """Build the calculation-only implementation and accepted-input fingerprint."""
         paths = self.configuration.execution_paths
-        worker_path = self.root / paths["directional_dtw_worker"]
+        worker_key = (
+            "directional_dtw_training_worker"
+            if self.configuration.version == 11
+            else "directional_dtw_worker"
+        )
+        worker_path = self.root / paths[worker_key]
         lock_path = self.root / paths["classifiers_lock"]
         source_paths = [
             worker_path,
@@ -2365,7 +2601,7 @@ class ExperimentCoordinator:
             "scientific_source_fingerprint": json_fingerprint(source_hashes),
             "scientific_source_files": source_hashes,
             "worker_file_fingerprint": source_hashes[
-                paths["directional_dtw_worker"]
+                worker_key
             ],
             "classifier_lock_fingerprint": hashlib.sha256(lock_path.read_bytes()).hexdigest(),
             "runtime_versions": runtime_versions,
@@ -2391,14 +2627,29 @@ class ExperimentCoordinator:
 
         execution = self.configuration.execution
         paths = self.configuration.execution_paths
+        worker_script = (
+            paths["directional_dtw_prediction_worker"]
+            if self.configuration.version == 11 and operation == "prediction"
+            else paths.get("directional_dtw_training_worker", paths.get("directional_dtw_worker"))
+        )
         outcomes = run_gate_compute_flow(
             process_id=4,
             batches=batches,
             options={
                 "operation": operation,
                 "classifier_environment": paths["classifiers_environment"],
-                "worker_script": paths["directional_dtw_worker"],
+                "worker_script": worker_script,
                 "reference_fingerprint": reference_fingerprint,
+                "model_storage": (
+                    self.configuration.model_storage
+                    if self.configuration.version == 11
+                    else None
+                ),
+                "frequency": (
+                    self.configuration.resolved["data"]["benchmark"]["frequency"]
+                    if self.configuration.version == 11
+                    else None
+                ),
                 "timeout": float(
                     execution["worker_timeouts_seconds"]["directional_dtw"]
                 ),
@@ -2467,6 +2718,9 @@ class ExperimentCoordinator:
                 reference_fingerprint,
                 payload,
             )
+            cache_reports["coordinator"] = install_immutable_reference_cache(
+                reference_fingerprint, payload
+            )
         if any(
             report.get("fingerprint") != reference_fingerprint
             for report in cache_reports.values()
@@ -2509,8 +2763,13 @@ class ExperimentCoordinator:
             **model_content,
             "content_hash": json_fingerprint(model_content),
         }
+        training_candidate = (
+            "directional_dtw:train"
+            if self.configuration.version == 11
+            else "directional_dtw:calibration"
+        )
         calibration_row = next(
-            (row for row in rows if row[3] == "directional_dtw:calibration"), None
+            (row for row in rows if row[3] == training_candidate), None
         )
         proportions = model_science["constraint"]["candidate_proportions"]
         width_proportions = {}
@@ -2518,6 +2777,44 @@ class ExperimentCoordinator:
             width_proportions.setdefault(int(proportion * 64), proportion)
         if set(width_proportions) != set(range(64)):
             raise RuntimeError("configured candidates do not cover all 64 effective widths")
+        if calibration_row is not None and self.configuration.version == 11:
+            stored_widths = tuple(
+                (int(row[0]), int(row[1]))
+                for row in self.connection.execute(
+                    """SELECT s.horizon, s.effective_width
+                       FROM directional_selected_widths AS s
+                       WHERE s.model_definition_id=? ORDER BY s.horizon""",
+                    [model_id],
+                ).fetchall()
+            )
+            stored_score_count = int(
+                self.connection.execute(
+                    """SELECT count(*) FROM directional_calibration_scores AS s
+                       WHERE s.model_definition_id=?""",
+                    [model_id],
+                ).fetchone()[0]
+            )
+            if (
+                tuple(horizon for horizon, _ in stored_widths)
+                == tuple(range(1, 15))
+                and stored_score_count == 64 * 14
+            ):
+                artifact_evidence = self._publish_directional_dtw_model(
+                    tuple(width for _, width in stored_widths), reference_fingerprint
+                )
+                self._insert_or_verify("directional_model_definitions", model_record)
+                self._commit_task(
+                    calibration_row[0],
+                    attempts[calibration_row[0]],
+                    0.0,
+                    lambda: None,
+                    {
+                        "calibration_reused": True,
+                        "stored_calibration_score_count": stored_score_count,
+                        "fitted_artifact": artifact_evidence,
+                    },
+                )
+                calibration_row = None
         if calibration_row is not None:
             query_ids = [reference["identity"] for reference in payload["references"]]
             block_size = int(
@@ -2663,6 +2960,13 @@ class ExperimentCoordinator:
                 for record in selected_records:
                     self._insert_or_verify("directional_selected_widths", record)
 
+            artifact_evidence = None
+            if self.configuration.version == 11:
+                artifact_evidence = self._publish_directional_dtw_model(
+                    tuple(record["effective_width"] for record in selected_records),
+                    reference_fingerprint,
+                )
+
             self._commit_task(
                 calibration_row[0],
                 attempts[calibration_row[0]],
@@ -2683,6 +2987,7 @@ class ExperimentCoordinator:
                         for query in payload["references"]
                     )
                     * 64,
+                    "fitted_artifact": artifact_evidence,
                 },
             )
         else:
@@ -2833,6 +3138,671 @@ class ExperimentCoordinator:
         if task_by_identity:
             raise RuntimeError("directional worker omitted accepted prediction identities")
 
+    def _publish_directional_dtw_model(
+        self, selected_widths: tuple[int, ...], reference_fingerprint: str
+    ) -> dict[str, Any]:
+        """Publish the complete fitted DTW object on the authoritative Mac model store."""
+        from .shared_distributed_execution import install_immutable_reference_cache
+
+        payload, observed_fingerprint, _ = self._directional_reference_library()
+        if observed_fingerprint != reference_fingerprint:
+            raise RuntimeError("DTW reference library changed before fitted-model publication")
+        cache = install_immutable_reference_cache(reference_fingerprint, payload)["path"]
+        paths = self.configuration.execution_paths
+        storage = self.configuration.model_storage
+        arguments = [
+            str(self.root / paths["classifiers_environment"] / "bin/python"),
+            str(self.root / paths["directional_dtw_training_worker"]),
+            "publish",
+            "--reference-cache", cache,
+            "--reference-fingerprint", reference_fingerprint,
+            "--model-root", str(self.root / storage["root"]),
+            "--experiment", storage["experiment"],
+            "--frequency", self.configuration.resolved["data"]["benchmark"]["frequency"],
+        ]
+        if storage["overwrite"]:
+            arguments.append("--overwrite")
+        completed = subprocess.run(
+            arguments,
+            cwd=self.root,
+            input=canonical_json({"selected_widths": list(selected_widths)}),
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=float(
+                self.configuration.execution["worker_timeouts_seconds"]["directional_dtw"]
+            ),
+        )
+        response = json.loads(completed.stdout)
+        if response.get("operation") != "publish":
+            raise RuntimeError("DTW training worker did not publish fitted state")
+        return dict(response["artifact"])
+
+    @staticmethod
+    def _secure_ssh_arguments(host: str, command: str | None = None) -> list[str]:
+        """Build strict noninteractive SSH/SCP options for the configured Ubuntu host."""
+        arguments = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+                     "-o", "StrictHostKeyChecking=yes"]
+        alias = os.environ.get("SHAPEFM_SSH_HOST_KEY_ALIAS")
+        if alias:
+            arguments.extend(["-o", f"HostKeyAlias={alias}"])
+        if command is None:
+            return arguments
+        return ["ssh", *arguments, host, command]
+
+    def _consolidate_classifier_artifact(
+        self, evidence: dict[str, Any], worker: dict[str, Any], horizon: int
+    ) -> dict[str, Any]:
+        """Adopt a remote staged RF file into the authoritative Mac model store."""
+        from .shared_model_storage import ModelStorage
+
+        settings = self.configuration.model_storage
+        storage = ModelStorage(self.root / settings["root"], settings["experiment"])
+        local_path = storage.path("directional_mantis_rf", "D", horizon)
+        if worker.get("hostname") == platform.node() and local_path.is_file():
+            return evidence
+        if local_path.is_file() and not settings["overwrite"]:
+            return storage.save(
+                None, "directional_mantis_rf", "D", horizon, overwrite=False
+            )
+        host = os.environ.get("SHAPEFM_UBUNTU_HOST", "rafmontano@WSUbuntu1.local")
+        ubuntu_root = os.environ.get(
+            "SHAPEFM_UBUNTU_ROOT",
+            "/home/rafmontano/Documents/PhD/2026/projects/shape_fm_poc",
+        )
+        remote = Path(ubuntu_root) / settings["root"] / evidence["relative_path"]
+        incoming = self.root / ".amp/in" / f"rf-h{horizon:02d}-{uuid.uuid4().hex}.joblib"
+        incoming.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            subprocess.run(
+                ["scp", *self._secure_ssh_arguments(host), f"{host}:{remote}", str(incoming)],
+                cwd=self.root, check=True, capture_output=True, text=True, timeout=300,
+            )
+            if (
+                incoming.stat().st_size != evidence.get("size_bytes")
+                or hashlib.sha256(incoming.read_bytes()).hexdigest()
+                != evidence.get("sha256")
+            ):
+                raise RuntimeError(
+                    f"transferred Random Forest artifact differs for horizon {horizon}"
+                )
+            return storage.adopt(
+                incoming, "directional_mantis_rf", "D", horizon,
+                overwrite=settings["overwrite"],
+            )
+        finally:
+            incoming.unlink(missing_ok=True)
+
+    def _synchronize_model_directory_to_ubuntu(self) -> None:
+        """Copy the complete authoritative experiment model directory once before prediction."""
+        settings = self.configuration.model_storage
+        source = self.root / settings["root"] / settings["experiment"]
+        if not source.is_dir():
+            raise RuntimeError("authoritative fitted-model directory is missing")
+        host = os.environ.get("SHAPEFM_UBUNTU_HOST", "rafmontano@WSUbuntu1.local")
+        ubuntu_root = os.environ.get(
+            "SHAPEFM_UBUNTU_ROOT",
+            "/home/rafmontano/Documents/PhD/2026/projects/shape_fm_poc",
+        )
+        remote_root = Path(ubuntu_root) / settings["root"]
+        subprocess.run(
+            self._secure_ssh_arguments(
+                host, f"mkdir -p {shlex.quote(str(remote_root))}"
+            ),
+            cwd=self.root, check=True, capture_output=True, text=True, timeout=60,
+        )
+        subprocess.run(
+            ["scp", *self._secure_ssh_arguments(host), "-r", str(source),
+             f"{host}:{remote_root}/"],
+            cwd=self.root, check=True, capture_output=True, text=True, timeout=600,
+        )
+
+    def _store_v11_dtw_predictions(self, experiment_id: str) -> None:
+        """Mirror accepted DTW outputs into the additive model-neutral contract."""
+        rows = self.connection.execute(
+            """SELECT p.prediction_id, p.model_definition_id, p.evaluation_input_id,
+                      p.horizon, p.prediction, p.nearest_reference_identity,
+                      p.nearest_distance, p.effective_width,
+                      m.reference_library_fingerprint, m.preparation_fingerprint,
+                      m.implementation_fingerprint
+               FROM directional_predictions AS p
+               JOIN directional_model_definitions AS m
+                 ON m.model_definition_id=p.model_definition_id
+               WHERE p.experiment_id=? ORDER BY p.prediction_id""",
+            [experiment_id],
+        ).fetchall()
+        for row in rows:
+            output_fingerprint = json_fingerprint(
+                {
+                    "prediction": int(row[4]),
+                    "nearest_reference_identity": row[5],
+                    "nearest_distance": float(row[6]),
+                    "effective_width": int(row[7]),
+                }
+            )
+            run_id = "dtw-run/" + json_fingerprint(
+                {"model": row[1], "horizon": int(row[3])}
+            )[:32]
+            scientific = {
+                "experiment_id": experiment_id,
+                "model_definition_id": row[1],
+                "evaluation_input_id": row[2],
+                "horizon": int(row[3]),
+                "prediction": int(row[4]),
+                "classifier_run_id": run_id,
+                "training_fingerprint": row[8],
+                "evaluation_fingerprint": row[9],
+                "output_fingerprint": output_fingerprint,
+            }
+            common = {
+                "prediction_id": row[0],
+                **scientific,
+                "content_hash": json_fingerprint(scientific),
+            }
+            lineage_content = {
+                "nearest_reference_identity": row[5],
+                "nearest_distance": float(row[6]),
+                "effective_width": int(row[7]),
+            }
+            lineage = {
+                "prediction_id": row[0],
+                **lineage_content,
+                "content_hash": json_fingerprint(lineage_content),
+            }
+            self._insert_or_verify("model_directional_predictions", common)
+            self._insert_or_verify("directional_dtw_prediction_lineage", lineage)
+
+    def _directional_mantis_inputs(self) -> tuple[list[Any], str, str]:
+        """Load common Process-03 S1 and official values without another split."""
+        from .p04_05_directional_mantis import PreparedDirectionalInput
+
+        run = self.connection.execute(
+            """SELECT preparation_id, child_database, definition_hash,
+                      membership_fingerprint
+               FROM window_preparation_runs WHERE status='completed'
+               ORDER BY completed_at DESC LIMIT 1"""
+        ).fetchone()
+        if run is None:
+            raise RuntimeError("Mantis requires completed common window preparation")
+        series_identities = {
+            int(row[0]): f"{row[1]}/{row[2]}"
+            for row in self.connection.execute(
+                """SELECT sl.series_key, dl.dataset_id, sl.series_id
+                   FROM series_lookup AS sl
+                   JOIN dataset_lookup AS dl ON dl.dataset_key=sl.dataset_key"""
+            ).fetchall()
+        }
+        child = duckdb.connect(
+            str((self.database_path.parent / run[1]).resolve()), read_only=True
+        )
+        try:
+            training_rows = child.execute(
+                """SELECT w.window_id, w.series_key, w.transformed_input,
+                          w.transformed_hash, l.labels, l.reference_value
+                   FROM prepared_windows AS w
+                   JOIN series_membership AS m
+                     ON m.preparation_id=w.preparation_id
+                    AND m.series_key=w.series_key
+                   JOIN window_directional_labels AS l ON l.window_id=w.window_id
+                   WHERE w.preparation_id=? AND m.split_id='S1'
+                     AND m.partition='train' ORDER BY w.window_id""",
+                [run[0]],
+            ).fetchall()
+        finally:
+            child.close()
+        inputs = [
+            PreparedDirectionalInput(
+                input_id=row[0],
+                source_series_id=series_identities[int(row[1])],
+                role="training",
+                values=tuple(row[2]),
+                label_reference=float(row[5]),
+                labels=tuple(int(value) for value in row[4]),
+                preparation_definition_id=run[2],
+                preparation_fingerprint=run[2],
+                membership_fingerprint=run[3],
+                input_fingerprint=row[3],
+            )
+            for row in training_rows
+        ]
+        official_rows = self.connection.execute(
+            """SELECT i.evaluation_input_id, f.series_id, i.transformed_input,
+                      i.label_reference, i.preparation_id,
+                      i.preparation_fingerprint, i.transformed_input_hash
+               FROM directional_evaluation_inputs AS i
+               JOIN forecast_instances AS f
+                 ON f.forecast_instance_id=i.forecast_instance_id
+               ORDER BY i.evaluation_input_id"""
+        ).fetchall()
+        inputs.extend(
+            PreparedDirectionalInput(
+                input_id=row[0],
+                source_series_id=str(row[1]),
+                role="official_evaluation",
+                values=tuple(row[2]),
+                label_reference=float(row[3]),
+                labels=None,
+                preparation_definition_id=row[4],
+                preparation_fingerprint=row[5],
+                membership_fingerprint=run[3],
+                input_fingerprint=row[6],
+            )
+            for row in official_rows
+        )
+        if len(inputs) != len(training_rows) + self.configuration.series_count:
+            raise RuntimeError("common Mantis input set is incomplete")
+        return inputs, run[2], run[3]
+
+    def _run_04_directional_mantis_rf(
+        self,
+        experiment_id: str,
+        rows: list[tuple],
+        attempts: dict[str, int],
+        profile: ExecutionProfile,
+        resolved_device: str,
+        dask_client: Any,
+        settings: ExecutionSettings | None,
+    ) -> None:
+        """Encode common inputs once and run fourteen independent RF horizons."""
+        from .p04_05_directional_mantis import (
+            DirectionalMantisComposer,
+            RepresentationRecord,
+        )
+        from .shared_classification import (
+            ClassificationDataset,
+            ClassificationResponse,
+            ClassifierSpec,
+            RandomForestClassifierProvider,
+        )
+        from .shared_distributed_execution import (
+            install_immutable_classification_dataset,
+        )
+        from .shared_workflow_orchestration import run_gate_compute_flow
+
+        inputs, preparation_fingerprint, membership_fingerprint = (
+            self._directional_mantis_inputs()
+        )
+        representation_science = self.config["representations"][
+            "mantis_8m_legacy_cls"
+        ]
+        representation_definition_id = (
+            "representation-definition/"
+            + json_fingerprint(representation_science)[:32]
+        )
+        representation_definition_content = {
+            "experiment_id": experiment_id,
+            "scientific_definition": canonical_json(representation_science),
+        }
+        representation_definition_record = {
+            "representation_definition_id": representation_definition_id,
+            **representation_definition_content,
+            "content_hash": json_fingerprint(representation_definition_content),
+        }
+        classifier_science = self.config["classifiers"]["random_forest"]
+        classifier_definition_id = classifier_science["classifier_id"]
+        classifier_definition_content = {
+            "experiment_id": experiment_id,
+            "scientific_definition": canonical_json(classifier_science),
+        }
+        classifier_definition_record = {
+            "classifier_definition_id": classifier_definition_id,
+            **classifier_definition_content,
+            "content_hash": json_fingerprint(classifier_definition_content),
+        }
+        variant_id = next(row[2] for row in rows if row[2] is not None)
+        model_science = self.config["models"]["directional_mantis_rf"]
+        model_identity = {
+            "experiment": experiment_id,
+            "variant": variant_id,
+            "definition": model_science,
+            "representation": representation_definition_id,
+            "classifier": classifier_definition_id,
+        }
+        model_id = "directional-model/" + json_fingerprint(model_identity)[:32]
+        model_content = {
+            "experiment_id": experiment_id,
+            "variant_id": variant_id,
+            "representation_definition_id": representation_definition_id,
+            "classifier_definition_id": classifier_definition_id,
+            "scientific_definition": canonical_json(model_science),
+            "preparation_fingerprint": preparation_fingerprint,
+            "membership_fingerprint": membership_fingerprint,
+        }
+        model_record = {
+            "model_definition_id": model_id,
+            **model_content,
+            "content_hash": json_fingerprint(model_content),
+        }
+        for table, record in (
+            ("directional_representation_definitions", representation_definition_record),
+            ("directional_classifier_definitions", classifier_definition_record),
+            ("directional_composite_model_definitions", model_record),
+        ):
+            self._insert_or_verify(table, record)
+
+        representation_task = next(
+            (row for row in rows if row[3].endswith(":representations")), None
+        )
+        requests = DirectionalMantisComposer.representation_requests(
+            inputs, representation_definition_id
+        )
+        if representation_task is not None:
+            outcomes = list(
+                run_gate_compute_flow(
+                    process_id=4,
+                    batches=[requests],
+                    options={
+                        "component": "mantis_representation",
+                        "mantis_environment": self.configuration.execution_paths[
+                            "mantis_environment"
+                        ],
+                        "worker_script": self.configuration.execution_paths["mantis_worker"],
+                        "device": "cuda" if dask_client is not None else resolved_device,
+                        "timeout": float(
+                            self.configuration.execution["worker_timeouts_seconds"]["mantis"]
+                        ),
+                    },
+                    scheduler_address=(dask_client.scheduler.address if dask_client else None),
+                    retries=settings.dask_retries if settings else 0,
+                    max_in_flight=1,
+                    local_workers=1,
+                )
+            )
+            if len(outcomes) != 1 or "response" not in outcomes[0]:
+                raise RuntimeError("Mantis representation phase did not return one response")
+            response = outcomes[0]["response"]
+            records = tuple(
+                RepresentationRecord.from_dict(value) for value in response["records"]
+            )
+            # This validates exact request identities and all common-input lineage.
+            DirectionalMantisComposer.classification_dataset(
+                inputs, records, representation_definition_id
+            )
+            if len(records) != len(requests):
+                raise RuntimeError("Mantis omitted requested representations")
+
+            def insert_representations() -> None:
+                provenance = dict(records[0].worker_provenance)
+                if any(dict(record.worker_provenance) != provenance for record in records):
+                    raise RuntimeError("Mantis batch returned inconsistent worker provenance")
+                provenance_fingerprint = json_fingerprint(provenance)
+                execution_identity = {
+                    "definition": representation_definition_id,
+                    "provenance": provenance_fingerprint,
+                }
+                execution_id = "representation-execution/" + json_fingerprint(
+                    execution_identity
+                )[:32]
+                self._insert_or_verify(
+                    "directional_representation_executions",
+                    {
+                        "representation_execution_id": execution_id,
+                        "representation_definition_id": representation_definition_id,
+                        "worker_provenance": canonical_json(provenance),
+                        "worker_provenance_fingerprint": provenance_fingerprint,
+                    },
+                )
+                for record in records:
+                    scientific = {
+                        "representation_definition_id": record.definition_id,
+                        "input_id": record.input_id,
+                        "source_series_id": record.source_series_id,
+                        "role": record.role,
+                        "input_fingerprint": record.input_fingerprint,
+                        "preparation_definition_id": record.preparation_definition_id,
+                        "preparation_fingerprint": record.preparation_fingerprint,
+                        "membership_fingerprint": record.membership_fingerprint,
+                        "representation_values": list(record.values),
+                        "representation_dtype": record.dtype,
+                        "representation_dimension": record.dimension,
+                        "representation_fingerprint": record.representation_fingerprint,
+                    }
+                    self._insert_or_verify(
+                        "directional_representations",
+                        {
+                            "representation_id": record.representation_id,
+                            **scientific,
+                            "content_hash": json_fingerprint(scientific),
+                        },
+                    )
+                    self._insert_or_verify(
+                        "directional_representation_execution_members",
+                        {
+                            "representation_id": record.representation_id,
+                            "representation_execution_id": execution_id,
+                        },
+                    )
+
+            self._commit_task(
+                representation_task[0],
+                attempts[representation_task[0]],
+                float(response["runtime_seconds"]),
+                insert_representations,
+                {"worker": response.get("worker"), "representation_count": len(records)},
+            )
+        stored = self.connection.execute(
+            """SELECT representation_id, input_id, source_series_id, role,
+                      representation_definition_id, representation_values,
+                      representation_dtype, representation_dimension, input_fingerprint,
+                      preparation_definition_id, preparation_fingerprint,
+                      membership_fingerprint, representation_fingerprint
+               FROM directional_representations
+               WHERE representation_definition_id=? ORDER BY representation_id""",
+            [representation_definition_id],
+        ).fetchall()
+        representations = tuple(
+            RepresentationRecord(
+                representation_id=row[0], input_id=row[1], source_series_id=row[2],
+                role=row[3], definition_id=row[4], values=tuple(row[5]), dtype=row[6],
+                dimension=int(row[7]), input_fingerprint=row[8],
+                preparation_definition_id=row[9], preparation_fingerprint=row[10],
+                membership_fingerprint=row[11], representation_fingerprint=row[12],
+                worker_provenance={},
+            )
+            for row in stored
+        )
+        dataset = DirectionalMantisComposer.classification_dataset(
+            inputs, representations, representation_definition_id
+        )
+        specification = ClassifierSpec.from_dict(classifier_science)
+        jobs = DirectionalMantisComposer.classification_jobs(
+            inputs, representations, dataset, specification
+        )
+        dataset_payload = dataset.to_dict()
+        dataset_cache_fingerprint = json_fingerprint(dataset_payload)
+        if dask_client is None:
+            install_immutable_classification_dataset(
+                dataset_cache_fingerprint, dataset_payload
+            )
+        else:
+            reports = dask_client.run(
+                install_immutable_classification_dataset,
+                dataset_cache_fingerprint,
+                dataset_payload,
+            )
+            if any(
+                report["fingerprint"] != dataset_cache_fingerprint
+                for report in reports.values()
+            ):
+                raise RuntimeError("classification dataset was not verified on every worker")
+        training_by_horizon = {
+            int(row[3].rsplit("h", 1)[1]): row
+            for row in rows if ":train:h" in row[3]
+        }
+        prediction_by_horizon = {
+            int(row[3].rsplit("h", 1)[1]): row
+            for row in rows if ":predict:h" in row[3]
+        }
+        common_options = {
+            "component": "random_forest_classifier",
+            "classifier_environment": self.configuration.execution_paths[
+                "classifiers_environment"
+            ],
+            "dataset_fingerprint": dataset_cache_fingerprint,
+            "model_storage": self.configuration.model_storage,
+            "frequency": self.configuration.resolved["data"]["benchmark"]["frequency"],
+            "timeout": float(
+                self.configuration.execution["worker_timeouts_seconds"]["classifier"]
+            ),
+        }
+        if training_by_horizon:
+            training_jobs = [job for job in jobs if job.horizon in training_by_horizon]
+            outcomes = run_gate_compute_flow(
+                process_id=4,
+                batches=[[job.to_dict()] for job in training_jobs],
+                options={
+                    **common_options,
+                    "operation": "train",
+                    "worker_script": self.configuration.execution_paths[
+                        "random_forest_training_worker"
+                    ],
+                },
+                scheduler_address=(dask_client.scheduler.address if dask_client else None),
+                retries=settings.dask_retries if settings else 0,
+                max_in_flight=(settings.dask_max_in_flight if settings else max(profile.autoarima_workers, 1)),
+                local_workers=max(profile.autoarima_workers, 1),
+            )
+            jobs_by_id = {job.job_id: job for job in training_jobs}
+            for outcome in outcomes:
+                if "response" not in outcome:
+                    raise RuntimeError(outcome["error"])
+                response = outcome["response"]
+                if len(response.get("results", ())) != 1:
+                    raise RuntimeError("Random Forest training worker must return one result")
+                result = response["results"][0]
+                job = jobs_by_id.get(result.get("job_id"))
+                if (
+                    job is None
+                    or result.get("horizon") != job.horizon
+                    or result.get("classifier_run_id")
+                    != RandomForestClassifierProvider.classifier_run_id(job)
+                    or result.get("classifier_id") != job.specification.classifier_id
+                    or result.get("training_fingerprint") != job.training_fingerprint
+                    or result.get("evaluation_fingerprint") != job.evaluation_fingerprint
+                    or result.get("resolved_parameters") != dict(job.specification.parameters)
+                ):
+                    raise RuntimeError("Random Forest training result differs from its job")
+                artifact = self._consolidate_classifier_artifact(
+                    result["artifact"], response.get("worker", {}), job.horizon
+                )
+                task = training_by_horizon.pop(job.horizon)
+                self._commit_task(
+                    task[0], attempts[task[0]],
+                    float(response["subprocess_runtime_seconds"]),
+                    lambda: None,
+                    {"worker": response.get("worker"), "fitted_artifact": artifact,
+                     "training_provenance": response.get("worker_provenance")},
+                )
+            if training_by_horizon:
+                raise RuntimeError("classifier workers omitted submitted training jobs")
+        if not prediction_by_horizon:
+            return
+        prediction_jobs = [job for job in jobs if job.horizon in prediction_by_horizon]
+        outcomes = run_gate_compute_flow(
+            process_id=4,
+            batches=[[job.to_dict()] for job in prediction_jobs],
+            options={
+                **common_options,
+                "operation": "predict",
+                "worker_script": self.configuration.execution_paths[
+                    "random_forest_prediction_worker"
+                ],
+            },
+            scheduler_address=(dask_client.scheduler.address if dask_client else None),
+            retries=settings.dask_retries if settings else 0,
+            max_in_flight=(settings.dask_max_in_flight if settings else max(profile.autoarima_workers, 1)),
+            local_workers=max(profile.autoarima_workers, 1),
+        )
+        for outcome in outcomes:
+            if "response" not in outcome:
+                raise RuntimeError(outcome["error"])
+            envelope = ClassificationResponse.from_dict(outcome["response"]["response"])
+            result = envelope.results[0]
+            job = next(job for job in prediction_jobs if job.job_id == result.job_id)
+            predictions = DirectionalMantisComposer.directional_predictions(
+                dataset, [job], [envelope], representations,
+                experiment_id=experiment_id, model_definition_id=model_id,
+            )
+            task = prediction_by_horizon.pop(result.horizon)
+
+            def insert_classifier_result(
+                result=result, envelope=envelope, predictions=predictions
+            ) -> None:
+                run_content = {
+                    "classifier_definition_id": classifier_definition_id,
+                    "classification_dataset_id": dataset.dataset_id,
+                    "horizon": result.horizon,
+                    "training_fingerprint": result.training_fingerprint,
+                    "evaluation_fingerprint": result.evaluation_fingerprint,
+                    "output_fingerprint": result.output_fingerprint,
+                }
+                self._insert_or_verify(
+                    "directional_classifier_runs",
+                    {
+                        "classifier_run_id": result.classifier_run_id,
+                        **run_content,
+                        "content_hash": json_fingerprint(run_content),
+                    },
+                )
+                self._insert_or_verify(
+                    "directional_classifier_executions",
+                    {
+                        "classifier_execution_id": "classifier-execution/"
+                        + json_fingerprint(
+                            {"run": result.classifier_run_id, "response": envelope.response_id}
+                        )[:32],
+                        "classifier_run_id": result.classifier_run_id,
+                        "classification_response_id": envelope.response_id,
+                        "worker_provenance": canonical_json(envelope.worker_provenance),
+                        "worker_provenance_fingerprint": envelope.worker_provenance_fingerprint,
+                    },
+                )
+                by_input = {record.input_id: record for record in representations}
+                for prediction in predictions:
+                    metadata = prediction.scientific_metadata
+                    self._insert_or_verify(
+                        "model_directional_predictions",
+                        {
+                            "prediction_id": prediction.prediction_id,
+                            "experiment_id": prediction.experiment_id,
+                            "model_definition_id": prediction.model_definition_id,
+                            "evaluation_input_id": prediction.evaluation_input_id,
+                            "horizon": prediction.horizon,
+                            "prediction": prediction.prediction,
+                            "classifier_run_id": metadata["classifier_run_id"],
+                            "training_fingerprint": metadata["training_fingerprint"],
+                            "evaluation_fingerprint": metadata["evaluation_fingerprint"],
+                            "output_fingerprint": metadata["output_fingerprint"],
+                            "content_hash": prediction.content_hash,
+                        },
+                    )
+                    lineage_content = {
+                        "representation_id": by_input[
+                            prediction.evaluation_input_id
+                        ].representation_id,
+                        "classifier_run_id": result.classifier_run_id,
+                    }
+                    self._insert_or_verify(
+                        "directional_classifier_prediction_lineage",
+                        {
+                            "prediction_id": prediction.prediction_id,
+                            **lineage_content,
+                            "content_hash": json_fingerprint(lineage_content),
+                        },
+                    )
+
+            self._commit_task(
+                task[0], attempts[task[0]],
+                float(outcome["response"]["subprocess_runtime_seconds"]),
+                insert_classifier_result,
+                {
+                    "classification_response_id": envelope.response_id,
+                    "worker_provenance_fingerprint": envelope.worker_provenance_fingerprint,
+                },
+            )
+        if prediction_by_horizon:
+            raise RuntimeError("classifier workers omitted submitted prediction jobs")
+
     def _run_05_combine(
         self,
         experiment_id: str,
@@ -2849,16 +3819,25 @@ class ExperimentCoordinator:
         Outputs: None; completes base-candidate tasks and computes and transactionally
         persists equal-weight forecasts, component lineage, hashes, and task state.
         """
-        if self.configuration.version == 10:
+        if self.configuration.version in {10, 11}:
             if not rows:
                 return
-            if len(rows) != 1 or rows[0][3] != "directional_dtw:no_work":
+            expected_candidate = (
+                "directional:no_work"
+                if self.configuration.version == 11
+                else "directional_dtw:no_work"
+            )
+            if len(rows) != 1 or rows[0][3] != expected_candidate:
                 raise RuntimeError("directional Process 05 requires one no-work identity")
             row = rows[0]
             content = {
                 "experiment_id": experiment_id,
                 "process_id": 5,
-                "reason": "no forecast combination is configured for directional DTW",
+                "reason": (
+                    "no forecast combination is configured for directional models"
+                    if self.configuration.version == 11
+                    else "no forecast combination is configured for directional DTW"
+                ),
             }
             record = {
                 "no_work_id": "deterministic-no-work/"
@@ -3087,7 +4066,85 @@ class ExperimentCoordinator:
         subprocesses using temporary payloads, and transactionally upserts metrics,
         input fingerprints, provenance, and task completion.
         """
-        if self.configuration.version == 10:
+        configuration_version = getattr(self.configuration, "version", 0)
+        if configuration_version == 11:
+            from .shared_labels import directional_accuracy
+
+            if not rows:
+                return
+            dtw_models = self.connection.execute(
+                """SELECT model_definition_id FROM directional_model_definitions
+                   WHERE experiment_id=?""",
+                [experiment_id],
+            ).fetchall()
+            mantis_models = self.connection.execute(
+                """SELECT model_definition_id
+                   FROM directional_composite_model_definitions
+                   WHERE experiment_id=?""",
+                [experiment_id],
+            ).fetchall()
+            if len(dtw_models) != 1 or len(mantis_models) != 1:
+                raise RuntimeError("comparison evaluation requires both model definitions")
+            model_ids = {
+                "directional_dtw": dtw_models[0][0],
+                "directional_mantis_rf": mantis_models[0][0],
+            }
+            for row in rows:
+                candidate, horizon_text = row[3].rsplit(":h", 1)
+                horizon = int(horizon_text)
+                model_id = model_ids.get(candidate)
+                if model_id is None:
+                    raise RuntimeError("unexpected directional evaluation candidate")
+                values = self.connection.execute(
+                    """SELECT p.evaluation_input_id, p.prediction, a.labels
+                       FROM model_directional_predictions AS p
+                       JOIN directional_actual_labels AS a
+                         ON a.evaluation_input_id=p.evaluation_input_id
+                       WHERE p.experiment_id=? AND p.model_definition_id=?
+                         AND p.horizon=? ORDER BY p.evaluation_input_id""",
+                    [experiment_id, model_id, horizon],
+                ).fetchall()
+                if len(values) != self.configuration.series_count:
+                    raise RuntimeError(
+                        f"{candidate} horizon {horizon} has incomplete predictions"
+                    )
+                score = directional_accuracy(
+                    [int(prediction) for _, prediction, _ in values],
+                    [int(labels[horizon - 1]) for _, _, labels in values],
+                )
+                prediction_fingerprint = json_fingerprint(
+                    [
+                        {
+                            "evaluation_input_id": input_id,
+                            "prediction": int(prediction),
+                            "actual": int(labels[horizon - 1]),
+                        }
+                        for input_id, prediction, labels in values
+                    ]
+                )
+                content = {
+                    "experiment_id": experiment_id,
+                    "model_definition_id": model_id,
+                    "horizon": horizon,
+                    **score,
+                    "prediction_fingerprint": prediction_fingerprint,
+                }
+                record = {
+                    "directional_evaluation_id": "directional-evaluation/"
+                    + json_fingerprint({"model": model_id, "horizon": horizon})[:32],
+                    **content,
+                    "content_hash": json_fingerprint(content),
+                }
+
+                def insert_evaluation(record=record) -> None:
+                    self._insert_or_verify("model_directional_evaluations", record)
+
+                self._commit_task(
+                    row[0], attempts[row[0]], 0.0, insert_evaluation,
+                    {"execution_backend": "Mac coordinator", "hostname": platform.node()},
+                )
+            return
+        if configuration_version == 10:
             from .shared_labels import directional_accuracy
 
             if not rows:

@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 import duckdb
 
 import util.p00_01_researcher_actions as action_module
+from util.shared_configuration import load_experiment_configuration
 from util.shared_database import initialize_experiment_database
 from util.p00_01_researcher_actions import (
     FeatureExtractionAction,
@@ -402,6 +403,33 @@ class RestoredProcessActionTests(unittest.TestCase):
         self.assertEqual(settings.dask_expected_workers, 38)
         self.assertEqual(settings.dask_expected_gpu_workers, 15)
         self.assertEqual(evidence["resolved_topology"]["total_workers"], 38)
+
+    def test_directional_comparison_starts_one_mantis_gpu_process(self):
+        """Version 11 narrows logical GPU capacity to its approved single process."""
+        configuration = load_experiment_configuration(
+            ROOT / "config/experiments/poc2_m4_daily_100_directional_dtw_mantis_rf.json"
+        )
+        cluster = MagicMock()
+        cluster.scheduler_address = "tcp://scheduler:8786"
+        cluster.start.return_value = {"resolved_topology": {"total_workers": 24}}
+        with patch(
+            "util.shared_distributed_cluster.ManagedTuningCluster",
+            return_value=cluster,
+        ) as factory:
+            execution, settings, selected, evidence = ProcessAction()._execution(
+                configuration,
+                (4,),
+                "poc2_seasonal_recovery",
+                None,
+                requires_gpu=True,
+            )
+        factory.assert_called_once_with(
+            execution[0], requires_gpu=True, gpu_workers=1
+        )
+        self.assertIs(selected, cluster)
+        self.assertEqual(settings.dask_expected_workers, 24)
+        self.assertEqual(settings.dask_expected_gpu_workers, 1)
+        self.assertEqual(evidence["resolved_topology"]["total_workers"], 24)
 
     def test_process_one_records_event_revision_and_completion(self):
         """A bounded Gate 1 run records repository revision and completed lifecycle."""

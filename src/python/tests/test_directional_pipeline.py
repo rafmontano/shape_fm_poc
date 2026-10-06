@@ -295,6 +295,36 @@ class DirectionalPipelineTests(unittest.TestCase):
                 ).fetchone()[0],
                 100,
             )
+            common_inputs, definition_hash, membership_hash = (
+                coordinator._directional_mantis_inputs()
+            )
+            official_inputs = [
+                item for item in common_inputs if item.role == "official_evaluation"
+            ]
+            training_inputs = [item for item in common_inputs if item.role == "training"]
+            stored_official = {
+                row[0]: (tuple(row[1]), row[2])
+                for row in coordinator.connection.execute(
+                    """SELECT evaluation_input_id, transformed_input,
+                              transformed_input_hash
+                       FROM directional_evaluation_inputs"""
+                ).fetchall()
+            }
+            self.assertEqual(len(official_inputs), 100)
+            self.assertTrue(training_inputs)
+            self.assertTrue(all(item.labels is None for item in official_inputs))
+            self.assertTrue(all(item.labels is not None for item in training_inputs))
+            self.assertTrue(all(item.membership_fingerprint == membership_hash
+                                for item in common_inputs))
+            self.assertTrue(all(item.preparation_definition_id == definition_hash
+                                for item in training_inputs))
+            self.assertEqual(
+                {
+                    item.input_id: (item.values, item.input_fingerprint)
+                    for item in official_inputs
+                },
+                stored_official,
+            )
 
 
 if __name__ == "__main__":

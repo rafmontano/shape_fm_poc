@@ -4,7 +4,9 @@ Status: Closed and approved for publication on 6 October 2026. The base
 architecture was approved on 5 October 2026; the aeon-only engine amendment,
 execution evidence, and final Researcher/Chief Architect acceptance followed on
 6 October 2026. The direct `aeon.distances.dtw_distance` engine at aeon 1.6.0
-supersedes the withdrawn sktime candidate. See the
+supersedes the withdrawn sktime candidate. ID 026 subsequently approved a
+fitted-meta-learner storage retrofit; it changes lifecycle only and preserves
+this accepted science. See the
 [accepted execution evidence](poc2-id021-dtw-execution-evidence.md).
 
 ## Scientific definition
@@ -26,8 +28,11 @@ is selected independently for each horizon.
 Final prediction uses the complete S1 training library without same-series
 exclusion. Horizons sharing a selected width share one neighbour search. The
 neighbour's corresponding binary label is copied with its stable identity,
-finite distance and effective width. ID 021 does not calculate probabilities,
-serialize a fitted model, or write forecast rows.
+finite distance and effective width. ID 021 does not calculate probabilities or
+write forecast rows. Its original closure did not serialize fitted state; the
+approved ID 026 retrofit now persists one frequency-level artifact containing
+the common reference library and all selected horizon widths so calibration is
+not repeated.
 
 ## Preparation and leakage boundary
 
@@ -59,9 +64,11 @@ S1 child + official inputs -> direct aeon DTW blocks -> directional parent table
                         one computational thread each
 ```
 
-`src/python/04_04_directional_dtw.py` is the only DTW-specific executable. It
-owns calibration and prediction internally and calls aeon distance directly;
-no aeon classifier, sktime, R DTW, Java, tsml, second engine or fallback is
+The original accepted implementation used
+`src/python/04_04_directional_dtw.py` for calibration and prediction. ID 026
+separates that lifecycle into `04_04_train_directional_dtw.py` and
+`04_07_predict_directional_dtw.py` without changing the direct aeon calculation.
+No aeon classifier, sktime, R DTW, Java, tsml, second engine or fallback is
 permitted. The classifiers lock pins aeon 1.6.0. Actual aeon, NumPy, Numba and
 scikit-learn versions, the lock digest, relevant calculation-source digests,
 worker digest, repository revision, float64 dtype, preparation digest and
@@ -92,6 +99,14 @@ Completed calibration, prediction and evaluation identities are skipped on
 restart. A completed 100-series run must retain the same widths, predictions,
 nearest-neighbour lineage, distances, counts and fingerprints with zero new
 scientific work.
+
+Under [ID 026 fitted-model storage](poc2-id026-fitted-model-storage.md), DTW
+training/calibration publishes one verified multi-horizon artifact per
+frequency outside DuckDB. Final prediction must load that artifact through the
+shared model store. Missing or invalid artifacts block prediction, while an
+existing artifact with overwrite disabled skips calibration. Existing accepted
+DuckDB state may be exported once without recalculation when its widths,
+membership and reference content are complete and verified.
 
 ## Validation and acceptance boundary
 

@@ -40,8 +40,9 @@ class ExperimentConfigurationError(ValueError):
 # v5 defines the original rolling-window/S1 contract; v6 corrects split
 # arithmetic; v7 adds the approved R pool; v8 adds the bounded one-variant
 # all-model acceptance; v9 activates the forecast contract and M4 benchmarks;
-# v10 activates the approved directional DTW baseline without forecast rows.
-SUPPORTED_CONFIGURATION_VERSIONS = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
+# v10 activates the approved directional DTW baseline without forecast rows;
+# v11 adds the same-input Mantis/Random-Forest comparison without changing v10.
+SUPPORTED_CONFIGURATION_VERSIONS = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}
 # Stable production IDs map to the native, allowlisted FFORMA method registry.
 R_MODEL_METHODS = {
     name: f"{name}_forec" for name in
@@ -136,7 +137,7 @@ class ExperimentConfiguration:
         data = deepcopy(self.resolved["data"])
         data["source"].pop("directory", None)
         evaluation = self.resolved["evaluation"]
-        return {
+        scientific = {
             "configuration_version": self.version,
             "reproducibility": self.resolved["reproducibility"],
             "data": data,
@@ -151,6 +152,10 @@ class ExperimentConfiguration:
                 "options": evaluation["options"],
             },
         }
+        if self.version >= 11:
+            scientific["representations"] = self.resolved["representations"]
+            scientific["classifiers"] = self.resolved["classifiers"]
+        return scientific
 
     @property
     def configuration_integrity_hash(self) -> str:
@@ -161,6 +166,13 @@ class ExperimentConfiguration:
     def execution(self) -> dict[str, Any]:
         """Return the creation-time execution globals used by coordinators and workers."""
         return deepcopy(self.resolved["execution"]["default"])
+
+    @property
+    def model_storage(self) -> dict[str, Any]:
+        """Return the centrally validated fitted-model root, namespace, and overwrite policy."""
+        if self.version < 11:
+            raise ExperimentConfigurationError("fitted-model storage requires configuration version 11")
+        return deepcopy(self.resolved["execution"]["model_storage"])
 
     @property
     def execution_paths(self) -> dict[str, str]:
@@ -316,6 +328,9 @@ class ExperimentConfiguration:
             "provisional_candidate": deepcopy(evaluation["provisional_candidate"]),
             "submission_metadata": deepcopy(evaluation["submission_metadata"]),
         }
+        if self.version >= 11:
+            workflow["representations"] = deepcopy(self.resolved["representations"])
+            workflow["classifiers"] = deepcopy(self.resolved["classifiers"])
         if self.version >= 4:
             # Version 4 retains its legacy single-context capability. Version 5
             # carries the separate, opt-in rolling-window preparation definition.
@@ -447,18 +462,18 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
         raise ExperimentConfigurationError("pipeline.processes must define ordered Processes 01-06")
     expected_preprocessing = {
         "default": "robust",
-        "modes": ["robust"] if version in {8, 9, 10} else ["standard", "robust"],
+        "modes": ["robust"] if version in {8, 9, 10, 11} else ["standard", "robust"],
     }
     if pipeline["preprocessing"] != expected_preprocessing:
         raise ExperimentConfigurationError(
             f"v{version} preprocessing must select only robust"
-            if version in {8, 9, 10}
+            if version in {8, 9, 10, 11}
             else "preprocessing must expose standard and robust with robust as default"
         )
     expected_transformations = {
         "methods": [
             "standardise_sample_v1"
-        ] if version in {8, 9, 10} else [
+        ] if version in {8, 9, 10, 11} else [
             "identity",
             "standardise_sample_v1" if version >= 4 else "minmax_then_standardize",
         ]
@@ -480,7 +495,7 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
             raise ExperimentConfigurationError(
                 "pipeline.window_preparation.context_length must be a positive integer"
             )
-    elif version in {5, 6, 7, 8, 9, 10}:
+    elif version in {5, 6, 7, 8, 9, 10, 11}:
         _require_keys(pipeline, {"window_preparation"}, "pipeline")
         window_preparation = _require_mapping(
             pipeline["window_preparation"], "pipeline.window_preparation"
@@ -599,7 +614,7 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
         raise ExperimentConfigurationError("unsupported adjustment method")
     expected_combination = (
         {"method": "none", "weights": {}}
-        if version == 10 else
+        if version in {10, 11} else
         {"method": "m4_comb", "weights": {
             "ses": 1.0 / 3.0, "holt": 1.0 / 3.0, "damped": 1.0 / 3.0,
         }}
@@ -651,7 +666,7 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
         if tuning_enabled
         else {"auto_arima", "chronos_2"}
     )
-    if version == 10:
+    if version in {10, 11}:
         expected_directional = {
             "method": "one_nearest_neighbour",
             "engine": {
@@ -685,9 +700,82 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
             "neighbour_tie_rule": "lowest_stable_reference_identity",
             "probabilities": False,
         }
-        if models != {"directional_dtw": expected_directional}:
+        expected_models = {"directional_dtw": expected_directional}
+        if version == 11:
+            representations = _require_mapping(
+                value.get("representations"), "representations"
+            )
+            classifiers = _require_mapping(value.get("classifiers"), "classifiers")
+            expected_representation = {
+                "provider": "mantis.Mantis8M",
+                "package_version": "1.1.0",
+                "checkpoint_repository": "paris-noah/Mantis-8M",
+                "checkpoint_revision": "bc7d5ab40c02133386a28e2c127f35c17c86901d",
+                "checkpoint_files": {
+                    "config.json": "c9e8b1e5d9b95510c7d446d1e1ef46d5d36c3eae0c7a9b409c8d3c6c7ce7837c",
+                    "model.safetensors": "d5077b60438c477a627feeef0e7365588bdb351eaa5b5bcfb0b3d5fc5804f8c8",
+                },
+                "checkpoint_fingerprint": "5ee9a5cf70755561d168b23302d1d35329da05eef50e28c382fc6bb2ace81a8c",
+                "input_length": 64,
+                "resize": {"length": 512, "mode": "linear", "align_corners": False},
+                "representation": "legacy_final_transformer_layer_cls",
+                "dtype": "float32",
+                "dimension": 256,
+                "frozen": True,
+            }
+            expected_parameters = {
+                "bootstrap": True, "ccp_alpha": 0.0, "class_weight": None,
+                "criterion": "gini", "max_depth": None, "max_features": "sqrt",
+                "max_leaf_nodes": None, "max_samples": None,
+                "min_impurity_decrease": 0.0, "min_samples_leaf": 1,
+                "min_samples_split": 2, "min_weight_fraction_leaf": 0.0,
+                "monotonic_cst": None, "n_estimators": 200, "n_jobs": 1,
+                "oob_score": False, "random_state": 42, "verbose": 0,
+                "warm_start": False,
+            }
+            expected_classifier = {
+                "classifier_id": "classifier/random-forest/c5bcf252d0e53262dd22271bbe316911",
+                "implementation": "sklearn.ensemble.RandomForestClassifier",
+                "implementation_version": "1.7.2",
+                "parameters": expected_parameters,
+                "seed": 42,
+                "feature_dimension": 256,
+                "feature_dtype": "float32",
+                "output_contract": "binary_integer_v1",
+            }
+            if representations != {"mantis_8m_legacy_cls": expected_representation}:
+                raise ExperimentConfigurationError(
+                    "v11 representations must define the approved frozen Mantis contract"
+                )
+            if classifiers != {"random_forest": expected_classifier}:
+                raise ExperimentConfigurationError(
+                    "v11 classifiers must define the approved Random Forest contract"
+                )
+            expected_models["directional_mantis_rf"] = {
+                "method": "composite_directional_classifier",
+                "representation": "mantis_8m_legacy_cls",
+                "classifier": "random_forest",
+                "input": {
+                    "definition": "standardise_sample_v1",
+                    "length": 64,
+                    "dtype": "float64",
+                },
+                "labels": {
+                    "definition": "directional_strict_v1",
+                    "horizons": list(range(1, 15)),
+                },
+                "reference": {
+                    "membership": "S1", "partition": "train",
+                    "cap": None, "sampling": "none",
+                },
+            }
+        elif "representations" in value or "classifiers" in value:
             raise ExperimentConfigurationError(
-                "v10 models must define the approved direct-aeon directional DTW baseline"
+                "representations and classifiers belong to configuration version 11"
+            )
+        if models != expected_models:
+            raise ExperimentConfigurationError(
+                f"v{version} models must define the approved directional baseline set"
             )
     elif version in {7, 8, 9}:
         expected_pool = (
@@ -763,7 +851,7 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
     if (
         archived.get("providers") != approved_archived
         or not isinstance(enabled_archived, list)
-        or (not enabled_archived and version != 10)
+        or (not enabled_archived and version not in {10, 11})
         or len(enabled_archived) != len(set(enabled_archived))
         or any(provider not in approved_archived for provider in enabled_archived)
         or archived.get("forecast_capability") != "mean_only"
@@ -781,7 +869,9 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
         {"method", "gift_eval", "options", "provisional_candidate", "submission_metadata"},
         "evaluation",
     )
-    expected_evaluation_method = "directional_accuracy" if version == 10 else "gift_eval"
+    expected_evaluation_method = (
+        "directional_accuracy" if version in {10, 11} else "gift_eval"
+    )
     if evaluation["method"] != expected_evaluation_method:
         raise ExperimentConfigurationError(
             f"evaluation.method must be {expected_evaluation_method}"
@@ -805,7 +895,7 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
         "label_definition": "directional_strict_v1",
         "horizons": list(range(1, 15)),
         "missing_labels": "error",
-    } if version == 10 else {
+    } if version in {10, 11} else {
         "axis": None,
         "mask_invalid_label": True,
         "allow_nan_forecast": False,
@@ -881,11 +971,13 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
         "import", "plan", "preprocess", "transform", "auto_arima", "chronos",
         "combine", "gift_eval",
     }
-    if version in {5, 6, 7, 8, 9, 10}:
+    if version in {5, 6, 7, 8, 9, 10, 11}:
         expected_batch_sizes.add("window_preparation")
-    if version == 10:
+    if version in {10, 11}:
         expected_batch_sizes -= {"auto_arima", "chronos", "combine", "gift_eval"}
         expected_batch_sizes |= {"directional_calibration", "directional_prediction"}
+    if version == 11:
+        expected_batch_sizes |= {"mantis_representation", "random_forest_classifier"}
     if tuning_enabled or version in {7, 8, 9}:
         expected_batch_sizes.add("r_forecast")
     batch_sizes = _require_mapping(default["batch_sizes"], "execution.default.batch_sizes")
@@ -897,7 +989,9 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
             "execution.default.batch_sizes must define positive integer process batches"
         )
     expected_timeouts = (
-        {"r", "directional_dtw"}
+        {"r", "directional_dtw", "mantis", "classifier"}
+        if version == 11
+        else {"r", "directional_dtw"}
         if version == 10
         else {"r", "chronos_startup", "chronos_request", "gift_eval"}
     )
@@ -913,7 +1007,7 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
         )
     expected_threads = (
         {"r", "classifier", "dask_worker"}
-        if version == 10
+        if version in {10, 11}
         else {"r", "chronos", "dask_worker"}
     )
     threads = _require_mapping(default["thread_limits"], "execution.default.thread_limits")
@@ -951,18 +1045,20 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
             raise ExperimentConfigurationError(
                 "v4 acceptance must describe the sequential Gate 1-3 run"
             )
-    elif version in {5, 6, 7, 8, 9, 10}:
+    elif version in {5, 6, 7, 8, 9, 10, 11}:
         expected_acceptance = {
             "mode": "dask",
             "workflow": (
-                "directional_dtw"
+                "directional_comparison"
+                if version == 11
+                else "directional_dtw"
                 if version == 10
                 else "forecast_pool"
                 if version in {7, 8, 9}
                 else "window_preparation"
             ),
             "execution_profile": "poc2_seasonal_recovery",
-            "profile_version": 3 if version in {7, 8, 9, 10} else 2,
+            "profile_version": 3 if version in {7, 8, 9, 10, 11} else 2,
             "workers": {"mac_cpu": 8, "ubuntu_cpu": 15, "total": 23},
             "system_memory_min_available_gib": {"mac": 3, "ubuntu": 16},
         }
@@ -974,6 +1070,19 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
                     "ubuntu_gpu": 15,
                     "total": 38,
                 },
+                "physical_gpu_count": 1,
+                "gpu_name": "NVIDIA GeForce RTX 5090",
+                "accelerator_memory_min_available_gib": 4,
+            })
+        if version == 11:
+            expected_acceptance.update({
+                "workers": {
+                    "mac_cpu": 8,
+                    "ubuntu_cpu": 15,
+                    "ubuntu_gpu": 1,
+                    "total": 24,
+                },
+                "mantis_gpu_processes": 1,
                 "physical_gpu_count": 1,
                 "gpu_name": "NVIDIA GeForce RTX 5090",
                 "accelerator_memory_min_available_gib": 4,
@@ -1000,6 +1109,18 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
             }
         ):
             raise ExperimentConfigurationError("invalid final-acceptance resource settings")
+    if version == 11:
+        storage = _require_mapping(execution.get("model_storage"), "execution.model_storage")
+        if storage != {
+            "root": "models",
+            "experiment": value["experiment"]["name"],
+            "overwrite": False,
+        }:
+            raise ExperimentConfigurationError(
+                "v11 execution.model_storage must define the approved root, namespace, and default"
+            )
+    elif "model_storage" in execution:
+        raise ExperimentConfigurationError("execution.model_storage belongs to version 11")
     paths = _require_mapping(execution["paths"], "execution.paths")
     required_paths = (
         {
@@ -1010,7 +1131,7 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
             "r_preprocess_worker",
             "r_m4comp2018_worker",
         }
-        if version == 10
+        if version in {10, 11}
         else {
             "project_environment",
             "chronos_environment",
@@ -1020,6 +1141,13 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
             "r_m4comp2018_worker",
         }
     )
+    if version == 11:
+        required_paths.remove("directional_dtw_worker")
+        required_paths |= {
+            "mantis_environment", "mantis_lock", "mantis_worker",
+            "directional_dtw_training_worker", "directional_dtw_prediction_worker",
+            "random_forest_training_worker", "random_forest_prediction_worker",
+        }
     if tuning_enabled or version in {7, 8, 9}:
         required_paths.add("r_forecast_worker")
     if set(paths) != required_paths or any(
@@ -1044,7 +1172,7 @@ def resolve_experiment_configuration(value: dict[str, Any]) -> ExperimentConfigu
     validate_experiment_configuration(value)
     original = deepcopy(value)
     resolved = deepcopy(value)
-    if resolved["configuration_version"] in {5, 6, 7, 8, 9, 10}:
+    if resolved["configuration_version"] in {5, 6, 7, 8, 9, 10, 11}:
         frequencies = resolved["pipeline"]["window_preparation"]["frequencies"]
         for settings in frequencies.values():
             settings["stride"] = settings["input_length"] + settings["future_horizon"]
@@ -1054,15 +1182,20 @@ def resolve_experiment_configuration(value: dict[str, Any]) -> ExperimentConfigu
     variant_count = cleaning_count * transformation_count
     model_count = len(resolved["models"])
     candidate_count = model_count + 1
-    directional = resolved["configuration_version"] == 10
+    directional = resolved["configuration_version"] in {10, 11}
+    directional_models = 2 if resolved["configuration_version"] == 11 else 1
     expected_counts = (
         {
             "1": series_count,
             "2": series_count,
             "3": series_count,
-            "4": 1 + series_count * 14,
+            "4": (
+                1 + series_count * 14 + 1 + 28
+                if resolved["configuration_version"] == 11
+                else 1 + series_count * 14
+            ),
             "5": 1,
-            "6": 14,
+            "6": 14 * directional_models,
         }
         if directional
         else {
@@ -1079,8 +1212,12 @@ def resolve_experiment_configuration(value: dict[str, Any]) -> ExperimentConfigu
         "candidate_count": candidate_count,
         "expected_task_counts": expected_counts,
         "expected_forecast_rows": 0 if directional else series_count * variant_count * candidate_count,
-        "expected_directional_prediction_rows": series_count * 14 if directional else 0,
-        "expected_evaluation_rows": 14 if directional else variant_count * candidate_count,
+        "expected_directional_prediction_rows": (
+            series_count * 14 * directional_models if directional else 0
+        ),
+        "expected_evaluation_rows": (
+            14 * directional_models if directional else variant_count * candidate_count
+        ),
     }
     return ExperimentConfiguration(original=original, resolved=resolved)
 

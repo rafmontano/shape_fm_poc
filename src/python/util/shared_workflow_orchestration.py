@@ -98,7 +98,33 @@ def compute_directional_dtw_batch(
     batch: list[dict[str, Any]], options: dict[str, Any], distributed: bool
 ) -> dict[str, Any]:
     """Run one directional DTW block in the isolated classifier environment."""
-    from .shared_distributed_execution import directional_dtw_batch
+    from .shared_distributed_execution import (
+        directional_dtw_batch,
+        mantis_representation_batch,
+        random_forest_classification_batch,
+    )
+
+    if options.get("component") == "mantis_representation":
+        return mantis_representation_batch(
+            batch,
+            options["mantis_environment"],
+            options["worker_script"],
+            options["device"],
+            options["timeout"],
+            get_run_context().task_run.run_count - 1,
+        )
+    if options.get("component") == "random_forest_classifier":
+        return random_forest_classification_batch(
+            batch,
+            options["classifier_environment"],
+            options["worker_script"],
+            options["dataset_fingerprint"],
+            options["operation"],
+            options["model_storage"],
+            options["frequency"],
+            options["timeout"],
+            get_run_context().task_run.run_count - 1,
+        )
 
     return directional_dtw_batch(
         batch,
@@ -106,6 +132,8 @@ def compute_directional_dtw_batch(
         options["classifier_environment"],
         options["worker_script"],
         options["reference_fingerprint"],
+        options.get("model_storage"),
+        options.get("frequency"),
         options["timeout"],
         options["memory_min_available_gib"],
         options["swap_growth_limit_gib"],
@@ -180,7 +208,12 @@ def gate_compute_flow(
             except StopIteration:
                 exhausted = True
                 break
-            annotation = dask.annotate(resources={"CPU": 1}, retries=0) if distributed else nullcontext()
+            resources = (
+                {"CHRONOS_GPU_SLOT": 1}
+                if options.get("component") == "mantis_representation"
+                else {"CPU": 1}
+            )
+            annotation = dask.annotate(resources=resources, retries=0) if distributed else nullcontext()
             try:
                 with annotation:
                     pending[selected.submit(batch, options, distributed)] = batch
