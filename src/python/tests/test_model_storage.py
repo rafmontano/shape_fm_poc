@@ -11,6 +11,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -89,16 +91,66 @@ class ModelStorageTests(unittest.TestCase):
         """A transferred joblib file enters the authoritative store through the same guard."""
         with tempfile.TemporaryDirectory() as worker_directory:
             worker = ModelStorage(worker_directory, "experiment")
-            worker.save({"worker": "ubuntu"}, "directional_mantis_rf", "D", 6)
+            saved = worker.save({"worker": "ubuntu"}, "directional_mantis_rf", "D", 6)
             source = worker.path("directional_mantis_rf", "D", 6)
-            evidence = self.storage.adopt(
-                source, "directional_mantis_rf", "D", 6
-            )
+            with patch("util.shared_model_storage.joblib.load", side_effect=AssertionError("coordinator deserialized")):
+                evidence = self.storage.adopt(
+                    source, "directional_mantis_rf", "D", 6,
+                    size_bytes=saved["size_bytes"], sha256=saved["sha256"],
+                )
+            self.assertEqual(evidence["size_bytes"], saved["size_bytes"])
+            self.assertEqual(evidence["sha256"], saved["sha256"])
         self.assertEqual(evidence["status"], "trained")
         self.assertEqual(
             self.storage.load("directional_mantis_rf", "D", 6),
             {"worker": "ubuntu"},
         )
+
+    def test_inspection_requires_no_provider_and_reports_exact_scope(self):
+        """An unavailable provider prevents loading, not metadata-only inspection."""
+        path = self.storage.path("directional_dtw", "D", "all_horizons")
+        path.parent.mkdir(parents=True)
+        contents = b"cprovider_not_installed\nModel\n."
+        path.write_bytes(contents)
+        with self.assertRaisesRegex(ModelStorageError, "provider_not_installed"):
+            self.storage.load("directional_dtw", "D", "all_horizons")
+        with patch("util.shared_model_storage.joblib.load", side_effect=AssertionError("deserialized")):
+            evidence = self.storage.inspect("directional_dtw", "D", "all_horizons")
+        self.assertEqual(evidence["size_bytes"], len(contents))
+        self.assertEqual(evidence["sha256"], hashlib.sha256(contents).hexdigest())
+        with patch.object(Path, "read_bytes", side_effect=PermissionError("denied")):
+            with self.assertRaisesRegex(ModelStorageError, "directional_dtw/D/all_horizons"):
+                self.storage.inspect("directional_dtw", "D", "all_horizons")
+        path.unlink()
+        with self.assertRaisesRegex(ModelStorageError, "missing fitted model directional_dtw/D/all_horizons"):
+            self.storage.inspect("directional_dtw", "D", "all_horizons")
+
+    def test_adoption_rejects_incoming_and_copied_corruption_preserving_existing(self):
+        """Both sides of transfer verification preserve the prior artifact on failure."""
+        saved = self.storage.save({"valid": True}, "directional_mantis_rf", "D", 7)
+        source = Path(self.directory.name) / "incoming.joblib"
+        source.write_bytes(b"worker-owned-bytes")
+        digest = hashlib.sha256(source.read_bytes()).hexdigest()
+        original_copy = shutil.copyfile
+
+        def corrupt_copy(src, dest):
+            """Simulate corruption after the incoming checksum has passed."""
+            original_copy(src, dest)
+            Path(dest).write_bytes(b"corrupted-copy")
+
+        for size, checksum, copy in (
+            (source.stat().st_size + 1, digest, original_copy),
+            (source.stat().st_size, "0" * 64, original_copy),
+            (source.stat().st_size, digest, corrupt_copy),
+        ):
+            with self.subTest(size=size, checksum=checksum, copy=copy.__name__):
+                with patch("util.shared_model_storage.shutil.copyfile", side_effect=copy):
+                    with self.assertRaisesRegex(ModelStorageError, "failed to adopt fitted model directional_mantis_rf/D/7"):
+                        self.storage.adopt(source, "directional_mantis_rf", "D", 7,
+                                           size_bytes=size, sha256=checksum, overwrite=True)
+                self.assertEqual(self.storage.inspect("directional_mantis_rf", "D", 7)["sha256"], saved["sha256"])
+                self.assertEqual(self.storage.load("directional_mantis_rf", "D", 7), {"valid": True})
+                self.assertFalse(list(self.storage.path("directional_mantis_rf", "D", 7).parent.glob("*.tmp")))
 
 
 if __name__ == "__main__":

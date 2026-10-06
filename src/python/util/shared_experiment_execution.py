@@ -3231,9 +3231,8 @@ class ExperimentCoordinator:
         if worker_host == local_host and local_path.is_file():
             return evidence
         if local_path.is_file() and not settings["overwrite"]:
-            return storage.save(
-                None, "directional_mantis_rf", "D", horizon, overwrite=False
-            )
+            return {**storage.inspect("directional_mantis_rf", "D", horizon),
+                    "status": "skipped_existing"}
         if self._active_machine_environment is None:
             raise RuntimeError("remote artifact consolidation requires resolved machines")
         matches = [
@@ -3265,6 +3264,7 @@ class ExperimentCoordinator:
                 )
             return storage.adopt(
                 incoming, "directional_mantis_rf", "D", horizon,
+                size_bytes=evidence["size_bytes"], sha256=evidence["sha256"],
                 overwrite=settings["overwrite"],
             )
         finally:

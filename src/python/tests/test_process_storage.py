@@ -10,6 +10,7 @@ import duckdb
 
 from util.shared_configuration import canonical_json, json_fingerprint
 from util.shared_database import initialize_experiment_database
+from util.shared_model_storage import ModelStorage
 from util.shared_process_storage import ProcessStorage
 from util.p00_01_researcher_actions import ProcessAction
 from util.shared_transformations import transform
@@ -26,6 +27,31 @@ class ProcessStorageTests(unittest.TestCase):
 
     def tearDown(self):
         self.temporary.cleanup()
+
+    def test_directional_validator_inspects_all_models_without_deserialization(self):
+        """The real v11 validator checks fifteen opaque files and scientific SQL counts."""
+        models = ModelStorage(self.temporary.name, "opaque")
+        scopes = [("directional_dtw", "all_horizons")] + [
+            ("directional_mantis_rf", horizon) for horizon in range(1, 15)
+        ]
+        for model, scope in scopes:
+            path = models.path(model, "D", scope)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"cprovider_not_installed\nModel\n.")
+        connection = mock.Mock()
+        connection.execute.return_value.fetchone.side_effect = [
+            (100,), (1430, 1430), (1,), (1,), (595, 0), (495, 100),
+            (1,), (595,), (14,), (896,), (14,), (2800,), (1400,), (1400,),
+            (0,), (0,),
+        ]
+        configuration = mock.Mock(model_storage={"root": "unused", "experiment": "opaque"})
+        with mock.patch("util.shared_database.load_database_configuration", return_value=configuration), \
+             mock.patch("util.shared_model_storage.ModelStorage", return_value=models), \
+             mock.patch.object(models, "inspect", wraps=models.inspect) as inspection, \
+             mock.patch("util.shared_model_storage.joblib.load", side_effect=AssertionError("coordinator deserialized")):
+            result = ProcessStorage(self.database)._validate_directional(connection, 4, 11)
+        self.assertTrue(result["output_validated"])
+        self.assertEqual(inspection.call_args_list, [mock.call(model, "D", scope) for model, scope in scopes])
 
     def test_zero_surviving_tasks_cannot_validate_expected_forecasts(self):
         connection = duckdb.connect(str(self.database))

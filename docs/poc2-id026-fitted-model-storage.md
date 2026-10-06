@@ -49,12 +49,21 @@ class with the minimum operations:
 exists(model, frequency, horizon_scope)
 save(model_object, model, frequency, horizon_scope, overwrite=false)
 load(model, frequency, horizon_scope)
+inspect(model, frequency, horizon_scope)
 ```
 
 `exists` checks the real file. `save` writes to a temporary file, proves that
-the provider can load it, and then replaces the final path atomically. `load`
-returns the fitted object or raises a clear missing/unreadable-model error with
-model, frequency and horizon scope.
+the provider can load it in its owning environment, and then replaces the final
+path atomically. `load` returns the fitted object or raises a clear
+missing/unreadable-model error with model, frequency and horizon scope.
+
+DTW and Random Forest objects are black boxes owned by the classifiers
+environment (aeon and scikit-learn respectively); Mantis stays in its pinned
+environment. The main coordinator never deserializes fitted objects or imports
+their providers. `inspect` returns relative path, size and SHA-256 only.
+Adoption verifies incoming worker-attested size/SHA-256, copies to a temporary
+destination, verifies the copied bytes and atomically publishes without loading.
+Prediction workers alone load and semantically validate objects before prediction.
 
 `overwrite=false` is the default:
 
@@ -133,6 +142,13 @@ membership. Prediction loads the fourteen saved classifiers and never calls
 
 ## DuckDB and restart
 
+Experiment JSON is the creation-time bootstrap. DuckDB then becomes the
+authoritative experiment configuration, state and results store. Prefect
+controls the six-process workflow; Dask distributes bounded tasks over the
+configured machines. JSON stdin/stdout carries native-language and isolated
+subprocess requests/results. The coordinator is the sole DuckDB writer; see
+the [conceptual system diagram](architecture.md#experiment-and-provider-boundaries).
+
 DuckDB continues to own configuration, task state, scientific lineage,
 predictions and evaluations. The fitted objects remain ordinary files outside
 DuckDB. Existing execution/task evidence records whether an artifact was
@@ -152,6 +168,12 @@ Ubuntu is saved to a known staging path and copied to the same experiment/model
 relative location on Mac using the existing secured machine-transfer mechanism.
 After every required training file is consolidated on Mac, synchronize that
 experiment's model directory to Ubuntu once before distributed prediction.
+
+The coordinator verifies logical identity, file existence, relative path, size,
+SHA-256 and worker-returned training, transfer and loading evidence only.
+Final Process 04 validation checks file metadata and persisted scientific/task
+records, not model objects. Mac owns the authoritative model directory; workers
+deserialize synchronized objects only in their owning provider environment.
 
 Both machines then resolve the same logical relative paths through
 `ModelStorage`. Model bytes are transferred as files, not embedded in the JSON

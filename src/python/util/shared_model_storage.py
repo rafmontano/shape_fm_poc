@@ -4,7 +4,7 @@
 # Purpose: Own trusted fitted-meta-learner paths and atomic joblib persistence.
 # Inputs: A configured model root, experiment namespace, and logical model scope.
 # Outputs: Verified external joblib files and clear load/save lifecycle evidence.
-# Run from: Imported by Process 04 training and prediction workers.
+# Run from: Imported by provider workers and metadata-only coordinator operations.
 # ==============================================================================
 
 """Small filesystem authority for trusted project-owned fitted model objects."""
@@ -85,6 +85,23 @@ class ModelStorage:
             "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
         }
 
+    def inspect(self, model: str, frequency: str, horizon_scope: int | str) -> dict[str, Any]:
+        """Read artifact metadata only; provider workers alone deserialize objects."""
+        path = self.path(model, frequency, horizon_scope)
+        if not path.is_file():
+            raise ModelStorageError(
+                f"missing fitted model {model}/{frequency}/{horizon_scope}: {path}"
+            )
+        try:
+            evidence = self._evidence(path, "inspected")
+            if evidence["size_bytes"] == 0:
+                raise ValueError("empty fitted artifact")
+            return evidence
+        except Exception as exc:
+            raise ModelStorageError(
+                f"invalid or unreadable fitted model {model}/{frequency}/{horizon_scope}: {path}: {exc}"
+            ) from exc
+
     def save(
         self,
         model_object: Any,
@@ -133,9 +150,11 @@ class ModelStorage:
         frequency: str,
         horizon_scope: int | str,
         *,
+        size_bytes: int,
+        sha256: str,
         overwrite: bool = False,
     ) -> dict[str, Any]:
-        """Validate and atomically adopt one worker-staged joblib file without reserializing it."""
+        """Verify worker-attested bytes and atomically adopt without deserialization."""
         source_path = Path(source)
         path = self.path(model, frequency, horizon_scope)
         if path.is_file() and not overwrite:
@@ -144,8 +163,17 @@ class ModelStorage:
         temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
         status = "overwritten" if path.is_file() else "trained"
         try:
+            if (
+                source_path.stat().st_size != size_bytes
+                or hashlib.sha256(source_path.read_bytes()).hexdigest() != sha256
+            ):
+                raise ValueError("incoming artifact differs from worker size or SHA-256")
             shutil.copyfile(source_path, temporary)
-            joblib.load(temporary)
+            if (
+                temporary.stat().st_size != size_bytes
+                or hashlib.sha256(temporary.read_bytes()).hexdigest() != sha256
+            ):
+                raise ValueError("copied artifact differs from worker size or SHA-256")
             os.replace(temporary, path)
         except BaseException as exc:
             temporary.unlink(missing_ok=True)

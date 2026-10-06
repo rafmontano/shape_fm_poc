@@ -190,9 +190,9 @@ class ProcessStorage:
                     Path(__file__).resolve().parents[3] / model_settings["root"],
                     model_settings["experiment"],
                 )
-                model_storage.load("directional_dtw", "D", "all_horizons")
+                model_storage.inspect("directional_dtw", "D", "all_horizons")
                 for horizon in range(1, 15):
-                    model_storage.load("directional_mantis_rf", "D", horizon)
+                    model_storage.inspect("directional_mantis_rf", "D", horizon)
                 dtw_models = int(connection.execute(
                     "SELECT count(*) FROM directional_model_definitions"
                 ).fetchone()[0])

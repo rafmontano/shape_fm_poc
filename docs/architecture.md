@@ -27,6 +27,41 @@ enabled workers. Prefect and Dask endpoints are derived from the coordinator
 hostname. This preserves the present MacBook coordinator and permits a future
 Mac Studio coordinator without a source-code branch.
 
+## Experiment and provider boundaries
+
+The experiment JSON bootstraps DuckDB; thereafter DuckDB is the authoritative
+experiment configuration, state and results store, including restart. Prefect
+controls Processes 01–06, and Dask distributes bounded tasks across machines
+selected by the inventory and execution profile. JSON stdin/stdout is the
+language and isolated-subprocess boundary, not a second state store. The
+coordinator is the sole DuckDB writer.
+
+Fitted meta-learners live outside DuckDB behind
+[ModelStorage](poc2-id026-fitted-model-storage.md). DTW and Random Forest objects
+are serialized, validated and deserialized only in the classifiers environment;
+Mantis executes only in its pinned environment. The main coordinator treats
+objects as black boxes: it verifies logical paths, existence, size, SHA-256 and
+worker-returned training/loading evidence without importing provider libraries.
+Mac owns the authoritative model directory, consolidates worker-produced bytes
+atomically and synchronizes the required files to workers before prediction.
+
+```mermaid
+flowchart TB
+    JSON[Experiment JSON bootstrap] --> DB[(DuckDB configuration, state and results)]
+    Inventory[Machine inventory and execution profile] --> Coordinator[Mac coordinator]
+    DB <--> Coordinator
+    Coordinator --> Prefect[Prefect six-process workflow]
+    Prefect --> Dask[Dask task distribution]
+    Dask --> Providers[Mac and Ubuntu provider workers]
+    Providers --> Classifiers[Classifiers environment: DTW and Random Forest]
+    Providers --> Mantis[Mantis environment: frozen representations]
+    Providers --> Native[Other native Python and R environments]
+    Providers -->|JSON stdin/stdout results and execution evidence| Coordinator
+    Classifiers -->|Provider-owned save and load| Storage[ModelStorage external fitted meta-learners]
+    Coordinator -->|Metadata verification and byte transfer only| Storage
+    Storage --> Files[Authoritative Mac files synchronized to workers]
+```
+
 ### Approved file organisation follow up
 
 On 3 October 2026 the researcher approved the
