@@ -97,10 +97,11 @@ def dependency_versions() -> dict[str, str]:
 
 
 def default_checkpoint_path() -> Path:
-    """Return the pinned local Hugging Face snapshot without network resolution."""
+    """Return the setup-owned pinned snapshot without network resolution."""
     cache_root = Path(
         os.environ.get(
-            "HF_HUB_CACHE", Path.home() / ".cache" / "huggingface" / "hub"
+            "HF_HUB_CACHE",
+            Path(__file__).resolve().parents[2] / ".cache/huggingface",
         )
     )
     return (

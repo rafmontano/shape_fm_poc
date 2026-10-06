@@ -256,6 +256,7 @@ class NativeMantisWorkerTests(unittest.TestCase):
 
                 print(module.canonical_json({{
                     "description": description,
+                    "checkpoint_path": str(provider.checkpoint_path),
                     "resize_equal": bool(np.array_equal(resized, historical)),
                     "trainer_equal": bool(np.array_equal(embeddings, historical_embeddings)),
                     "final_cls_equal": bool(np.array_equal(embeddings, final_layer_cls)),
@@ -281,6 +282,14 @@ class NativeMantisWorkerTests(unittest.TestCase):
 
     def test_historical_resize_and_legacy_final_cls_are_exact(self):
         """The approved adapter is exactly equal to the historical native operations."""
+        self.assertEqual(
+            self.evidence["checkpoint_path"],
+            str(
+                ROOT
+                / ".cache/huggingface/models--paris-noah--Mantis-8M/snapshots"
+                / "bc7d5ab40c02133386a28e2c127f35c17c86901d"
+            ),
+        )
         self.assertTrue(self.evidence["resize_equal"])
         self.assertTrue(self.evidence["trainer_equal"])
         self.assertTrue(self.evidence["final_cls_equal"])
