@@ -48,6 +48,9 @@ from util.window_preparation import (
 ROOT = Path(__file__).resolve().parents[3]
 CONFIGURATION = ROOT / "config/experiments/poc2_m4_daily_100_rolling_windows_corrected.json"
 LEGACY_CONFIGURATION = ROOT / "config/experiments/poc2_m4_daily_100_rolling_windows.json"
+VERSION_11_CONFIGURATION = (
+    ROOT / "config/experiments/poc2_m4_daily_100_directional_dtw_mantis_rf.json"
+)
 LOCAL_TEST_LIMITS = {"max_series": 100, "max_windows": 200}
 
 
@@ -499,6 +502,47 @@ class WindowPersistenceTests(unittest.TestCase):
     def tearDown(self) -> None:
         """Delete all fixture-owned files."""
         self.temporary.cleanup()
+
+    def test_version_11_executes_real_process_03_window_preparation(self) -> None:
+        """The version-11 parent runs the bounded preparation path to durable output."""
+        parent = self.parent.with_name("version-11.duckdb")
+        child = self.child.with_name("version-11-windows.duckdb")
+        document = json.loads(VERSION_11_CONFIGURATION.read_text())
+        document["execution"]["default"]["batch_sizes"]["window_preparation"] = 16
+        configuration_path = self.parent.with_name("version-11.json")
+        configuration_path.write_text(json.dumps(document))
+        initialize_experiment_database(parent, configuration_path)
+        connection = duckdb.connect(str(parent))
+        try:
+            fixture_path = str(self.parent).replace("'", "''")
+            connection.execute(f"ATTACH '{fixture_path}' AS fixture (READ_ONLY)")
+            connection.execute("INSERT INTO datasets SELECT * FROM fixture.datasets")
+            connection.execute("INSERT INTO series SELECT * FROM fixture.series")
+            connection.execute(
+                "INSERT INTO evaluation_windows SELECT * FROM fixture.evaluation_windows"
+            )
+            connection.execute("DETACH fixture")
+            connection.execute(
+                """UPDATE experiment_processes SET status='completed',
+                   completed_at=current_timestamp WHERE process_id=1"""
+            )
+        finally:
+            connection.close()
+
+        with WindowPreparationCoordinator(parent, child) as coordinator:
+            result = coordinator.run(
+                source_manifest_hash="version-11-fixture",
+                local_limits=LOCAL_TEST_LIMITS,
+            )
+
+        self.assertEqual(result["eligible"], 100)
+        self.assertEqual(result["total_windows"], 100)
+        self.assertEqual(result["directional_labels"], 100)
+        with duckdb.connect(str(child), read_only=True) as connection:
+            self.assertEqual(
+                connection.execute("SELECT count(*) FROM prepared_windows").fetchone(),
+                (100,),
+            )
 
     def test_preparation_retrieval_and_restart_preserve_membership(self) -> None:
         """A second run skips completed series and preserves every persisted identity."""

@@ -2,7 +2,7 @@
 # window_preparation.py
 #
 # Purpose: Prepare legacy fixed contexts and approved complete rolling windows.
-# Inputs: Stored v4/v5 settings, canonical parent series, and optional Dask client.
+# Inputs: Stored rolling-window settings, canonical parent series, and optional Dask client.
 # Outputs: Fixed contexts or restartable S1 memberships and transformed child windows.
 # Run from: Imported; not run directly.
 # ==============================================================================
@@ -477,25 +477,30 @@ class WindowPreparationCoordinator:
     """Sole writer for parent identities and one normalized child windows database."""
 
     def __init__(self, parent_database: Path, windows_database: Path):
-        """Open and validate a v5 parent; child creation remains deferred to run()."""
+        """Open and validate a compatible parent; defer child creation to run()."""
         self.root = repository_root()
         self.parent_path = migrate_database(parent_database)
         self.child_path = windows_database.resolve()
         if self.parent_path == self.child_path:
             raise ValueError("windows database must differ from the parent database")
         self.parent = duckdb.connect(str(self.parent_path))
-        self.configuration = load_database_configuration(self.parent_path, self.parent)
-        if self.configuration.version not in {5, 6, 7, 10}:
-            raise ValueError(
-                "rolling-window preparation requires configuration version 5, 6, 7 or 10"
-            )
-        self.definition = self.configuration.resolved["pipeline"]["window_preparation"]
-        self.preparation_id = "window-preparation/" + json_fingerprint(
-            {
-                "parent": self.configuration.scientific_hash,
-                "definition": self.definition,
-            }
-        )[:32]
+        try:
+            self.configuration = load_database_configuration(self.parent_path, self.parent)
+            if self.configuration.version not in {5, 6, 7, 10, 11}:
+                raise ValueError(
+                    "rolling-window preparation requires configuration version "
+                    "5, 6, 7, 10 or 11"
+                )
+            self.definition = self.configuration.resolved["pipeline"]["window_preparation"]
+            self.preparation_id = "window-preparation/" + json_fingerprint(
+                {
+                    "parent": self.configuration.scientific_hash,
+                    "definition": self.definition,
+                }
+            )[:32]
+        except BaseException:
+            self.parent.close()
+            raise
 
     def close(self) -> None:
         """Close the parent writer and any open child writer."""

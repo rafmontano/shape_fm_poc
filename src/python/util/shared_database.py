@@ -853,6 +853,21 @@ def migrate_database(path: Path = DEFAULT_DATABASE) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     connection = duckdb.connect(str(path))
     try:
+        schema_table_exists = connection.execute(
+            """SELECT count(*) FROM information_schema.tables
+               WHERE table_schema='main' AND table_name='schema_versions'"""
+        ).fetchone()[0]
+        if schema_table_exists:
+            current_version = connection.execute(
+                "SELECT max(version) FROM schema_versions"
+            ).fetchone()[0]
+            if current_version == SCHEMA_VERSION:
+                return path
+            if current_version is not None and current_version > SCHEMA_VERSION:
+                raise RuntimeError(
+                    f"database schema version {current_version} is newer than supported "
+                    f"version {SCHEMA_VERSION}"
+                )
         connection.execute("BEGIN TRANSACTION")
         connection.execute(SCHEMA_SQL)
         connection.execute(POC1_SCHEMA_SQL)

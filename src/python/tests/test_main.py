@@ -16,6 +16,7 @@ import duckdb
 import util.p00_01_researcher_actions as action_module
 from util.shared_configuration import load_experiment_configuration
 from util.shared_database import initialize_experiment_database
+from util.window_preparation import WindowPreparationCoordinator
 from util.p00_01_researcher_actions import (
     FeatureExtractionAction,
     ProcessAction,
@@ -582,6 +583,69 @@ class RestoredProcessActionTests(unittest.TestCase):
             ).fetchone(), ("failed",))
         finally:
             connection.close()
+
+    def test_process_03_failure_closes_database_and_allows_resume(self):
+        """A controlled preparation failure preserves prior gates and reopens cleanly."""
+        database = self.root / "recoverable.duckdb"
+        windows = self.root / "recoverable.windows.duckdb"
+        configuration = (
+            ROOT / "config/experiments/"
+            "poc2_m4_daily_100_directional_dtw_mantis_rf.json"
+        )
+        registry = MagicMock()
+        registry.load.return_value = SimpleNamespace(run=MagicMock(return_value={}))
+        with patch.object(
+            action_module.ProcessStorage,
+            "validate",
+            return_value={"output_validated": True},
+        ):
+            ProcessAction(registry).run(database, configuration, (1, 2))
+
+        def controlled_failure(path):
+            with WindowPreparationCoordinator(path, windows):
+                raise RuntimeError("controlled Process 03 failure")
+
+        registry.load.return_value = SimpleNamespace(run=controlled_failure)
+        with (
+            patch.object(
+                action_module.ProcessStorage,
+                "validate",
+                return_value={"output_validated": True},
+            ),
+            self.assertRaisesRegex(RuntimeError, "controlled Process 03 failure"),
+        ):
+            ProcessAction(registry).run(database, None, (3,))
+
+        with duckdb.connect(str(database), read_only=True) as connection:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT process_id, status FROM experiment_processes "
+                    "WHERE process_id<=3 ORDER BY process_id"
+                ).fetchall(),
+                [(1, "completed"), (2, "completed"), (3, "failed")],
+            )
+            self.assertEqual(
+                connection.execute(
+                    "SELECT status FROM execution_events ORDER BY started_at"
+                ).fetchall(),
+                [("completed",), ("failed",)],
+            )
+
+        registry.load.return_value = SimpleNamespace(run=MagicMock(return_value={}))
+        with patch.object(
+            action_module.ProcessStorage,
+            "validate",
+            return_value={"output_validated": True},
+        ):
+            resumed = ProcessAction(registry).run(database, None, (3,))
+        self.assertEqual(resumed["processes"][0]["status"], "completed")
+        with duckdb.connect(str(database), read_only=True) as connection:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT status FROM experiment_processes WHERE process_id=3"
+                ).fetchone(),
+                ("completed",),
+            )
 
 
 if __name__ == "__main__":

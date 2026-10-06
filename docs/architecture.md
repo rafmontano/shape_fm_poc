@@ -549,6 +549,11 @@ input length and future horizon; resolution derives and persists stride as
 `input_length + future_horizon`. The production document selects only M4 Daily.
 It does not claim full multi-dataset GIFT-Eval support.
 
+The shared coordinator accepts configuration versions 5, 6, 7, 10 and 11.
+Versions 10 and 11 reuse this same preparation boundary for directional DTW and
+the DTW/Mantis comparison respectively; version 11 does not introduce another
+window-preparation path.
+
 The coordinator protects the official training boundary and sends bounded,
 complete W+H blocks through pinned tsai 1.0.1 `SlidingWindow`; the returned
 inputs and absolute boundaries are the values processed and persisted. It also
