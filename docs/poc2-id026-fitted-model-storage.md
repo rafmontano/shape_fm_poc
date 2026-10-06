@@ -1,13 +1,15 @@
 # POC2 ID 026 fitted meta-learner storage
 
 Status: Architecture approved by the Researcher and Chief Architect on
-6 October 2026. Implementation and acceptance remain pending.
+6 October 2026. ID 026 closed with IDs 027 and 028 on 7 October 2026 following
+approved implementation and two-machine acceptance; see the
+[execution evidence](poc2-id026-028-execution-evidence.md).
 
 ## Decision
 
 ShapeFM will persist expensive fitted meta-learners outside DuckDB through one
 small shared storage object. ID 026 works with IDs 027 and 028 as one evolution
-of the current directional-model candidate, not as a separate subsystem.
+of the accepted directional-model implementation, not as a separate subsystem.
 
 The initial managed models are:
 
@@ -79,8 +81,8 @@ a new model-registry schema.
 
 ## Process flow
 
-The current ID 027/028 version-11 candidate remains the base. Training and
-prediction become explicit Process 04 substeps while the six-process workflow
+The accepted ID 027/028 version-11 workflow remains the base. Training and
+prediction are explicit Process 04 substeps while the six-process workflow
 remains unchanged:
 
 ```text
@@ -213,11 +215,9 @@ The implementation must prove:
 10. existing ID 018 forecast results and ID 021 DTW mathematics remain
     unchanged.
 
-Complete the implementation, local tests and real Mac/Ubuntu 100-series run as
-one gated delivery. If all evidence passes, update the acceptance documentation,
-commit the integrated ID 026/027/028 change, fast-forward Mac, Ubuntu and
-GitHub `main`, and confirm clean equality. No generated model, database, cache,
-log or report is committed.
-
-Successful evidence formally closes ID 026 and IDs 027/028. ID 021 remains
-scientifically closed with this accepted storage-lifecycle addendum.
+The implementation, local tests and real Mac/Ubuntu 100-series run and restart
+are accepted in the [closure record](poc2-id026-028-execution-evidence.md).
+IDs 026, 027 and 028 are closed on 7 October 2026. ID 021 remains scientifically
+closed; its mathematics were not changed by this storage-lifecycle addendum.
+Acceptance covers execution and reuse, not comparative scientific accuracy.
+No generated model, database, cache, log or report is committed.

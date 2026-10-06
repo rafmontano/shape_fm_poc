@@ -1,7 +1,8 @@
 # Machine environment and coordinator selection
 
 Status: Approved by the researcher on 6 October 2026. The local implementation
-is complete; its required two-machine acceptance remains pending.
+and required two-machine acceptance are complete and approved on 7 October
+2026 under the [ID 026–028 closure evidence](poc2-id026-028-execution-evidence.md).
 
 ## Decision
 
@@ -111,6 +112,11 @@ Workers receive bounded validated tasks and return results. They never receive a
 writable DuckDB connection and never become an independent research authority.
 The coordinator may also contribute eligible CPU or accelerator work when the
 profile enables it.
+
+Provider environments own model serialization and deserialization. The
+coordinator verifies logical model identity, metadata and byte integrity only;
+it does not deserialize fitted objects. The current Mac owns the authoritative
+model directory and synchronizes required files to workers.
 
 ## Network resolution
 
@@ -240,6 +246,12 @@ hardware-dependent difference.
 
 ## Initial implementation acceptance
 
+These conditions are satisfied by the approved implementation and
+[two-machine execution/restart record](poc2-id026-028-execution-evidence.md).
+IDs 026, 027 and 028 are closed on 7 October 2026; ID 021 remains closed with
+unchanged mathematics. Acceptance covers operational behaviour, not comparative
+scientific accuracy or calibration of an actual future Mac Studio.
+
 Implementation is accepted only when:
 
 1. Normal two-machine execution requires no manually exported
@@ -252,7 +264,7 @@ Implementation is accepted only when:
    machines fail clearly before scientific work.
 5. Existing profile safety controls, single-writer storage, restart and
    scientific identities remain unchanged.
-6. The pending fresh ID 026--028 first-100 M4 Daily two-machine run completes,
+6. The fresh ID 026–028 first-100 M4 Daily two-machine run completes,
    followed by its model-reuse restart, using this resolution path.
 7. Effective topology and host contribution are queryable as execution evidence.
 8. All owned Prefect, Dask and worker processes stop after testing.

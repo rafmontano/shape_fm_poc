@@ -46,9 +46,12 @@ directional-label contracts. Its accepted two-machine result is recorded in
 
 POC2 ID 026 fitted-model storage requirements and architecture were approved on
 6 October 2026. Follow `docs/poc2-id026-fitted-model-storage-requirements.md`
-and `docs/poc2-id026-fitted-model-storage.md`; implement the current local
-checkpoint from `docs/amp-poc2-id026-028-model-storage-instructions.md`. The
-shared external model store
+and `docs/poc2-id026-fitted-model-storage.md`. IDs 026, 027 and 028 were closed
+on 7 October 2026 after acceptance of the implementation and two-machine run
+recorded in [the execution evidence](docs/poc2-id026-028-execution-evidence.md).
+Provider environments own model serialization and deserialization; the
+coordinator performs metadata and byte-integrity verification only.
+The shared external model store
 applies to expensive fitted meta-learners, initially DTW and Mantis/Random
 Forest, not ordinary forecast-pool methods. Retrofit both directional models
 without changing their accepted mathematics: DTW owns one complete
@@ -65,9 +68,10 @@ monolithic import or a second experiment runner. Preserve the closed DTW
 baseline and require a new same-input experiment containing both directional
 models. DTW and Mantis must reference the same canonical Process 03 membership,
 prepared inputs and labels; provider-specific conversions begin only after that
-boundary. Checkpoint 2 is accepted. The local Checkpoint 3 version-11 workflow
-and additive-storage candidate is implemented and awaiting Chief Developer
-review; bounded execution, two-machine acceptance and publication remain pending.
+boundary. The version-11 workflow, additive storage, fitted-model persistence
+and restart are accepted under the closure evidence above. This acceptance
+does not claim comparative scientific accuracy; ID 021 remains closed and its
+mathematics were not changed.
 
 The machine-environment and coordinator-selection architecture was approved on
 6 October 2026. Follow `docs/machine-environment.md` and
@@ -77,8 +81,8 @@ chooses exactly one coordinator and its enabled workers. Normal execution derive
 Prefect and Dask endpoints and must not require a manually exported Mac IP or
 `PREFECT_API_URL`. The current profile keeps the MacBook Pro as coordinator and
 Ubuntu as worker; a future Mac Studio must become coordinator by configuration
-and calibration, not a source-code branch. The pending ID 026--028 acceptance is
-the implementation's real two-machine validation.
+and calibration, not a source-code branch. The machine-environment acceptance
+condition is satisfied by the accepted ID 026–028 two-machine run and restart.
 
 Apply the standing [Python utility naming standard](docs/code-standards.md#python-utility-file-organisation):
 `pNN_MM_` for process-owned helpers, `shared_` for shared components, and no

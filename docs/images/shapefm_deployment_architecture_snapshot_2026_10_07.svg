@@ -1,0 +1,179 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="980" viewBox="0 0 1600 980" role="img" aria-labelledby="title desc">
+  <title id="title">ShapeFM deployment architecture snapshot</title>
+  <desc id="desc">A point-in-time deployment view of the ShapeFM research interface, Mac coordinator, distributed workers, provider environments, authoritative DuckDB state, fitted model storage, and research outputs on 7 October 2026.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#40546d"/>
+    </marker>
+    <style>
+      .title { font: 700 38px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #172435; }
+      .subtitle { font: 400 20px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #52667d; }
+      .zone-title { font: 700 24px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #172435; }
+      .node-title { font: 700 18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #172435; }
+      .node-text { font: 400 15px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #40546d; }
+      .small-title { font: 700 15px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #172435; }
+      .small-text { font: 400 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #40546d; }
+      .note { font: 400 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #637a96; }
+      .flow-label { font: 700 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #52667d; }
+      .arrow { stroke: #40546d; stroke-width: 3; fill: none; marker-end: url(#arrow); }
+      .thin-arrow { stroke: #637a96; stroke-width: 2.2; fill: none; marker-end: url(#arrow); }
+      .future { stroke: #8a67b4; stroke-width: 2.5; stroke-dasharray: 9 7; fill: #fbf8ff; }
+    </style>
+  </defs>
+
+  <rect width="1600" height="980" fill="#fbfcfe"/>
+  <text x="800" y="57" text-anchor="middle" class="title">ShapeFM Deployment Architecture</text>
+  <text x="800" y="90" text-anchor="middle" class="subtitle">Point-in-time implementation view · 7 October 2026</text>
+
+  <rect x="28" y="125" width="232" height="738" rx="12" fill="#e9f4fc"/>
+  <rect x="290" y="125" width="350" height="738" rx="12" fill="#e8f7f2"/>
+  <rect x="670" y="125" width="510" height="738" rx="12" fill="#fff3d8"/>
+  <rect x="1210" y="125" width="362" height="738" rx="12" fill="#f0ebff"/>
+
+  <text x="144" y="165" text-anchor="middle" class="zone-title">Research access</text>
+  <text x="465" y="165" text-anchor="middle" class="zone-title">Coordinator</text>
+  <text x="925" y="165" text-anchor="middle" class="zone-title">Distributed execution</text>
+  <text x="1391" y="165" text-anchor="middle" class="zone-title">State &amp; outcomes</text>
+
+  <g>
+    <rect x="55" y="210" width="178" height="105" rx="6" fill="#cfe8fa"/>
+    <text x="144" y="244" text-anchor="middle" class="node-title">Researcher</text>
+    <text x="144" y="272" text-anchor="middle" class="node-text">One command through</text>
+    <text x="144" y="294" text-anchor="middle" class="node-text">00_main.py</text>
+
+    <rect x="55" y="350" width="178" height="105" rx="6" fill="#cfe8fa"/>
+    <text x="144" y="384" text-anchor="middle" class="node-title">Experiment JSON</text>
+    <text x="144" y="412" text-anchor="middle" class="node-text">Scientific scope</text>
+    <text x="144" y="434" text-anchor="middle" class="node-text">before DB creation</text>
+
+    <rect x="55" y="490" width="178" height="105" rx="6" fill="#cfe8fa"/>
+    <text x="144" y="524" text-anchor="middle" class="node-title">Machine inventory</text>
+    <text x="144" y="552" text-anchor="middle" class="node-text">Roles, addresses</text>
+    <text x="144" y="574" text-anchor="middle" class="node-text">and capabilities</text>
+  </g>
+
+  <path d="M233 262 H310" class="arrow"/>
+  <text x="271" y="247" text-anchor="middle" class="flow-label">one request</text>
+
+  <g>
+    <rect x="320" y="205" width="290" height="100" rx="6" fill="#cceee2"/>
+    <text x="465" y="239" text-anchor="middle" class="node-title">MacBook Pro · current coordinator</text>
+    <text x="465" y="268" text-anchor="middle" class="node-text">Research entry point and cluster lifecycle</text>
+    <text x="465" y="290" text-anchor="middle" class="node-text">Current operational authority</text>
+
+    <rect x="320" y="340" width="135" height="104" rx="6" fill="#d4eafa"/>
+    <text x="387" y="374" text-anchor="middle" class="node-title">Prefect</text>
+    <text x="387" y="402" text-anchor="middle" class="node-text">Orders and</text>
+    <text x="387" y="424" text-anchor="middle" class="node-text">resumes gates</text>
+
+    <rect x="475" y="340" width="135" height="104" rx="6" fill="#d7efd9"/>
+    <text x="542" y="374" text-anchor="middle" class="node-title">Dask</text>
+    <text x="542" y="402" text-anchor="middle" class="node-text">Schedules</text>
+    <text x="542" y="424" text-anchor="middle" class="node-text">worker tasks</text>
+
+    <rect x="320" y="480" width="290" height="104" rx="6" fill="#fae8b6"/>
+    <text x="465" y="514" text-anchor="middle" class="node-title">Main Python environment</text>
+    <text x="465" y="542" text-anchor="middle" class="node-text">Planning, coordination, contracts</text>
+    <text x="465" y="564" text-anchor="middle" class="node-text">and accepted-result validation</text>
+
+    <rect x="320" y="620" width="290" height="120" rx="6" fill="#e5d8f6"/>
+    <text x="465" y="654" text-anchor="middle" class="node-title">Authoritative write boundary</text>
+    <text x="465" y="682" text-anchor="middle" class="node-text">Sole DuckDB writer</text>
+    <text x="465" y="704" text-anchor="middle" class="node-text">ModelStorage interface</text>
+    <text x="465" y="726" text-anchor="middle" class="node-text">Accepts validated worker responses</text>
+  </g>
+
+  <path d="M455 392 H466" class="thin-arrow"/>
+  <path d="M542 444 V470" class="thin-arrow"/>
+  <path d="M465 584 V610" class="thin-arrow"/>
+
+  <path d="M610 392 H687" class="arrow"/>
+  <text x="648" y="377" text-anchor="middle" class="flow-label">LAN / SSH</text>
+
+  <g>
+    <rect x="698" y="205" width="212" height="112" rx="6" fill="#d4eafa"/>
+    <text x="804" y="239" text-anchor="middle" class="node-title">Mac CPU workers</text>
+    <text x="804" y="267" text-anchor="middle" class="node-text">Local parallel tasks</text>
+    <text x="804" y="289" text-anchor="middle" class="node-text">R and Python providers</text>
+
+    <rect x="934" y="205" width="218" height="112" rx="6" fill="#d7efd9"/>
+    <text x="1043" y="239" text-anchor="middle" class="node-title">Ubuntu CPU workers</text>
+    <text x="1043" y="267" text-anchor="middle" class="node-text">Distributed CPU tasks</text>
+    <text x="1043" y="289" text-anchor="middle" class="node-text">Current worker machine</text>
+
+    <rect x="698" y="352" width="212" height="112" rx="6" fill="#f9d7bd"/>
+    <text x="804" y="386" text-anchor="middle" class="node-title">Ubuntu GPU workers</text>
+    <text x="804" y="414" text-anchor="middle" class="node-text">RTX 5090 providers</text>
+    <text x="804" y="436" text-anchor="middle" class="node-text">Chronos and Mantis</text>
+
+    <rect x="934" y="352" width="218" height="112" rx="6" class="future"/>
+    <text x="1043" y="386" text-anchor="middle" class="node-title">Future Mac Studio</text>
+    <text x="1043" y="414" text-anchor="middle" class="node-text">Can become coordinator</text>
+    <text x="1043" y="436" text-anchor="middle" class="node-text">by inventory role change</text>
+
+    <rect x="698" y="500" width="454" height="238" rx="7" fill="#fffaf0" stroke="#d8c99d"/>
+    <text x="925" y="536" text-anchor="middle" class="node-title">Provider environments</text>
+    <text x="925" y="562" text-anchor="middle" class="node-text">Workers receive structured requests and return structured responses</text>
+
+    <rect x="718" y="592" width="96" height="92" rx="5" fill="#cceee2"/>
+    <text x="766" y="622" text-anchor="middle" class="small-title">Main</text>
+    <text x="766" y="644" text-anchor="middle" class="small-text">Python</text>
+    <text x="766" y="664" text-anchor="middle" class="small-text">coordination</text>
+
+    <rect x="826" y="592" width="96" height="92" rx="5" fill="#fae8b6"/>
+    <text x="874" y="622" text-anchor="middle" class="small-title">R</text>
+    <text x="874" y="644" text-anchor="middle" class="small-text">statistical</text>
+    <text x="874" y="664" text-anchor="middle" class="small-text">forecasts</text>
+
+    <rect x="934" y="592" width="96" height="92" rx="5" fill="#d4eafa"/>
+    <text x="982" y="622" text-anchor="middle" class="small-title">Classifiers</text>
+    <text x="982" y="644" text-anchor="middle" class="small-text">aeon DTW</text>
+    <text x="982" y="664" text-anchor="middle" class="small-text">sklearn RF</text>
+
+    <rect x="1042" y="592" width="90" height="92" rx="5" fill="#e5d8f6"/>
+    <text x="1087" y="622" text-anchor="middle" class="small-title">Mantis</text>
+    <text x="1087" y="644" text-anchor="middle" class="small-text">representation</text>
+    <text x="1087" y="664" text-anchor="middle" class="small-text">provider</text>
+
+    <text x="925" y="717" text-anchor="middle" class="small-text">Provider owns fitting, serialisation and deserialisation; coordinator owns policy.</text>
+  </g>
+
+  <path d="M910 261 H924" class="thin-arrow"/>
+  <path d="M910 408 H924" class="thin-arrow"/>
+  <path d="M1152 392 H1200" class="arrow"/>
+  <text x="1176" y="377" text-anchor="middle" class="flow-label">validated responses</text>
+
+  <g>
+    <rect x="1240" y="205" width="302" height="112" rx="6" fill="#fae8b6"/>
+    <text x="1391" y="239" text-anchor="middle" class="node-title">DuckDB experiment</text>
+    <text x="1391" y="267" text-anchor="middle" class="node-text">Configuration, tasks, lineage,</text>
+    <text x="1391" y="289" text-anchor="middle" class="node-text">progress and scientific results</text>
+
+    <rect x="1240" y="352" width="302" height="112" rx="6" fill="#e5d8f6"/>
+    <text x="1391" y="386" text-anchor="middle" class="node-title">External fitted-model store</text>
+    <text x="1391" y="414" text-anchor="middle" class="node-text">Reusable fitted meta-learners</text>
+    <text x="1391" y="436" text-anchor="middle" class="node-text">referenced by DuckDB lineage</text>
+
+    <rect x="1240" y="499" width="302" height="112" rx="6" fill="#cfe8fa"/>
+    <text x="1391" y="533" text-anchor="middle" class="node-title">GitHub · main</text>
+    <text x="1391" y="561" text-anchor="middle" class="node-text">Shared source and documentation</text>
+    <text x="1391" y="583" text-anchor="middle" class="node-text">across approved machines</text>
+
+    <rect x="1240" y="646" width="302" height="112" rx="6" fill="#d7efd9"/>
+    <text x="1391" y="680" text-anchor="middle" class="node-title">Research outcomes</text>
+    <text x="1391" y="708" text-anchor="middle" class="node-text">Stored forecasts and evaluations</text>
+    <text x="1391" y="730" text-anchor="middle" class="node-text">for researcher interpretation</text>
+  </g>
+
+  <path d="M610 680 H1230" class="arrow"/>
+  <path d="M1230 680 V261 H1240" class="thin-arrow"/>
+  <path d="M1230 408 H1240" class="thin-arrow"/>
+  <path d="M1391 317 V342" class="thin-arrow"/>
+  <path d="M1391 464 V636" class="thin-arrow"/>
+
+  <rect x="290" y="794" width="1262" height="48" rx="6" fill="#f7f9fc" stroke="#cbd4df"/>
+  <text x="921" y="824" text-anchor="middle" class="node-text">Topology changes through machine inventory and approved configuration—not through scientific-model code.</text>
+
+  <text x="800" y="919" text-anchor="middle" class="subtitle">Current: MacBook coordinator + Mac/Ubuntu workers · Future: roles can move without redesigning the six-gate workflow</text>
+  <text x="800" y="953" text-anchor="middle" class="note">Reference snapshot only — not a mandatory standard</text>
+</svg>

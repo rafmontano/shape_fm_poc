@@ -1,10 +1,12 @@
 # POC2 IDs 027 and 028 Mantis directional architecture
 
 Status: Approved by the Researcher and Chief Architect on 6 October 2026.
-Checkpoint 2 is accepted. The local Checkpoint 3 version-11 workflow and
-additive-storage candidate is implemented for Chief Developer review. ID 026
-subsequently approved fitted-meta-learner persistence and must be integrated
-before bounded execution and scientific acceptance.
+IDs 027 and 028 closed with ID 026 on 7 October 2026 after approval of the
+version-11 implementation, fitted-meta-learner persistence and two-machine
+execution/restart evidence. See the
+[accepted execution record](poc2-id026-028-execution-evidence.md); this is not
+comparative scientific accuracy acceptance. ID 021 remains closed and its
+DTW mathematics were not changed.
 
 ## Decision
 
@@ -160,6 +162,10 @@ prediction are separate Process 04 substeps. Definitions, training
 identities/fingerprints, embeddings, artifact checksums and predictions remain
 durable research evidence.
 
+Provider environments alone serialize and deserialize model objects: DTW and
+Random Forest in classifiers, Mantis in its pinned environment. The coordinator
+verifies model metadata and byte integrity only; it never loads fitted objects.
+
 ### Classifier training and prediction jobs
 
 One immutable classification dataset owns the training and official
@@ -181,8 +187,8 @@ The validated response envelope retains operational evidence such as hostname,
 platform, runtime versions, device, worker address and elapsed time. Its response
 identity and provenance fingerprint may therefore differ across workers or
 retries. Those operational fields do not enter classifier-run or directional-
-prediction scientific identities, metadata or content hashes. Checkpoint 3
-storage must associate the envelope with its execution while keeping scientific
+prediction scientific identities, metadata or content hashes. Version-11
+storage associates the envelope with its execution while keeping scientific
 and operational metadata separate.
 
 ### DirectionalPrediction
@@ -284,7 +290,7 @@ fitted classifiers as `skipped_existing`, and loads them for any missing
 prediction work. If one horizon fails, retry that horizon, not Mantis embedding
 or completed classifier horizons.
 
-The version-11 candidate keeps operational response and representation-worker
+The accepted version-11 implementation keeps operational response and representation-worker
 provenance in separate execution records. Host, worker address, device and
 elapsed runtime do not enter representation, classifier-run, prediction or
 evaluation scientific hashes. DTW neighbour/distance/width evidence and Mantis
@@ -293,6 +299,10 @@ one model-neutral prediction contract. Version 10 remains readable and retains
 its original DTW tables and task identities.
 
 ## Acceptance
+
+The criteria below were satisfied by the accepted local validation and
+[first-100 two-machine run and restart](poc2-id026-028-execution-evidence.md).
+IDs 026–028 are closed on 7 October 2026; accuracy is not an acceptance threshold.
 
 First prove component contracts on bounded fixtures:
 

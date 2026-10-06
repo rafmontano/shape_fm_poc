@@ -45,22 +45,26 @@ worker-returned training/loading evidence without importing provider libraries.
 Mac owns the authoritative model directory, consolidates worker-produced bytes
 atomically and synchronizes the required files to workers before prediction.
 
-```mermaid
-flowchart TB
-    JSON[Experiment JSON bootstrap] --> DB[(DuckDB configuration, state and results)]
-    Inventory[Machine inventory and execution profile] --> Coordinator[Mac coordinator]
-    DB <--> Coordinator
-    Coordinator --> Prefect[Prefect six-process workflow]
-    Prefect --> Dask[Dask task distribution]
-    Dask --> Providers[Mac and Ubuntu provider workers]
-    Providers --> Classifiers[Classifiers environment: DTW and Random Forest]
-    Providers --> Mantis[Mantis environment: frozen representations]
-    Providers --> Native[Other native Python and R environments]
-    Providers -->|JSON stdin/stdout results and execution evidence| Coordinator
-    Classifiers -->|Provider-owned save and load| Storage[ModelStorage external fitted meta-learners]
-    Coordinator -->|Metadata verification and byte transfer only| Storage
-    Storage --> Files[Authoritative Mac files synchronized to workers]
-```
+### Implementation architecture snapshot — 7 October 2026
+
+The diagrams below are descriptive, point-in-time references to the current
+POC2 implementation. They are **not** a mandatory standard or an independent
+architecture authority. ShapeFM will continue to change through later POCs, so
+these diagrams may be revised or replaced as the implementation evolves. The
+research vision, approved architecture decisions, code standards and execution
+policy remain the governing sources.
+
+The conceptual view shows how research moves through the six gates and the
+shared services that support them:
+
+![ShapeFM six-gate conceptual architecture snapshot](images/shapefm_conceptual_architecture_snapshot_2026_10_07.svg)
+
+The deployment view shows how the current coordinator, distributed workers,
+provider environments and authoritative stores implement that workflow. The
+future Mac Studio is shown only as an anticipated role change, not as a current
+machine or an approved topology requirement:
+
+![ShapeFM deployment architecture snapshot](images/shapefm_deployment_architecture_snapshot_2026_10_07.svg)
 
 ### Approved file organisation follow up
 
