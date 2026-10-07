@@ -1,5 +1,71 @@
 # IDs 038/041 integrated implementation checkpoint
 
+## Fresh corrected Part A technical acceptance, 8 October 2026
+
+The fresh `poc2_m4_daily_100_paper_tables_corrected_20261008` experiment passed
+on source revision `7a98a3e798aa1fbcef303963eaf287cb1c52d085`, shared cleanly
+by Mac and Ubuntu before execution. This factual technical result supersedes
+the pending execution statements in the historical checkpoint sections below;
+it is not historical numerical reproduction or researcher scientific closure.
+The original implementation commit was not amended. Dependencies, locks,
+scientific formulas/settings and the six-process architecture were unchanged.
+
+The initial execution ran 08:30:55–08:46:50 AEDT. Processes 01–06 completed
+**100/100/100/2830/1500/46** items. All 4,576 experiment-task attempts completed,
+with no failed attempts: 1,641 identify Mac, 1,476 Ubuntu and 1,459 have no
+worker hostname because their coordinator-local evidence uses another shape.
+There are 1,500 forecasts (100 for each of 15 methods including M4 Comb),
+200 archived reference forecasts, 2,800 directional predictions, 28 directional
+evaluations and 17 official evaluations. The complete paper surface contains
+1,050 unique sensitivity candidates plus seven baseline/direct results;
+nine selected results, 300 retained diagnostic vectors and 126 horizon rows
+pass the authoritative storage validator. Mac contributed 15 paper batches
+(303 candidates); Ubuntu contributed 34 (754). The coordinator alone wrote
+DuckDB; distributed jobs used the existing storage-free native boundaries.
+One DTW all-horizon artifact and 14 fitted Random Forest artifacts were created
+and retrieved through the accepted model store.
+
+The actual topology was 8 Mac CPU, 15 Ubuntu CPU and one Ubuntu GPU worker.
+All 100 Chronos forecasts identify CUDA on RTX 5090, one Dask GPU worker,
+generation 1 and model-load count 1. The exact pinned local snapshot was used;
+no download fallback exists. A separate real two-batch native-process probe
+also matched consecutive forecasts and the preserved forecast exactly, recorded
+zero external network calls using `strace`, and verified shutdown cleanup.
+Recorded R-fit minimum available memory was 4.524 GiB on Mac and 116.439 GiB
+on Ubuntu; Chronos recorded at least 117.978 GiB host and 29.829 GiB GPU
+headroom. These monitors recorded zero swap use and zero safety responses.
+
+Restart completed at 08:48:25 AEDT, skipping all six completed processes. Task
+attempts, forecasts, diagnostic vectors and paper batch/candidate counts did not
+increase; forecast, candidate, diagnostic and report fingerprints were unchanged.
+The unchanged fitted artifacts were reused as completed validated work, rather
+than retrained. Re-export preserved every scientific CSV and PDF/PNG byte;
+only the operational manifest timestamp and execution-summary restart evidence
+changed. Both exports left database SHA-256 unchanged. Manifest hashes verify
+all 12 declared payloads; the manifest is the thirteenth declared file and is
+not self-hashed.
+
+The horizon PNG and both separate standalone CD PNGs were visually inspected:
+four horizon traces and five CD methods are readable, with no clipping or
+combined panels. Research/paper CD versions are byte-identical and display the
+dependent-horizon descriptive limitation. These actual renderings supersede
+the preliminary combined-panel rendering evidence below. The full result tree,
+tables, figures, manifest and execution summary are under
+`results/poc2_m4_daily_100_paper_tables_corrected_20261008/`; its database and
+window database are under `results/`, fitted artifacts under `models/`.
+No repository-root CSV, PDF, PNG or `Rplots.pdf` was created. Owned services
+and native children stopped, and ports 4200/8786/8787 were closed on both hosts.
+Ubuntu's five pre-existing stashes were unchanged.
+
+Scientific configuration fingerprint:
+`c2635a31d638f70f384355f8df542c8b96ad9f36d310d904d6e46ed887433a22`.
+Stored report result fingerprint:
+`337f1ae72d2027e7074de3f9d6ed9f328e6b9558542e024a77ef410083bed4a1`.
+Selected SMYL lambdas were (1.005, 0.985), Chronos lambdas (1.015, 0.975).
+These are 100-series technical results, not comparisons with full-population
+published targets. Complete 4,227-series Part B and researcher review remain
+outstanding. Generated outputs and raw execution evidence are not Git content.
+
 ## Authorized recovery correction, 8 October 2026
 
 The reboot cleared the observed Chronos native preflight crash: the direct
