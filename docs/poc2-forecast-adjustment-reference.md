@@ -49,6 +49,11 @@ The Oracle uses realised future values. Keep it explicitly separate from
 deployable forecasts and training features. It is an ex-post scaling benchmark,
 not simply a forecast supplied with the correct direction.
 
+The approved and accepted ID 037 migration boundary is defined in
+[POC2 ID 037: SMYL Oracle diagnostic](poc2-id037-smyl-oracle.md). The dormant
+scientific kernel is implemented without pipeline activation; durable evaluation
+storage and Table 1 execution remain part of the later IDs 038/041 decision.
+
 ## Migration references
 
 Sources below are in the unchanged `m4_tsc_fmts_2026` legacy repository:

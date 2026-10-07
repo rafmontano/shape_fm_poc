@@ -84,6 +84,16 @@ the eight disabled directional features, or change the six-process pipeline.
 The historical PT calculation remains explicitly legacy rather than being
 presented as the canonical Pesaran-Timmermann test.
 
+POC2 ID 037 SMYL Oracle architecture and dormant implementation were approved
+and accepted on 7 October 2026. Follow
+`docs/poc2-id037-smyl-oracle.md` and
+`docs/amp-poc2-id037-smyl-oracle-instructions.md`. Import only the fixed-grid,
+ex-post SMYL scaling calculation as a dormant stateless R utility in
+`src/r/util/forecast_adjustments.R`. It belongs to future Process 06 diagnostic
+evaluation because it consumes realised future values; do not expose it as a
+deployable forecast, activate it, change storage/configuration, or import the
+legacy sensitivity runner and globals.
+
 The machine-environment and coordinator-selection architecture was approved on
 6 October 2026. Follow `docs/machine-environment.md` and
 `docs/amp-poc2-machine-environment-instructions.md`. A tracked machine inventory
