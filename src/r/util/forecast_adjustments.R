@@ -1,8 +1,8 @@
 # ==============================================================================
 # forecast_adjustments.R
 #
-# Purpose: Preserve the dormant ex-post SMYL scaling Oracle for future Process 06
-#   diagnostics; this is not a deployable forecast or combination input.
+# Purpose: Provide ex-post SMYL Oracle and Mantis scalar Process 06 diagnostics;
+#   neither is a deployable forecast or combination input.
 # Inputs: Canonical realised future and stored m4_smyl mean for the same horizon.
 # Outputs: Versioned in-memory diagnostic list; no persistent or global writes.
 # Run from: Imported; not run directly.
@@ -58,4 +58,23 @@ calculate_smyl_oracle <- function(actual, smyl_forecast) {
     near_tie_count = sum(abs(oracle_errors - best_error) <= sqrt(.Machine$double.eps)),
     adjusted_mean = best_multiplier * smyl_forecast
   )
+}
+
+# Purpose: Scale a complete stored path using the strict terminal Mantis decision.
+# Inputs: Finite numeric path, scalar raw origin, binary final prediction and lambdas.
+# Outputs: Finite adjusted numeric vector; no state, fitting or parallelism.
+calculate_mantis_adjustment <- function(base_mean, last_observed, mantis_final,
+                                        lambda_up, lambda_down) {
+  .validate_oracle_path(base_mean, "base_mean")
+  for (name in c("last_observed", "mantis_final", "lambda_up", "lambda_down")) {
+    value <- get(name)
+    .validate_oracle_path(value, name)
+    if (length(value) != 1L) stop(paste(name, "must be scalar"), call. = FALSE)
+  }
+  if (!mantis_final %in% c(0, 1)) stop("mantis_final must be binary", call. = FALSE)
+  direction <- as.integer(tail(base_mean, 1) > last_observed)
+  gamma <- if (direction == mantis_final) 1 else if (mantis_final == 1) lambda_up else lambda_down
+  adjusted <- gamma * base_mean
+  .validate_oracle_path(adjusted, "adjusted mean")
+  adjusted
 }

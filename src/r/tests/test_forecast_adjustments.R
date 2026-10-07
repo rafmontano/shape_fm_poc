@@ -105,7 +105,7 @@ check("invalid types, dimensions, lengths and non-finite inputs fail", function(
   expect_result(1L, 2L, 0.5, 0, 1L, 1)
 })
 
-check("dependency-free source and no active production or configuration references", function() {
+check("dependency-free source and only approved paper-profile activation", function() {
   code <- readLines("src/r/util/forecast_adjustments.R")
   code <- code[!grepl("^\\s*#", code)]
   stopifnot(!any(grepl(
@@ -120,7 +120,10 @@ check("dependency-free source and no active production or configuration referenc
     list.files("scripts", pattern = "\\.(R|py|sh)$", recursive = TRUE, full.names = TRUE)
   )
   files <- files[!grepl("/tests/", files) &
-                   files != "src/r/util/forecast_adjustments.R" & !dir.exists(files)]
+                   !files %in% c("src/r/util/forecast_adjustments.R",
+                                 "src/r/util/paper_table_metrics.R",
+                                 "src/r/06_02_evaluate_paper_tables.R",
+                                 "src/python/util/p06_01_table_flow.py") & !dir.exists(files)]
   for (file in files) {
     stopifnot(!any(grepl(
       "forecast_adjustments\\.R|calculate_smyl_oracle|smyl_scalar_smape_oracle_v1",

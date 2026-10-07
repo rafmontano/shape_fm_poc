@@ -32,9 +32,9 @@ from .shared_execution_profiles import (APPROVED_HEAVY_TUNING_PROFILE, Execution
                                  resolve_execution_profile, validate_heavy_tuning_execution)
 from .shared_experiment_execution import (ExperimentCoordinator, configuration_status,
                                    experiment_status, get_forecast,
-                                   latest_experiment_id, official_results)
+                                   latest_experiment_id, official_results, table_results)
 from .shared_process_storage import ProcessStorage
-from .p00_02_researcher_cli import ROOT
+from .p00_02_researcher_cli import ROOT, ResearcherCLI
 from .p00_03_researcher_request import ResearcherRequest
 from .feature_extraction import get_prepared_features, run_feature_extraction_flow
 from .window_preparation import get_prepared_window, run_window_preparation_flow
@@ -82,6 +82,7 @@ class ProcessAction:
     def run(self, database: Path, configuration_path: Path | None, processes: tuple[int, ...],
             execution_profile: str | None = None,
             local_heavy_exception: str | None = None) -> dict[str, Any]:
+        database = ResearcherCLI.result_path(database, database=True)
         with research_writer_locks((database,)):
             return self._run(database, configuration_path, processes, execution_profile,
                              local_heavy_exception)
@@ -100,6 +101,8 @@ class ProcessAction:
             if creating
             else load_database_configuration(database)
         )
+        if configuration.version == 12 and database.stem != configuration.name:
+            raise ValueError("database filename must match the configured experiment name")
         requires_gpu = bool(
             4 in processes
             and {"chronos_2", "directional_mantis_rf"}
@@ -228,7 +231,7 @@ class ProcessAction:
             requires_gpu = "chronos_2" in configuration.resolved["models"]
         topology = profile.distributed_topology(requires_gpu)
         gpu_workers = None
-        if requires_gpu and getattr(configuration, "version", 0) == 11:
+        if requires_gpu and getattr(configuration, "version", 0) in {11, 12}:
             gpu_workers = int(
                 configuration.resolved["execution"]["final_acceptance"][
                     "mantis_gpu_processes"
@@ -687,7 +690,8 @@ class ResearcherActions:
     def _run(self, request: ResearcherRequest, invocation: dict[str, Any]) -> dict[str, Any]:
         configuration = request.value("configuration")
         return {"invocation": invocation, "execution": self.process_action.run(
-            request.database, configuration.resolve() if configuration else None,
+            ResearcherCLI.result_path(request.value("database"), database=True),
+            configuration.resolve() if configuration else None,
             request.value("processes"), request.value("execution_profile"),
             request.value("local_heavy_exception"))}
 
@@ -722,6 +726,13 @@ class ResearcherActions:
         if identity is not None:
             status["experiment"] = experiment_status(request.database, identity)
         return {"invocation": invocation, "status": status}
+
+    def _export(self, request: ResearcherRequest, invocation: dict[str, Any]) -> dict[str, Any]:
+        """Export stored scientific evidence read-only, with no orchestration or evaluation."""
+        from .p06_04_result_export import ResultExport
+
+        return {"invocation": invocation,
+                "export": ResultExport(request.value("database"), request.value("output")).run()}
 
     def _results(self, request: ResearcherRequest, invocation: dict[str, Any]) -> dict[str, Any]:
         windows = (request.value("windows_database"), request.value("dataset_id"),
@@ -760,6 +771,9 @@ class ResearcherActions:
         if all(selectors):
             return {"invocation": invocation, "experiment_id": identity,
                     "forecast": asdict(get_forecast(request.database, identity, *selectors))}
+        if load_database_configuration(request.database).version == 12:
+            return {"invocation": invocation, "experiment_id": identity,
+                    "paper_tables": table_results(request.database, identity)}
         results = official_results(request.database, identity)
         if not results:
             raise RuntimeError(f"experiment not found or has no official evaluations: {identity}")

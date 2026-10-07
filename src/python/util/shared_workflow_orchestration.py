@@ -155,7 +155,11 @@ def compute_combine_batch(
 def compute_evaluation(
     batch: list[dict[str, Any]], options: dict[str, Any], _distributed: bool
 ) -> dict[str, Any]:
-    """Run one official evaluator payload on the Mac without DuckDB access."""
+    """Run official evaluation locally or a bounded paper-profile CPU batch, without storage."""
+    if options.get("paper_tables"):
+        from .p06_01_table_flow import evaluate_table_batch
+
+        return evaluate_table_batch(batch, options)
     item = batch[0]
     started = time.monotonic()
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as stream:
@@ -240,8 +244,9 @@ def run_gate_compute_flow(
     max_in_flight: int, local_workers: int,
 ) -> Iterator[dict[str, Any]]:
     """Bind eligible gates to existing Dask or explicit bounded local task workers."""
-    distributed = scheduler_address is not None and process_id in {2, 3, 4, 5}
-    if process_id in {2, 3, 4, 5} and scheduler_address is not None:
+    eligible = process_id in {2, 3, 4, 5} or process_id == 6 and options.get("paper_tables")
+    distributed = scheduler_address is not None and eligible
+    if distributed:
         selected = gate_compute_flow.with_options(
             task_runner=DaskTaskRunner(address=scheduler_address)
         )

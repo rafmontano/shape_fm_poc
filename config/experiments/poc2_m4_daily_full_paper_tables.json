@@ -1,0 +1,145 @@
+{
+  "configuration_version": 12,
+  "experiment": {
+    "name": "poc2_m4_daily_full_paper_tables",
+    "date": "2026-10-07",
+    "description": "Unpublished full official M4 Daily candidate: all 4227 series, complete approved PartA/PartB model pool and paper-table diagnostics; no sampling or cap and no claim of historical numerical reproduction."
+  },
+  "reproducibility": {"seed": 1234},
+  "data": {
+    "dataset_name": "m4_daily",
+    "source": {
+      "system": "Salesforce/GiftEval",
+      "revision": "30841734ac5cfddbd0c3bad6d09d2b6b32becbb0",
+      "directory": "data/source/gift_eval",
+      "files": {
+        "data-00000-of-00001.arrow": "bb82fc356772441f3354ba9d74aaa7288db2d7e589d5e62b43b8a87736bc47e2",
+        "dataset_info.json": "ea92f9b9238f54ada08d0d52123e1f07ee5e08a08fdfc0b8658789f312596dbf",
+        "state.json": "cbf09993d018ff75ea8a31fcf9b26a80c4a8499f16aca675c91a0de4d3ec6d2d"
+      }
+    },
+    "benchmark": {"configuration": "m4_daily/D/short", "frequency": "D", "term": "short", "domain": "Econ/Fin", "num_variates": 1, "prediction_length": 14, "evaluation_windows": 1, "boundary_convention": "zero-based, end-exclusive"},
+    "selection": {"method": "first_official", "count": 4227, "expected_source_total": 4227}
+  },
+  "pipeline": {
+    "processes": [{"id": 1, "name": "import"}, {"id": 2, "name": "preprocess"}, {"id": 3, "name": "transform"}, {"id": 4, "name": "forecast"}, {"id": 5, "name": "combine"}, {"id": 6, "name": "evaluate"}],
+    "r_period_override": null,
+    "preprocessing": {"default": "robust", "modes": ["robust"]},
+    "transformations": {"methods": ["standardise_sample_v1"]},
+    "window_preparation": {
+      "selected_frequencies": ["D"],
+      "frequencies": {
+        "10S": {"input_length": 512, "future_horizon": 60}, "5T": {"input_length": 512, "future_horizon": 48}, "10T": {"input_length": 512, "future_horizon": 48}, "15T": {"input_length": 512, "future_horizon": 48}, "H": {"input_length": 256, "future_horizon": 48}, "D": {"input_length": 64, "future_horizon": 14}, "W": {"input_length": 64, "future_horizon": 13}, "M": {"input_length": 64, "future_horizon": 18}, "Q": {"input_length": 32, "future_horizon": 8}, "Y": {"input_length": 16, "future_horizon": 6}
+      },
+      "stride_rule": "input_plus_future", "block_policy": "complete_non_overlapping", "boundary_policy": "official_training_only", "preprocessing_mode": "robust", "transformation": "standardise_sample_v1",
+      "split": {"split_id": "S1", "unit": "series", "training_fraction": 0.8, "seed": 123, "generator": "tsai.TrainValidTestSplitter", "membership_source": "generate", "test_count_rule": "r_double_floor_v1"}
+    },
+    "adjustment": "identity",
+    "combination": {"method": "m4_comb", "weights": {"ses": 0.3333333333333333, "holt": 0.3333333333333333, "damped": 0.3333333333333333}}
+  },
+  "representations": {
+    "mantis_8m_legacy_cls": {
+      "provider": "mantis.Mantis8M",
+      "package_version": "1.1.0",
+      "checkpoint_repository": "paris-noah/Mantis-8M",
+      "checkpoint_revision": "bc7d5ab40c02133386a28e2c127f35c17c86901d",
+      "checkpoint_files": {
+        "config.json": "c9e8b1e5d9b95510c7d446d1e1ef46d5d36c3eae0c7a9b409c8d3c6c7ce7837c",
+        "model.safetensors": "d5077b60438c477a627feeef0e7365588bdb351eaa5b5bcfb0b3d5fc5804f8c8"
+      },
+      "checkpoint_fingerprint": "5ee9a5cf70755561d168b23302d1d35329da05eef50e28c382fc6bb2ace81a8c",
+      "input_length": 64,
+      "resize": {"length": 512, "mode": "linear", "align_corners": false},
+      "representation": "legacy_final_transformer_layer_cls",
+      "dtype": "float32",
+      "dimension": 256,
+      "frozen": true
+    }
+  },
+  "classifiers": {
+    "random_forest": {
+      "classifier_id": "classifier/random-forest/c5bcf252d0e53262dd22271bbe316911",
+      "implementation": "sklearn.ensemble.RandomForestClassifier",
+      "implementation_version": "1.7.2",
+      "parameters": {"bootstrap": true, "ccp_alpha": 0.0, "class_weight": null, "criterion": "gini", "max_depth": null, "max_features": "sqrt", "max_leaf_nodes": null, "max_samples": null, "min_impurity_decrease": 0.0, "min_samples_leaf": 1, "min_samples_split": 2, "min_weight_fraction_leaf": 0.0, "monotonic_cst": null, "n_estimators": 200, "n_jobs": 1, "oob_score": false, "random_state": 42, "verbose": 0, "warm_start": false},
+      "seed": 42,
+      "feature_dimension": 256,
+      "feature_dtype": "float32",
+      "output_contract": "binary_integer_v1"
+    }
+  },
+  "models": {
+    "auto_arima": {"package": "forecast", "settings": {"stepwise": false, "approximation": false, "allowdrift": true, "allowmean": true, "interval_levels": [20, 40, 60, 80, 95]}},
+    "ets": {"package": "forecast", "settings": {"opt_crit": "mae"}},
+    "nnetar": {"package": "forecast", "settings": {}},
+    "tbats": {"package": "forecast", "settings": {}},
+    "stlm_ar": {"package": "forecast", "settings": {}},
+    "rw_drift": {"package": "forecast", "settings": {}},
+    "thetaf": {"package": "forecast", "settings": {}},
+    "naive": {"package": "forecast", "settings": {}},
+    "snaive": {"package": "forecast", "settings": {}},
+    "ses": {"package": "forecast", "settings": {}},
+    "holt": {"package": "forecast", "settings": {}},
+    "damped": {"package": "forecast", "settings": {}},
+    "naive2": {"package": "forecast", "settings": {}},
+    "chronos_2": {
+      "repository": "amazon/chronos-2", "revision": "29ec3766d36d6f73f0696f85560a422f50e8498c",
+      "chronos_forecasting": "2.2.2", "dtype": "float32",
+      "quantile_levels": [0.025, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.975],
+      "predict_batches_jointly": false, "cross_learning": false
+    },
+    "directional_dtw": {
+      "method": "one_nearest_neighbour",
+      "engine": {"package": "aeon", "version": "1.6.0", "function": "aeon.distances.dtw_distance"},
+      "input": {"definition": "standardise_sample_v1", "length": 64, "dtype": "float64"},
+      "labels": {"definition": "directional_strict_v1", "horizons": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]},
+      "reference": {"membership": "S1", "partition": "train", "cap": null, "sampling": "none"},
+      "constraint": {
+        "name": "sakoe_chiba",
+        "candidate_proportions": [0.0, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1, 0.11, 0.12, 0.13, 0.14, 0.15, 0.16, 0.17, 0.18, 0.19, 0.2, 0.21, 0.22, 0.23, 0.24, 0.25, 0.26, 0.27, 0.28, 0.29, 0.3, 0.31, 0.32, 0.33, 0.34, 0.35, 0.36, 0.37, 0.38, 0.39, 0.4, 0.41, 0.42, 0.43, 0.44, 0.45, 0.46, 0.47, 0.48, 0.49, 0.5, 0.51, 0.52, 0.53, 0.54, 0.55, 0.56, 0.57, 0.58, 0.59, 0.6, 0.61, 0.62, 0.63, 0.64, 0.65, 0.66, 0.67, 0.68, 0.69, 0.7, 0.71, 0.72, 0.73, 0.74, 0.75, 0.76, 0.77, 0.78, 0.79, 0.8, 0.81, 0.82, 0.83, 0.84, 0.85, 0.86, 0.87, 0.88, 0.89, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99],
+        "effective_width": "int(window * 64)"
+      },
+      "local_cost": "squared_euclidean",
+      "width_selection": "one_per_horizon",
+      "calibration_tie_rule": "smallest_effective_width",
+      "neighbour_tie_rule": "lowest_stable_reference_identity",
+      "probabilities": false
+    },
+    "directional_mantis_rf": {
+      "method": "composite_directional_classifier",
+      "representation": "mantis_8m_legacy_cls",
+      "classifier": "random_forest",
+      "input": {"definition": "standardise_sample_v1", "length": 64, "dtype": "float64"},
+      "labels": {"definition": "directional_strict_v1", "horizons": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]},
+      "reference": {"membership": "S1", "partition": "train", "cap": null, "sampling": "none"}
+    }
+  },
+  "archived_forecasts": {"providers": {"m4_smyl": {"submission_id": 118}, "m4_fforma": {"submission_id": 245}}, "enabled": ["m4_smyl", "m4_fforma"], "forecast_capability": "mean_only", "reference_designation": "official_reference"},
+  "evaluation": {
+    "method": "paper_tables", "gift_eval": {"code_revision": "4d5ab3fa0fe7451bbf59bb1ff6dd76e6e414d64a", "environment": "environments/gift-eval/.venv", "source_directory": "external/gift-eval"},
+    "gift_eval_options": {"axis": null, "mask_invalid_label": true, "allow_nan_forecast": false, "seasonality": "pinned GluonTS benchmark seasonality"},
+    "table_reproduction": {
+      "frequencies": ["D"], "adjustment": "mantis_terminal_scalar_v1",
+      "grid": {"version": "historical_mantis_grid_v1", "lambda_up": {"start": 1.0, "stop": 1.12, "step": 0.005}, "lambda_down": {"start": 1.0, "stop": 0.9, "step": -0.005}, "inclusive": true},
+      "adjusted_base_models": ["m4_smyl", "chronos_2"], "direction_model": "directional_mantis_rf",
+      "reference_model": "naive2", "metric_profile": "m4_paper_tables_v1",
+      "outputs": ["Table1", "Table2_Daily", "Figure2"],
+      "directional_report_models": ["naive2", "m4_fforma", "m4_smyl", "chronos_2", "directional_dtw", "directional_mantis_rf", "m4_smyl_mantis", "chronos_2_mantis", "m4_smyl_oracle"],
+      "figure_2": {
+        "horizon_models": ["directional_mantis_rf", "chronos_2", "directional_dtw", "m4_smyl"],
+        "cd_models": ["directional_mantis_rf", "directional_dtw", "m4_fforma", "chronos_2", "m4_smyl"],
+        "cd_settings": {"alpha": 0.05, "reverse": true, "cex": 0.75, "useDingbats": false}
+      }
+    },
+    "options": {"label_definition": "directional_strict_v1", "horizons": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14], "missing_labels": "error"},
+    "provisional_candidate": {"preprocessing": "robust", "transformation": "standardise_sample_v1", "candidate": "directional_mantis_rf", "label": "provisional"},
+    "submission_metadata": {"status": "draft", "submission_approved": false, "model_name": null, "model_type": null, "model_dtype": "float64-and-float32", "model_link": null, "code_link": null, "org": null, "testdata_leakage": null, "replication_code_available": "No"}
+  },
+  "execution": {
+    "model_storage": {"root": "models", "experiment": "poc2_m4_daily_full_paper_tables", "overwrite": false},
+    "default": {"mode": "sequential", "import_workers": 1, "process_workers": {"2": 1, "3": 1, "4": 1, "5": 1, "6": 1}, "batch_sizes": {"import": 64, "plan": 100, "preprocess": 8, "transform": 32, "window_preparation": 1, "directional_calibration": 32, "directional_prediction": 16, "mantis_representation": 595, "random_forest_classifier": 1, "auto_arima": 1, "r_forecast": 1, "chronos": 8, "combine": 32, "gift_eval": 1024, "table_sensitivity": 25}, "window_preparation_windows_per_job": 16, "dask_max_in_flight": 23, "dask_retries": 1, "dask_timeout_seconds": 180, "worker_timeouts_seconds": {"r": 1800, "directional_dtw": 7200, "mantis": 7200, "classifier": 1800, "chronos_startup": 300, "chronos_request": 1800, "gift_eval": 600}, "thread_limits": {"r": 1, "classifier": 1, "chronos": 1, "dask_worker": 1}, "cpu_gpu_overlap": false, "system_memory_min_available_gib": 2.0, "accelerator_memory_min_available_gib": 0.5, "database_writers": 1},
+    "final_acceptance": {"mode": "dask", "workflow": "paper_tables", "execution_profile": "poc2_seasonal_recovery", "profile_version": 4, "workers": {"mac_cpu": 8, "ubuntu_cpu": 15, "ubuntu_gpu": 1, "total": 24}, "system_memory_min_available_gib": {"mac": 3, "ubuntu": 16}, "mantis_gpu_processes": 1, "physical_gpu_count": 1, "gpu_name": "NVIDIA GeForce RTX 5090", "accelerator_memory_min_available_gib": 4},
+    "paths": {"project_environment": ".venv", "classifiers_environment": "environments/classifiers/.venv", "classifiers_lock": "environments/classifiers/uv.lock", "directional_dtw_training_worker": "src/python/04_04_train_directional_dtw.py", "directional_dtw_prediction_worker": "src/python/04_07_predict_directional_dtw.py", "mantis_environment": "environments/mantis/.venv", "mantis_lock": "environments/mantis/uv.lock", "mantis_worker": "src/python/04_05_encode_mantis.py", "random_forest_training_worker": "src/python/04_06_train_random_forest.py", "random_forest_prediction_worker": "src/python/04_08_predict_random_forest.py", "r_preprocess_worker": "src/r/02_01_preprocess_series.R", "r_m4comp2018_worker": "src/r/01_02_import_m4comp2018.R", "chronos_environment": "environments/chronos-2/.venv", "chronos_worker": "src/python/04_02_forecast_chronos.py", "r_auto_arima_worker": "src/r/04_01_forecast_auto_arima.R", "r_forecast_worker": "src/r/04_01_forecast_r_methods.R"},
+    "restart": {"completed_tasks": "skip", "failed_tasks": "retry", "interrupted_tasks": "retry"}
+  }
+}

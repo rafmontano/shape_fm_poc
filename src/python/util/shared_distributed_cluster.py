@@ -167,7 +167,7 @@ class ManagedTuningCluster:
                 if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != digest:
                     raise RuntimeError(f"required source file differs: {relative}")
                 required_files[relative] = digest
-            if getattr(self.configuration, "version", 0) == 11:
+            if getattr(self.configuration, "version", 0) in {11, 12}:
                 subprocess.run(
                     [
                         str(ROOT / paths["classifiers_environment"] / "bin/python"),
@@ -215,7 +215,7 @@ class ManagedTuningCluster:
             runtime_checks = ""
             if (
                 self.configuration is not None
-                and getattr(self.configuration, "version", 0) == 11
+                and getattr(self.configuration, "version", 0) in {11, 12}
             ):
                 runtime_checks = (
                     "test -x environments/classifiers/.venv/bin/python; "

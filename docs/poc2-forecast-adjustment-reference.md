@@ -33,9 +33,10 @@ Historically, each method/frequency pair selected its lowest full-horizon OWA
 over 525 pairs: upward 1.000–1.120 by 0.005 and downward 1.000–0.900 by 0.005.
 Exact OWA ties prefer the pair closest to (1,1), then the smallest upward and
 downward departures. Selection used evaluation outcomes and is exploratory,
-not evidence of held-out tuning. Whether to reuse the recorded pair or repeat
-selection remains part of the later ID 038 decision; the whole sensitivity
-reporting pipeline need not be imported.
+not evidence of held-out tuning. The researcher approved repeating the complete
+grid rather than reusing the recorded pair. The governing implementation design
+is [POC2 IDs 038 and 041](poc2-id038-041-table-reproduction.md); the whole legacy
+sensitivity reporting pipeline is not imported.
 
 ## SMYL Oracle
 
@@ -69,7 +70,14 @@ Table 1 and the selected multipliers in Table 3. Table 1 reports directional
 accuracy at horizon 14; sMAPE, MASE and OWA use all 14 horizons. Naive2 supplies
 the OWA denominator even though it is not displayed as a Table 1 row.
 
-POC2 scope is Table 1 and Figure 2's left panel only, as clarified by the
-researcher. This note preserves required scientific logic, not legacy RDS
-duplication or launchers. Implementation must use the existing stored forecasts,
-identities, central experiment settings and Prefect/Dask workflow standard.
+POC2 scope is Table 1, the separately approved Figure 2 scope, and a Daily-only
+execution of Table 2 Panels A–C. The Table 2 addition validates the general
+frequency-neutral implementation; it is not the complete all-frequency Table 2.
+POC3 will expand the same implementation to all M4 frequencies and the `All`
+result. This note preserves required scientific logic, not legacy RDS duplication
+or launchers. Implementation must use the existing stored forecasts, identities,
+central experiment settings and Prefect/Dask workflow standard. The complete
+lambda surface is eligible CPU work: Prefect coordinates Process 06 and Dask
+distributes bounded model/lambda batches without nested worker parallelism.
+Sequential and distributed execution must select the same pair and produce the
+same table values.

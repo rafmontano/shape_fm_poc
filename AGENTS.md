@@ -94,6 +94,21 @@ evaluation because it consumes realised future values; do not expose it as a
 deployable forecast, activate it, change storage/configuration, or import the
 legacy sensitivity runner and globals.
 
+POC2 IDs 038 and 041 were approved as one integrated Process 06 increment on
+7 October 2026. Follow `docs/poc2-id038-041-table-reproduction.md` and
+`docs/amp-poc2-id038-041-table-reproduction-instructions.md`. Repeat the exact
+525-pair grid for SMYL and Chronos-2, use the versioned historical M4 table
+profile, select deterministically, and build Table 1 and Daily-only Table 2 from
+one selected-results object. POC2 does not calculate `All` from Daily alone.
+POC3 expands the same frequency-neutral implementation to every M4 frequency
+and the complete Table 2; do not create another metric or table-building path.
+Sensitivity is explicitly parallel: Prefect owns Process 06 dependencies, Dask
+distributes bounded model/lambda batches over eligible Mac and Ubuntu CPU
+workers, and the coordinator alone writes DuckDB. Do not add nested R/Python
+parallelism. Sequential, local-Dask and distributed-Dask results must be
+scientifically identical. The POC3/POC4 roadmap in `docs/research-vision.md` is
+forward planning context only and does not authorise implementation.
+
 The machine-environment and coordinator-selection architecture was approved on
 6 October 2026. Follow `docs/machine-environment.md` and
 `docs/amp-poc2-machine-environment-instructions.md`. A tracked machine inventory

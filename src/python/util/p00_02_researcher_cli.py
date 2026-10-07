@@ -22,6 +22,7 @@ from .shared_configuration import PROCESS_NAMES
 from .p00_03_researcher_request import ResearcherRequest
 
 ROOT = Path(__file__).resolve().parents[3]
+RESULTS_ROOT = ROOT / "results"
 DEFAULT_DATABASE = ROOT / "results/poc2_acceptance.duckdb"
 DEFAULT_PLAN_DATABASE = ROOT / "results/poc2_local_plan.duckdb"
 DEFAULT_REPORT = ROOT / "results/poc2_acceptance_report.json"
@@ -45,6 +46,20 @@ class ResearcherCLI:
         if parsed <= 0:
             raise argparse.ArgumentTypeError("must be positive")
         return parsed
+
+    @staticmethod
+    def result_path(value: Path, *, database: bool = False) -> Path:
+        """Validate persistent output containment before any filesystem mutation."""
+        path = Path(value)
+        root = RESULTS_ROOT.resolve()
+        if ".." in path.parts or RESULTS_ROOT.is_symlink():
+            raise ValueError("results paths reject traversal and symlink escapes")
+        resolved = path.resolve()
+        if not resolved.is_relative_to(root) or resolved == root:
+            raise ValueError("persistent outputs must be underneath repository results/")
+        if database and (resolved.parent != root or resolved.suffix != ".duckdb"):
+            raise ValueError("experiment database must be results/<experiment>.duckdb")
+        return resolved
 
     @staticmethod
     def process_selection(value: str) -> tuple[int, ...]:
@@ -91,6 +106,11 @@ class ResearcherCLI:
         status = commands.add_parser("status", help="read acceptance experiment status")
         status.add_argument("--database", type=Path, default=DEFAULT_DATABASE)
         status.add_argument("--experiment-id")
+        export = commands.add_parser("export", help="export stored Process 06 tables and selective figures")
+        export.add_argument("--database", type=Path, required=True,
+                            help="authoritative results/<experiment>.duckdb")
+        export.add_argument("--output", type=Path,
+                            help="destination below repository results/; defaults to results/<experiment>/")
         results = commands.add_parser("results", help="read evaluations or one stored forecast")
         results.add_argument("--database", type=Path, default=DEFAULT_DATABASE)
         results.add_argument("--experiment-id")

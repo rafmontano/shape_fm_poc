@@ -30,7 +30,7 @@ from .shared_configuration import (
 
 
 # Code constant: latest DuckDB migration version implemented by this source revision.
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 # Bootstrap/interface default: legacy library database path; an explicit path from the
 # coordinator overrides it, and the path does not define scientific identity.
 DEFAULT_DATABASE = Path("data/shapefm.duckdb")
@@ -782,6 +782,63 @@ CREATE TABLE IF NOT EXISTS model_directional_evaluations (
     created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
     UNIQUE (experiment_id, model_definition_id, horizon)
 );
+
+CREATE TABLE IF NOT EXISTS paper_metric_candidates (
+    candidate_id VARCHAR PRIMARY KEY,
+    experiment_id VARCHAR NOT NULL,
+    frequency VARCHAR NOT NULL,
+    model VARCHAR NOT NULL,
+    lambda_up DOUBLE,
+    lambda_down DOUBLE,
+    input_fingerprint VARCHAR NOT NULL,
+    result_fingerprint VARCHAR NOT NULL,
+    scientific_result JSON NOT NULL
+);
+CREATE TABLE IF NOT EXISTS paper_selected_results (
+    experiment_id VARCHAR NOT NULL,
+    frequency VARCHAR NOT NULL,
+    model VARCHAR NOT NULL,
+    candidate_id VARCHAR NOT NULL,
+    selection_reason VARCHAR NOT NULL,
+    PRIMARY KEY (experiment_id, frequency, model)
+);
+CREATE TABLE IF NOT EXISTS paper_diagnostic_means (
+    experiment_id VARCHAR NOT NULL,
+    frequency VARCHAR NOT NULL,
+    model VARCHAR NOT NULL,
+    forecast_instance_id VARCHAR NOT NULL,
+    source_forecast_id VARCHAR NOT NULL,
+    mean DOUBLE[] NOT NULL,
+    metadata JSON NOT NULL,
+    input_fingerprint VARCHAR NOT NULL,
+    result_fingerprint VARCHAR NOT NULL,
+    PRIMARY KEY (experiment_id, frequency, model, forecast_instance_id)
+);
+CREATE TABLE IF NOT EXISTS paper_directional_results (
+    experiment_id VARCHAR NOT NULL,
+    frequency VARCHAR NOT NULL,
+    model VARCHAR NOT NULL,
+    horizon INTEGER NOT NULL CHECK (horizon > 0),
+    correct_count INTEGER NOT NULL CHECK (correct_count >= 0),
+    evaluation_count INTEGER NOT NULL CHECK (evaluation_count > 0),
+    accuracy DOUBLE NOT NULL,
+    input_fingerprint VARCHAR NOT NULL,
+    result_fingerprint VARCHAR NOT NULL,
+    PRIMARY KEY (experiment_id, frequency, model, horizon)
+);
+CREATE TABLE IF NOT EXISTS paper_table_reports (
+    experiment_id VARCHAR PRIMARY KEY,
+    input_fingerprint VARCHAR NOT NULL,
+    result_fingerprint VARCHAR NOT NULL,
+    report JSON NOT NULL
+);
+CREATE TABLE IF NOT EXISTS paper_execution_batches (
+    batch_id VARCHAR PRIMARY KEY,
+    experiment_id VARCHAR NOT NULL,
+    candidate_ids JSON NOT NULL,
+    provenance JSON NOT NULL,
+    completed_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp
+);
 """
 
 
@@ -980,7 +1037,12 @@ def migrate_database(path: Path = DEFAULT_DATABASE) -> Path:
         connection.execute(
             "INSERT INTO schema_versions (version, description) VALUES (?, ?) "
             "ON CONFLICT (version) DO NOTHING",
-            [SCHEMA_VERSION, "Model-neutral directional representations, classifiers and predictions"],
+            [11, "Model-neutral directional representations, classifiers and predictions"],
+        )
+        connection.execute(
+            "INSERT INTO schema_versions (version, description) VALUES (?, ?) "
+            "ON CONFLICT (version) DO NOTHING",
+            [SCHEMA_VERSION, "Historical paper diagnostics, selections and directional reports"],
         )
         connection.execute("COMMIT")
     except BaseException:

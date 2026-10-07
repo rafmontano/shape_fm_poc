@@ -94,7 +94,8 @@ class ActionContractTests(unittest.TestCase):
                 "run", "--database", str(database), "--configuration", "config.json",
                 "--processes", "4", "--local-heavy-exception", "approval/test",
             ])
-            result = actions.dispatch(request, {"action": "run"})
+            with patch("util.p00_02_researcher_cli.RESULTS_ROOT", Path(directory).resolve()):
+                result = actions.dispatch(request, {"action": "run"})
         self.assertEqual(result["execution"]["execution_id"], "execution/1")
         process.run.assert_called_once_with(
             database.resolve(), Path("config.json").resolve(), (4,), None, "approval/test"
@@ -145,7 +146,7 @@ class RestoredResultsAndParserTests(unittest.TestCase):
         """Default results resolve latest while explicit identity skips lookup."""
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "results.duckdb"
-            database.touch()
+            initialize_experiment_database(database, ROOT / "config/experiments/poc2_m4_daily_100.json")
             with (
                 patch.object(action_module, "latest_experiment_id", return_value="latest") as latest,
                 patch.object(action_module, "official_results", return_value=[{"id": 1}]) as official,
@@ -290,7 +291,7 @@ class RestoredResultsAndParserTests(unittest.TestCase):
             self.actions.dispatch(self.request(["results", "--database", "missing.duckdb"]), {})
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "results.duckdb"
-            database.touch()
+            initialize_experiment_database(database, ROOT / "config/experiments/poc2_m4_daily_100.json")
             with patch.object(action_module, "latest_experiment_id",
                               side_effect=RuntimeError("no experiment is planned")):
                 with self.assertRaisesRegex(RuntimeError, "no experiment"):
@@ -315,6 +316,9 @@ class RestoredProcessActionTests(unittest.TestCase):
         """Create isolated database paths and select the bounded reference configuration."""
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)
+        boundary = patch("util.p00_02_researcher_cli.RESULTS_ROOT", self.root.resolve())
+        boundary.start()
+        self.addCleanup(boundary.stop)
         self.configuration = ROOT / "config/experiments/poc2_m4_daily_100.json"
 
     def tearDown(self):

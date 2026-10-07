@@ -373,3 +373,28 @@ not an approved change, scheduled release item or instruction for current work.
 [Historical Table 1 forecast adjustments](docs/poc2-forecast-adjustment-reference.md)
 preserves the Mantis scaling and SMYL–Oracle definitions for later migration,
 including the researcher's clarification about older Mac results.
+
+[POC2 IDs 038 and 041](docs/poc2-id038-041-table-reproduction.md) governs the
+approved lambda-grid, deterministic selection and table-reproduction path. POC2
+produces Table 1 and a Daily-only Table 2 validation; POC3 expands the same
+implementation to all M4 frequencies and the complete Table 2. Sensitivity is
+parallelised as bounded CPU batches through the existing Prefect/Dask workflow;
+sequential and distributed modes retain identical scientific results. The
+[research vision roadmap](docs/research-vision.md#poc-roadmap) records the draft
+POC3 transition and intended POC4 direction as approved planning context without
+authorising implementation of either POC.
+
+The integrated IDs 058/062 candidate provides selective Figure 2 reporting and
+read-only `export --database results/<experiment>.duckdb`. An optional
+`--output results/<experiment>` may select only a directory below the repository
+`results/` root. The action runs through `src/python/00_main.py`, validates
+completed Process 06 evidence and
+creates derived CSVs, PDF/PNG figures, evidence and a manifest under
+`results/<experiment>/`; DuckDB remains authoritative at
+`results/<experiment>.duckdb`. No persistent experiment output belongs in the
+repository root. See the
+[Figure 2 model scopes and output contract](docs/experiment-configuration.md#selective-figure-2-and-read-only-export-ids-058062).
+The applicable-model CD diagram is explicitly descriptive for dependent Daily
+horizons, not the original ten-model diagram or significance evidence. Local
+synthetic tests do not close historical Figure 2 reproduction or authorise the
+consolidated two-machine 100-series run.

@@ -42,7 +42,8 @@ class ExperimentConfigurationError(ValueError):
 # all-model acceptance; v9 activates the forecast contract and M4 benchmarks;
 # v10 activates the approved directional DTW baseline without forecast rows;
 # v11 adds the same-input Mantis/Random-Forest comparison without changing v10.
-SUPPORTED_CONFIGURATION_VERSIONS = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}
+# v12 combines those providers with stored point means and ex-post paper tables.
+SUPPORTED_CONFIGURATION_VERSIONS = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}
 # Stable production IDs map to the native, allowlisted FFORMA method registry.
 R_MODEL_METHODS = {
     name: f"{name}_forec" for name in
@@ -155,7 +156,14 @@ class ExperimentConfiguration:
         if self.version >= 11:
             scientific["representations"] = self.resolved["representations"]
             scientific["classifiers"] = self.resolved["classifiers"]
+        if self.version == 12:
+            scientific["evaluation"]["table_reproduction"] = self.table_reproduction
         return scientific
+
+    @property
+    def table_reproduction(self) -> dict[str, Any] | None:
+        """Return immutable paper-table science, or None for historical versions."""
+        return deepcopy(self.resolved["evaluation"].get("table_reproduction"))
 
     @property
     def configuration_integrity_hash(self) -> str:
@@ -227,8 +235,9 @@ class ExperimentConfiguration:
         Inputs: Stored GIFT-Eval options and centrally controlled evaluation batch size.
         Outputs: Independent evaluator-options mapping.
         """
-        options = deepcopy(self.resolved["evaluation"]["options"])
-        if self.version < 10:
+        options = deepcopy(self.resolved["evaluation"][
+            "gift_eval_options" if self.version == 12 else "options"])
+        if self.version < 10 or self.version == 12:
             options["batch_size"] = int(self.execution["batch_sizes"]["gift_eval"])
         return options
 
@@ -331,6 +340,8 @@ class ExperimentConfiguration:
         if self.version >= 11:
             workflow["representations"] = deepcopy(self.resolved["representations"])
             workflow["classifiers"] = deepcopy(self.resolved["classifiers"])
+        if self.version == 12:
+            workflow["table_reproduction"] = self.table_reproduction
         if self.version >= 4:
             # Version 4 retains its legacy single-context capability. Version 5
             # carries the separate, opt-in rolling-window preparation definition.
@@ -359,6 +370,9 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
     Outputs: ``None`` when every nested field and fixed protocol value is valid;
     otherwise raises ``ExperimentConfigurationError`` with field-level context.
     """
+    if value.get("configuration_version") == 12:
+        _validate_table_configuration(value)
+        return
     _require_keys(
         value,
         {"configuration_version", "experiment", "reproducibility", "data", "pipeline", "models", "archived_forecasts", "evaluation", "execution"},
@@ -1162,6 +1176,158 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
         raise ExperimentConfigurationError("unsupported restart policy")
 
 
+def _validate_table_configuration(value: dict[str, Any]) -> None:
+    """Validate v12 mixed science while reusing the unchanged v11 provider contract.
+
+    Inputs: Complete fresh paper-table document. Outputs: None or a field-specific
+    error; the v11 projection is validation-only and never stored or executed.
+    """
+    _require_keys(value, {"configuration_version", "experiment", "reproducibility",
+        "data", "pipeline", "models", "archived_forecasts", "evaluation",
+        "execution", "representations", "classifiers"}, "configuration")
+    expected_tables = {
+        "frequencies": ["D"],
+        "adjustment": "mantis_terminal_scalar_v1",
+        "grid": {
+            "version": "historical_mantis_grid_v1",
+            "lambda_up": {"start": 1.0, "stop": 1.12, "step": 0.005},
+            "lambda_down": {"start": 1.0, "stop": 0.9, "step": -0.005},
+            "inclusive": True,
+        },
+        "adjusted_base_models": ["m4_smyl", "chronos_2"],
+        "direction_model": "directional_mantis_rf",
+        "reference_model": "naive2",
+        "metric_profile": "m4_paper_tables_v1",
+        "outputs": ["Table1", "Table2_Daily", "Figure2"],
+        "directional_report_models": [
+            "naive2", "m4_fforma", "m4_smyl", "chronos_2",
+            "directional_dtw", "directional_mantis_rf",
+            "m4_smyl_mantis", "chronos_2_mantis", "m4_smyl_oracle",
+        ],
+    }
+    evaluation = _require_mapping(value.get("evaluation"), "evaluation")
+    tables = _require_mapping(evaluation.get("table_reproduction"), "evaluation.table_reproduction")
+    grid = _require_mapping(tables.get("grid"), "evaluation.table_reproduction.grid")
+    for axis in ("lambda_up", "lambda_down"):
+        definition = _require_mapping(grid.get(axis), f"evaluation.table_reproduction.grid.{axis}")
+        if any(isinstance(definition.get(field), bool)
+               or not isinstance(definition.get(field), (int, float))
+               for field in ("start", "stop", "step")):
+            raise ExperimentConfigurationError("table grid endpoints and steps must be numbers")
+    if grid.get("inclusive") is not True:
+        raise ExperimentConfigurationError("table grid must be explicitly inclusive")
+    report_models = tables.get("directional_report_models")
+    if (not isinstance(report_models, list) or not report_models
+        or any(not isinstance(model, str) for model in report_models)
+        or len(report_models) != len(set(report_models))
+        or not set(report_models).issubset(expected_tables["directional_report_models"])):
+        raise ExperimentConfigurationError("v12 directional report models must be unique applicable model IDs")
+    expected_tables["directional_report_models"] = report_models
+    figure = _require_mapping(tables.get("figure_2"), "evaluation.table_reproduction.figure_2")
+    if set(figure) != {"horizon_models", "cd_models", "cd_settings"}:
+        raise ExperimentConfigurationError("Figure 2 requires horizon_models, cd_models and cd_settings")
+    applicable = {"directional_mantis_rf", "directional_dtw", "m4_fforma", "chronos_2", "m4_smyl"}
+    for subset in [figure.get("horizon_models"), figure.get("cd_models")]:
+        if (not isinstance(subset, list) or len(subset) < 2
+                or any(not isinstance(m, str) for m in subset)
+                or len(set(subset)) != len(subset)
+                or not set(subset).issubset(applicable & set(report_models))):
+            raise ExperimentConfigurationError("Figure 2 requires explicit unique approved stored models")
+    cd_settings = _require_mapping(figure.get("cd_settings"), "figure_2.cd_settings")
+    if (cd_settings != {"alpha": 0.05, "reverse": True, "cex": 0.75, "useDingbats": False}
+            or cd_settings["reverse"] is not True or cd_settings["useDingbats"] is not False):
+        raise ExperimentConfigurationError("Figure 2 must preserve historical scmamp settings")
+    expected_tables["figure_2"] = figure
+    if evaluation.get("method") != "paper_tables" or tables != expected_tables:
+        raise ExperimentConfigurationError("v12 evaluation must define the approved Daily paper-table science")
+    models = _require_mapping(value.get("models"), "models")
+    if set(models) != set(R_FORECAST_METHODS) | {"chronos_2", "directional_dtw", "directional_mantis_rf"}:
+        raise ExperimentConfigurationError("v12 requires the complete v9 pool and both v11 directional models")
+    if models["naive2"] != {"package": "forecast", "settings": {}}:
+        raise ExperimentConfigurationError("v12 must preserve native Naive2 settings")
+    if models["chronos_2"] != {
+        "repository": "amazon/chronos-2",
+        "revision": "29ec3766d36d6f73f0696f85560a422f50e8498c",
+        "chronos_forecasting": "2.2.2", "dtype": "float32",
+        "quantile_levels": PROBABILISTIC_QUANTILES,
+        "predict_batches_jointly": False, "cross_learning": False,
+    }:
+        raise ExperimentConfigurationError("v12 must preserve the v9 Chronos-2 contract")
+    archived = _require_mapping(value["archived_forecasts"], "archived_forecasts")
+    if archived.get("enabled") != ["m4_smyl", "m4_fforma"]:
+        raise ExperimentConfigurationError("v12 requires both approved archive means")
+    projected = deepcopy(value)
+    data = _require_mapping(value["data"], "data")
+    selection = _require_mapping(data.get("selection"), "data.selection")
+    count = selection.get("count")
+    if (selection.get("method") != "first_official" or type(count) is not int or count < 1
+            or set(selection) - {"method", "count", "expected_source_total"}
+            or (count == 4227 or "expected_source_total" in selection)
+            and selection != {"method": "first_official", "count": 4227, "expected_source_total": 4227}):
+        raise ExperimentConfigurationError("v12 selection requires a positive count or guarded full Daily 4227")
+    projected["data"]["selection"] = {"method": "first_official", "count": 100}
+    projected["configuration_version"] = 11
+    projected["models"] = {key: models[key] for key in ("directional_dtw", "directional_mantis_rf")}
+    projected["pipeline"]["combination"] = {"method": "none", "weights": {}}
+    projected["evaluation"].pop("table_reproduction")
+    projected["evaluation"].pop("gift_eval_options")
+    projected["evaluation"]["method"] = "directional_accuracy"
+    execution = _require_mapping(projected["execution"], "execution")
+    acceptance = _require_mapping(execution.get("final_acceptance"), "execution.final_acceptance")
+    if acceptance.get("workflow") != "paper_tables" or acceptance.get("profile_version") != 4:
+        raise ExperimentConfigurationError("v12 acceptance must identify paper_tables and runtime profile v4")
+    acceptance["workflow"] = "directional_comparison"
+    acceptance["profile_version"] = 3
+    defaults = _require_mapping(execution.get("default"), "execution.default")
+    batches = _require_mapping(defaults.get("batch_sizes"), "execution.default.batch_sizes")
+    timeouts = _require_mapping(defaults.get("worker_timeouts_seconds"), "execution.default.worker_timeouts_seconds")
+    threads = _require_mapping(defaults.get("thread_limits"), "execution.default.thread_limits")
+    paths = _require_mapping(execution.get("paths"), "execution.paths")
+    extra_batches = {"auto_arima", "r_forecast", "chronos", "combine", "gift_eval", "table_sensitivity"}
+    for key in extra_batches:
+        item = batches.pop(key, None)
+        if isinstance(item, bool) or not isinstance(item, int) or item < 1:
+            raise ExperimentConfigurationError(f"v12 execution batch {key} must be a positive integer")
+    for key in ("chronos_startup", "chronos_request", "gift_eval"):
+        item = timeouts.pop(key, None)
+        if isinstance(item, bool) or not isinstance(item, (int, float)) or item <= 0:
+            raise ExperimentConfigurationError(f"v12 timeout {key} must be positive")
+    if threads.pop("chronos", None) != 1:
+        raise ExperimentConfigurationError("v12 Chronos threads must be 1")
+    for key in ("chronos_environment", "chronos_worker", "r_auto_arima_worker", "r_forecast_worker"):
+        item = paths.pop(key, None)
+        if not isinstance(item, str) or not item:
+            raise ExperimentConfigurationError(f"v12 execution path {key} is required")
+    validate_experiment_configuration(projected)
+
+    # Validation-only ordinary projection reuses the immutable v9 contract.
+    ordinary = deepcopy(value)
+    ordinary["configuration_version"] = 9
+    ordinary["data"]["selection"] = {"method": "first_official", "count": 100}
+    ordinary["models"] = {key: models[key] for key in (*R_FORECAST_METHODS, "chronos_2")}
+    for key in ("representations", "classifiers"):
+        ordinary.pop(key)
+    ordinary["evaluation"].pop("table_reproduction")
+    ordinary["evaluation"]["method"] = "gift_eval"
+    ordinary["evaluation"]["options"] = ordinary["evaluation"].pop("gift_eval_options")
+    execution = ordinary["execution"]
+    execution.pop("model_storage")
+    for key in ("directional_calibration", "directional_prediction", "mantis_representation",
+                "random_forest_classifier", "table_sensitivity"):
+        execution["default"]["batch_sizes"].pop(key)
+    for key in ("directional_dtw", "mantis", "classifier"):
+        execution["default"]["worker_timeouts_seconds"].pop(key)
+    execution["default"]["thread_limits"].pop("classifier")
+    execution["paths"] = {key: path for key, path in execution["paths"].items()
+        if key in {"project_environment", "chronos_environment", "chronos_worker",
+                   "r_preprocess_worker", "r_auto_arima_worker", "r_forecast_worker", "r_m4comp2018_worker"}}
+    acceptance = execution["final_acceptance"]
+    acceptance.update(workflow="forecast_pool", profile_version=3,
+                      workers={"mac_cpu": 8, "ubuntu_cpu": 15, "ubuntu_gpu": 15, "total": 38})
+    acceptance.pop("mantis_gpu_processes")
+    validate_experiment_configuration(ordinary)
+
+
 def resolve_experiment_configuration(value: dict[str, Any]) -> ExperimentConfiguration:
     """Purpose: Validate a document and derive deterministic pipeline cardinalities.
 
@@ -1172,7 +1338,7 @@ def resolve_experiment_configuration(value: dict[str, Any]) -> ExperimentConfigu
     validate_experiment_configuration(value)
     original = deepcopy(value)
     resolved = deepcopy(value)
-    if resolved["configuration_version"] in {5, 6, 7, 8, 9, 10, 11}:
+    if resolved["configuration_version"] in {5, 6, 7, 8, 9, 10, 11, 12}:
         frequencies = resolved["pipeline"]["window_preparation"]["frequencies"]
         for settings in frequencies.values():
             settings["stride"] = settings["input_length"] + settings["future_horizon"]
@@ -1219,6 +1385,26 @@ def resolve_experiment_configuration(value: dict[str, Any]) -> ExperimentConfigu
             14 * directional_models if directional else variant_count * candidate_count
         ),
     }
+    if resolved["configuration_version"] == 12:
+        ordinary_model_count = len(set(resolved["models"]) & (set(R_FORECAST_METHODS) | {"chronos_2"}))
+        ordinary_candidate_count = ordinary_model_count + 1
+        gift_candidate_count = ordinary_candidate_count + len(resolved["archived_forecasts"]["enabled"])
+        resolved["derived"].update({
+            "variant_count": 1, "candidate_count": ordinary_candidate_count,
+            "ordinary_model_count": ordinary_model_count,
+            "directional_model_count": 2,
+            "expected_directional_training_tasks": 15,
+            "expected_directional_prediction_tasks": series_count * 14 + 14,
+            "expected_gift_evaluation_tasks": gift_candidate_count,
+            "expected_paper_table_tasks": 1,
+            "expected_task_counts": {"1": series_count, "2": series_count,
+                "3": series_count, "4": 30 + series_count * (14 + ordinary_model_count),
+                "5": series_count * ordinary_candidate_count, "6": 29 + gift_candidate_count},
+            "expected_forecast_rows": series_count * ordinary_candidate_count,
+            "expected_directional_prediction_rows": series_count * 28,
+            "expected_evaluation_rows": 28 + gift_candidate_count,
+            "expected_table_candidate_rows": 1050,
+        })
     return ExperimentConfiguration(original=original, resolved=resolved)
 
 

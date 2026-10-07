@@ -96,9 +96,23 @@ class ProcessStorage:
                         "SELECT configuration_version FROM experiment_configuration"
                     ).fetchone()[0]
                 )
+                if version == 12 and process_id == 6:
+                    from .p06_02_table_storage import TableStorage
+
+                    self._validate_directional(connection, process_id, version)
+                    experiment_id = connection.execute(
+                        "SELECT experiment_id FROM experiments"
+                    ).fetchone()[0]
+                    TableStorage(connection).validate(experiment_id)
+                if version == 12 and process_id in {3, 4}:
+                    self._validate_directional(connection, process_id, version)
                 if version in {10, 11} and process_id >= 3:
                     return self._validate_directional(connection, process_id, version)
                 expected_sql, output_sql = self._contracts(process_id)
+                if version == 12 and process_id == 6:
+                    archives = "SELECT experiment_id, 'official_reference' variant_id, unnest(['m4_smyl','m4_fforma']) candidate FROM experiments"
+                    expected_sql += " UNION ALL " + archives
+                    output_sql += " UNION ALL SELECT e.* FROM (" + archives + ") e JOIN official_evaluations r ON r.experiment_id=e.experiment_id AND r.variant_id=e.variant_id AND r.candidate=e.candidate"
                 expected = int(connection.execute(f"SELECT count(*) FROM ({expected_sql}) expected").fetchone()[0])
                 task_count = int(connection.execute(
                     f"""SELECT count(*) FROM ({expected_sql}) e JOIN experiment_tasks t
@@ -107,7 +121,10 @@ class ProcessStorage:
                 ).fetchone()[0])
                 stored = int(connection.execute(f"SELECT count(*) FROM ({output_sql}) output").fetchone()[0])
                 total_tasks = connection.execute(
-                    "SELECT count(*) FROM experiment_tasks WHERE stage=?", [process_id]
+                    """SELECT count(*) FROM experiment_tasks WHERE stage=?
+                       AND (? != 12 OR ? NOT IN (4,6) OR
+                            (NOT starts_with(candidate, 'directional_') AND candidate!='paper_tables'))""",
+                    [process_id, version, process_id]
                 ).fetchone()[0]
                 incomplete = abs(expected - task_count) + abs(expected - total_tasks)
                 missing = abs(expected - stored)
@@ -141,15 +158,16 @@ class ProcessStorage:
         )
         expected = (
             {3: series_count, 4: 1 + series_count * 14 + 1 + 28, 5: 1, 6: 28}
-            if version == 11
+            if version >= 11
             else {3: series_count, 4: 1 + series_count * 14, 5: 1, 6: 14}
         )[
             process_id
         ]
         task_count, completed = connection.execute(
             """SELECT count(*), count(*) FILTER (WHERE t.status='completed')
-               FROM experiment_tasks AS t WHERE t.stage=?""",
-            [process_id],
+               FROM experiment_tasks AS t WHERE t.stage=?
+                 AND (? != 12 OR ? = 3 OR starts_with(t.candidate, 'directional_'))""",
+            [process_id, version, process_id],
         ).fetchone()
         if task_count != expected or completed != expected:
             raise RuntimeError(
@@ -180,7 +198,7 @@ class ProcessStorage:
                 raise RuntimeError("stored directional preparation is incomplete or invalid")
             stored = inputs
         elif process_id == 4:
-            if version == 11:
+            if version >= 11:
                 from .shared_database import load_database_configuration
                 from .shared_model_storage import ModelStorage
 
@@ -249,8 +267,9 @@ class ProcessStorage:
                 reference_count = representations - series_count
                 if (
                     dtw_models != 1 or composite_models != 1
-                    or representations != 595 or reference_count != 495
-                    or training_representations != 495
+                    or (version == 11 and (representations != 595 or reference_count != 495))
+                    or training_representations != reference_count
+                    or reference_count < 1
                     or official_representations != series_count
                     or representation_executions != 1
                     or represented_execution_members != representations
@@ -318,7 +337,7 @@ class ProcessStorage:
         else:
             table = (
                 "model_directional_evaluations"
-                if version == 11
+                if version >= 11
                 else "directional_evaluations"
             )
             stored, invalid = connection.execute(
@@ -329,7 +348,7 @@ class ProcessStorage:
                    FROM {table} AS e""",
                 [series_count],
             ).fetchone()
-            if stored != (28 if version == 11 else 14) or invalid:
+            if stored != (28 if version >= 11 else 14) or invalid:
                 raise RuntimeError("stored directional evaluations are incomplete or invalid")
         return {
             "output_validated": True,
@@ -485,12 +504,12 @@ class ProcessStorage:
             expected = f"SELECT x.experiment_id,i.forecast_instance_id,v.variant_id FROM {variants}"
             output = expected + " JOIN transformed_series r ON r.experiment_id=x.experiment_id AND r.forecast_instance_id=i.forecast_instance_id AND r.variant_id=v.variant_id"
         else:
-            models = "json_keys(CAST(x.scientific_configuration AS JSON), '$.models')"
+            models = "list_filter(json_keys(CAST(x.scientific_configuration AS JSON), '$.models'), m -> NOT starts_with(m, 'directional_'))"
             combination = (
                 "json_extract_string(CAST(x.scientific_configuration AS JSON), "
                 "'$.pipeline.combination.method')"
             )
-            candidates = models if process_id == 4 else f"list_append({models}, {combination})"
+            candidates = models if process_id == 4 else f"CASE WHEN {combination}='none' THEN {models} ELSE list_append({models}, {combination}) END"
             if process_id == 6:
                 expected = f"SELECT x.experiment_id,v.variant_id,c.candidate FROM experiments x JOIN experiment_variants v ON v.experiment_id=x.experiment_id, UNNEST({candidates}) c(candidate)"
                 output = expected + " JOIN official_evaluations r ON r.experiment_id=x.experiment_id AND r.variant_id=v.variant_id AND r.candidate=c.candidate"

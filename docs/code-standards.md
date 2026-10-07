@@ -264,11 +264,32 @@ python src/python/00_main.py run
 python src/python/00_main.py prepare-windows
 python src/python/00_main.py status
 python src/python/00_main.py results
+python src/python/00_main.py export
 python src/python/00_main.py test
 ```
 
 There is no implicit default that starts an experiment, installs software, or
 modifies data. A mutating action must be explicit.
+
+`export` is read-only with respect to DuckDB. Its external results directory is
+derived presentation, not authoritative scientific storage. Validate stored
+Process 06 evidence before publishing declared CSV/figure/manifest files; retain
+unrelated user files and never trigger model/evaluation work from reporting.
+All persistent experiment databases and researcher-facing CSV, PDF, PNG,
+manifest and evidence files must be contained under top-level `results/` using
+the structure defined by the central output contract. A custom export path must
+resolve below that directory; path traversal and symlink escape are rejected
+before creation. Plotting must always use explicit devices in the declared
+experiment figure directory and must never leave `Rplots.pdf` or another output
+in the repository root. Tests may write only to automatically removed temporary
+directories.
+Model subsets belong in stored central configuration, not plotting code.
+Selective IDs 058/062 imports share the existing frequency/model/horizon result
+and rank calculation; missing classifiers and ID 061 selection remain excluded.
+Applicable-model CD reproduction is descriptive for dependent Daily horizons,
+not independent-sample significance evidence. Follow the
+[output/configuration contract](experiment-configuration.md#selective-figure-2-and-read-only-export-ids-058062)
+for reproducible files and POC3 reuse of the same boundary.
 
 ## Readable modules and object boundaries
 
@@ -856,10 +877,33 @@ Objective 1 is complete when:
 
 ### Objective 2: selected previous-project reproduction
 
-The approved direction is to reproduce only relevant M4 Daily results from
+The approved direction is to reproduce the relevant M4 Daily results from
 `m4_tsc_fmts_2026` under the ShapeFM architecture and code standards, importing
 and validating one necessary component at a time. Irrelevant previous-project
 methods are not imported merely for completeness.
+
+POC2 scientific closure requires the complete M4 Daily Table 1, the separately
+approved Figure 2 scope, and a Daily-only validation of Table 2 Panels A–C. The
+Daily Table 2 output proves that the frequency-neutral calculation works, but it
+must not be described as the complete Table 2 and must not include an `All`
+column calculated from Daily alone.
+
+POC3 will use the same implementation to reproduce Table 2 over all approved M4
+frequencies and calculate the cross-frequency `All` result. POC3 should expand
+central configuration and data scope; it must not create a second table builder,
+metric definition or lambda-selection path. The governing IDs 038/041 decision
+is [documented here](poc2-id038-041-table-reproduction.md).
+
+Sensitivity follows the standard workflow rather than creating another parallel
+runner. Prefect coordinates Process 06, Dask distributes bounded lambda batches
+over eligible CPU workers, and the coordinator is the only DuckDB writer. A
+worker must not start nested R/Python parallelism. Sequential and distributed
+execution must call the same scientific calculation and produce identical
+results; batch size and worker topology are operational settings only.
+
+The forward POC3 and POC4 boundaries are maintained in the
+[research vision](research-vision.md#poc-roadmap). They are planning context, not
+permission to begin those POCs or expand the currently approved model set.
 
 Use the recorded item-specific approvals, including the approved R forecast pool;
 do not reopen them merely because this overview is high-level. Do not invent

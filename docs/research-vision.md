@@ -152,6 +152,42 @@ The intended progression is:
 This sequence describes research dependency, not a requirement to implement
 the entire future design before validating an earlier gate.
 
+### POC roadmap
+
+The present roadmap separates architectural trust from scientific expansion:
+
+1. **POC2 — trusted Daily building blocks.** Finish the standards, contracts,
+   orchestration, persistence and restart foundations on a controlled M4 Daily
+   scope. Reproduce the approved Daily Table 1 and Figure 2 evidence, execute
+   the Table 2 calculation for Daily only, and prove that the complete lambda
+   surface runs sequentially or in parallel without changing scientific results.
+   POC2 validates mechanisms with applicable implemented models; it does not
+   import unrelated historical models only to complete a figure legend.
+   Selective IDs 058/062 reporting reads the same authoritative DuckDB results
+   into reproducible external tables/figures, never a second scientific store.
+   Figure 2 uses centrally configured applicable methods; its CD grouping over
+   dependent Daily horizons is descriptive, not independent-sample significance
+   evidence. POC3 reuses this frequency-neutral reporting contract, with no
+   excluded classifier or ID 061 best-window selection imported here.
+2. **POC3 — complete M4 reproduction.** Expand central configuration and source
+   membership to Hourly, Daily, Weekly, Monthly, Quarterly and Yearly. Reuse the
+   same six processes, model contracts, distributed sensitivity calculation and
+   Process 06 result objects to reproduce complete Appendix A Table 2, its `All`
+   calculation and Figure 5 for the approved applicable models. POC3 should be a
+   scale and configuration transition, not an architecture rewrite.
+3. **POC4 — begin ShapeFM research.** After the reproduced baseline is trusted,
+   start incorporating new ShapeFM building blocks: expanded representations and
+   features, alternative meta-learners, forecast selection/weighting, combination
+   and adjustment. Every experiment retains the POC2/POC3 baselines and changes
+   one attributable research component at a time.
+
+The researcher approved these POC3 and POC4 boundaries as planning direction on
+7 October 2026. They are not implementation approval. Their precise experiment
+definitions, applicable model lists, numerical acceptance tolerances and
+execution profiles require separate researcher approval before work begins.
+Keeping the intended boundary here prevents later POCs from starting without
+context while allowing the research scope to evolve.
+
 The approved [rolling-window and S1 decision](poc2-window-training-architecture.md)
 implements a storage-efficient preparation boundary for later training: split
 original series before generating windows, protect evaluation holdouts, store

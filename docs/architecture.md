@@ -36,6 +36,58 @@ selected by the inventory and execution profile. JSON stdin/stdout is the
 language and isolated-subprocess boundary, not a second state store. The
 coordinator is the sole DuckDB writer.
 
+The approved [IDs 038/041 table-reproduction decision](poc2-id038-041-table-reproduction.md)
+adds a frequency-neutral Process 06 diagnostic path. It repeats the historical
+525-pair lambda grid for SMYL and Chronos-2, stores aggregate evaluation evidence,
+selects deterministically and builds Table 1 plus configured-frequency Table 2
+views from one selected-results object. POC2 executes Daily only and never
+calculates `All` from that single frequency. POC3 expands the same path to all M4
+frequencies and the complete Table 2; it does not introduce a parallel reporting
+architecture.
+
+Sensitivity is parallel computation within the existing architecture, not a
+separate workflow system. Prefect owns the Process 06 dependency sequence; Dask
+distributes bounded base-model/lambda batches over eligible Mac and Ubuntu CPU
+workers; and the coordinator alone commits returned aggregate metrics to DuckDB.
+Workers use no nested parallel framework and never rerun the stored forecast
+models. Sequential, local-Dask and distributed-Dask modes share one scientific
+calculation and must return identical results. Operational batch size, topology
+and completion order remain outside scientific identity.
+
+The same Process 06 boundary is intended to retain model-neutral directional
+accuracy by frequency, model and horizon. This common result supports terminal
+Table 1/Table 2 cells, Figure 2 horizon profiles and descriptive ranks, and POC3
+Figure 5 profiles/distributions without separate evaluation calculations.
+
+The local IDs 038/041 implementation candidate now exposes that boundary through
+`TableEvaluation`, coordinator-only `TableStorage` and `TableReports`. One R
+paper-profile kernel serves sequential and CPU-Dask batches. The additive v12
+schema separates aggregate science, selected diagnostics, normalized directions,
+reports and operational batches. See the
+[checkpoint evidence and exact path map](poc2-id038-041-implementation-evidence.md)
+and [Process 06 workflow diagram](poc2-workflow-orchestration-decision.md#ids-038041-implementation-candidate-process-06).
+This is a review candidate, not two-machine or historical reproduction acceptance.
+
+IDs 058/062 extend this candidate selectively, not by importing legacy reporting
+runners. The read-only `export` action loads a validated `TableStorage` snapshot;
+`ResultExport` produces derived CSV/manifest files and invokes one stateless R
+renderer. Locked `scmamp` supplies the historical CD calculation; the horizon
+figure consumes the same stored matrix. No model, metric or sensitivity work is
+scheduled during export. The mandatory `results/<experiment>/` folder is a
+reproducible human presentation layer, never an input authority or second
+scientific store. Every persistent CSV, PDF, PNG, manifest and evidence file is
+contained there; the experiment DuckDB is `results/<experiment>.duckdb`. Output
+paths outside the top-level `results/` directory are rejected.
+The [central Figure 2/export contract](experiment-configuration.md#selective-figure-2-and-read-only-export-ids-058062)
+owns model subsets, output names and the complete directory structure. One
+stored applicable-model CD matrix produces two standalone files—research and
+paper presentation versions—with identical content in POC2. They are never
+combined as panels. Dependent Daily horizons are explicitly interpreted
+descriptively. Explicit R devices write only to the experiment's `figures/`
+directory; default root-level artifacts such as `Rplots.pdf` are prohibited.
+POC3 reuses this frequency-neutral boundary; missing classifiers and ID 061
+best-window/last-horizon selection remain excluded.
+
 Fitted meta-learners live outside DuckDB behind
 [ModelStorage](poc2-id026-fitted-model-storage.md). DTW and Random Forest objects
 are serialized, validated and deserialized only in the classifiers environment;

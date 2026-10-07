@@ -46,6 +46,169 @@ Historical `final_acceptance` documents describe past evidence, not a mandatory
 GPU hardware field: ordinary preflight consumes the effective profile and still
 requires CUDA on GPU workers when that historical field is absent.
 
+## Version 12: approved Daily paper-table integration candidate
+
+`config/experiments/poc2_m4_daily_100_paper_tables.json` is a fresh immutable
+version-12 document for the IDs 038/041 implementation checkpoint. Versions
+1–11 and accepted databases are unchanged. This 100-series configuration is
+not numerical reproduction evidence and does not authorise an experiment run.
+The `first_official` count accepts positive counts for later complete Daily
+execution; planning checks source availability. The current frequency remains
+Daily only. POC3 frequencies need a later
+configuration version, not a second calculation/report implementation.
+
+Processes 02/03 retain the accepted robust preprocessing, same-input S1
+directional preparation and bounded 64-value directional inputs. Process 03
+also persists the existing full-history sample-standardised point-model
+transformation. The one Process 03 task per instance completes only after
+both outputs exist. Provider-specific Mantis conversion is unchanged.
+Process 04 retains DTW/Mantis training and prediction identities and adds
+Chronos-2 and native Naive2 tasks through the ordinary forecast contract;
+their stored means are inverse-transformed to original scale. Process 05
+passes these two base forecasts through; `none` creates no combination or
+directional no-work task. SMYL/FFORMA remain official-reference archive means.
+
+Expected Process 01–06 tasks are **100/100/100/1,630/200/29**: Process 06
+has the 28 existing directional evaluation identities plus one `paper_tables`
+identity. The 1,050 aggregate candidates are result rows, not durable tasks.
+`evaluation.table_reproduction` centrally stores the Daily scope, versioned
+inclusive up/down grid, adjustment, participating base/direction/reference
+models, historical metric profile, Table1/Table2_Daily/Figure2 outputs and
+applicable horizon/rank model IDs. Every such field enters the scientific hash.
+These are ex-post diagnostics; ordinary GIFT-Eval evaluation is unchanged.
+
+### Selective Figure 2 and read-only export (IDs 058/062)
+
+The unpublished v12 candidate now also stores
+`evaluation.table_reproduction.figure_2`. This completes the same integrated
+checkpoint; no accepted v1–v11 configuration or database is reinterpreted.
+`horizon_models` explicitly selects Mantis, Chronos-2, 1-NN DTW and SMYL, in
+that order. One authoritative `cd_models` set selects Mantis, 1-NN DTW,
+FFORMA, Chronos-2 and SMYL. Figure models must be approved applicable
+models present in `directional_report_models`; Naive2, adjusted forecasts,
+SMYL-Oracle and the excluded historical classifiers cannot be silently added.
+The model subsets and historical `cd_settings` (`alpha=.05`, `reverse=true`,
+`cex=.75`, `useDingbats=false`) enter the scientific fingerprint.
+Process 06 stores their matrix fingerprints and tied mean ranks using the
+existing common rank calculation. Export reads that evidence; it does not
+execute sensitivity or calculate new accuracy metrics.
+
+The CD matrix is rendered as two **separate** presentation versions, never as
+panels in one device. For POC2 both versions use the same `cd_models` matrix and
+mean ranks. The second file is reserved for a later, separately approved
+paper-specific presentation filter; it does not currently change scientific
+content or calculate a second rank result.
+
+After Process 06 completes, the single researcher entry point supports:
+
+```sh
+.venv/bin/python src/python/00_main.py export --database results/<experiment>.duckdb
+# Optional destination must remain below the repository results directory:
+.venv/bin/python src/python/00_main.py export --database results/<experiment>.duckdb --output results/<experiment>
+```
+
+### Mandatory experiment-results location
+
+Every persistent experiment database and researcher-facing CSV, PDF, PNG,
+manifest or evidence file belongs below the repository's top-level `results/`
+directory. For `<experiment>`, the database and derived presentation have this
+fixed structure:
+
+```text
+results/
+├── <experiment>.duckdb
+└── <experiment>/
+    ├── manifest.json
+    ├── tables/
+    │   ├── table_1.csv
+    │   ├── table_2_daily.csv
+    │   ├── directional_accuracy_by_horizon.csv
+    │   ├── cd_input_daily.csv
+    │   └── cd_mean_ranks_daily.csv
+    ├── figures/
+    │   ├── figure_2_accuracy_by_horizon.pdf
+    │   ├── figure_2_accuracy_by_horizon.png
+    │   ├── figure_2_cd_daily.pdf
+    │   ├── figure_2_cd_daily.png
+    │   ├── figure_2_cd_daily_paper.pdf
+    │   └── figure_2_cd_daily_paper.png
+    └── evidence/
+        └── execution-summary.json
+```
+
+The default export root is `results/<database-stem>/`. An explicit `--output`
+may select another directory only when its resolved path remains below the
+top-level `results/` directory. Absolute or relative traversal outside that
+root, including a symlink escape, must fail before any path is created. Tests
+may use automatically removed temporary directories; they are not persistent
+research outputs.
+
+No production or review command may leave a CSV, PDF, PNG, manifest or evidence
+file in the repository root. In particular, R rendering must open and close an
+explicit device under the declared `figures/` directory and must never create
+the default `Rplots.pdf`. This is prevented and tested rather than hidden by an
+ignore rule.
+
+Table 1 is flattened without rounding stored metrics/improvements; Table 2
+is long-form `panel,frequency,model,value`. The directional table preserves all
+stored horizon counts, accuracies and fingerprints. The CD input CSV has ordered
+`Daily_1`–`Daily_14` rows and applicable-model ID columns; the rank CSV contains
+the one authoritative applicable-model rank result. The two standalone CD files
+currently render this same input independently; neither is the original
+ten-model diagram.
+The horizon figure uses the historical focused labels, colours and line types.
+
+DuckDB is opened read-only and remains authoritative. Missing, duplicate,
+incomplete or fingerprint-invalid evidence aborts before final publication.
+Rendering uses installed packages verified against the existing `renv.lock`,
+not installation or restoration. Derived files are staged then replaced;
+unrelated user files are never removed. The manifest lists all declared paths
+relative to `results/<experiment>/`, SHA-256 hashes for every payload file (not
+its own self-referential hash), source database filename,
+experiment/configuration identity, stored
+report/matrix fingerprints, included/excluded models and runtime versions.
+Only its operational export timestamp changes on regeneration with the same
+inputs/runtime; absolute machine paths never enter scientific identity.
+
+The CD bars/grouping are benchmark-replication and descriptive evidence only:
+Daily horizons share the same series, not independent samples. POC3 reuses the
+same explicit frequency/model/horizon matrix and stateless renderer for Figure 5;
+this checkpoint does not authorise POC3 execution or ID 061 selection.
+
+The Part A configuration `poc2_m4_daily_100_paper_tables.json` includes the
+complete approved ordinary forecast pool, M4 Comb and both directional models.
+`evaluation.gift_eval_options` preserves the official scoring contract separately
+from the historical paper profile. Its full Part B counterpart,
+`poc2_m4_daily_full_paper_tables.json`, selects all 4,227 official Daily series
+with seed 1234 and an `expected_source_total` guard; neither import nor official
+planning may silently truncate an unexpected source. Both validate against v12.
+The full configuration is not executable under the acceptance authorisation
+until Part A, publication and the approved cleanup succeed.
+
+`evidence/execution-summary.json` is derived from stored process and execution
+history, counts, worker contribution and restart evidence. It records failures
+honestly; export cannot manufacture successful execution or restart evidence.
+Its hash is included with the CSV and figure payloads in the manifest.
+
+Operational sensitivity batch size defaults to
+`execution.default.batch_sizes.table_sensitivity = 25`. The optional execution
+profile field `table_sensitivity_batch_size` overrides it; the effective value
+is exposed as `coordinator.table_sensitivity_batch_size`. Maximum in-flight
+work uses the existing effective `ExecutionSettings.dask_max_in_flight` (stored
+default 23, profile-owned when overridden). Neither affects scientific identity.
+Process 06 borrows `coordinator._active_dask_client` created by `run_process`;
+that method owns closure. A helper must not create a second cluster and must
+route sensitivity to eligible CPU workers only.
+
+The Process 06 handoff is `run_table_evaluation(coordinator, experiment_id,
+rows, attempts, workers, settings)` from `p06_01_table_flow`. That owner commits
+all supplied durable tasks through `_commit_task`. Process validation delegates
+to `TableStorage(connection).validate(experiment_id)`, and `status`/`results`
+expose `TableStorage(connection).summary(experiment_id)` under `paper_tables`.
+The helper/schema owners must complete those interfaces before real execution;
+selected diagnostic retrieval is not the ordinary deployable `get_forecast`
+selector contract. No new public command is required for the summary/report.
+
 ## Version 9 adds the common forecast contract and M4 Comb
 
 `config/experiments/poc2_m4_daily_100_forecast_contract_m4_comb.json` preserves

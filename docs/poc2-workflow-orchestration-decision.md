@@ -122,6 +122,36 @@ framework, storage authority, worker policy or safety guarantee requires an
 explicit researcher-approved amendment before implementation. This standard
 continues beyond POC2 until superseded by such an amendment.
 
+## IDs 038/041 implementation candidate: Process 06
+
+The approved [table-reproduction increment](poc2-id038-041-table-reproduction.md)
+uses the existing gate compute flow; it is not another experiment runner.
+Its local checkpoint is recorded in the
+[implementation evidence](poc2-id038-041-implementation-evidence.md).
+
+```text
+Process 05 stored means + canonical context/actual + stored directions
+                             |
+          Process 06 coordinator reads one cohort / verified worker cache
+                             |
+            Prefect gate flow → bounded CPU Dask model/lambda batches
+                             |
+               one single-threaded R paper-profile calculation
+                             |
+       coordinator validates and commits aggregate responses as they finish
+                             |
+         complete-surface selection → selected-only means + SMYL Oracle
+                             |
+      one completion transaction: diagnostics, horizon results, tables/ranks
+```
+
+The ordinary cleaned-origin directional evaluations remain separate and retain
+their accepted definition. The paper profile uses the historical raw context
+origin for all participating models. Restart reuses fingerprint-verified
+aggregates; no worker writes DuckDB and no sensitivity task requests a GPU.
+Distributed two-machine contribution and scientific reproduction are not yet
+accepted by this local checkpoint.
+
 ## Why this approach
 
 The reviewed baseline is b4da3fc. The
@@ -390,3 +420,24 @@ the approved execution policy and scientific behaviour, validate it through the
 capability tests above, and allow temporary AutoARIMA adapter compatibility.
 If the first integration requires a material architecture change or weakens a
 safeguard, report it for a decision rather than silently changing this scope.
+
+## Read-only presentation branch: IDs 058/062
+
+The single researcher entry point also exposes `export --database PATH
+[--output PATH]`. This is a presentation branch after completed Process 06, not
+another workflow or scheduler:
+
+```text
+00_main.py export
+  → TableStorage: read-only completed-result/configuration validation
+  → ResultExport: stored table/profile CSVs and explicit renderer inputs
+  → stateless R renderer: locked scmamp CD + horizon PDF/PNG
+  → derived results directory + hashed manifest
+```
+
+No model, sensitivity, evaluation, Prefect compute or database-write action is
+invoked by export. DuckDB remains the sole scientific record. Configured model
+sets, dependent-horizon descriptive interpretation and the file contract are
+owned by the [central reporting contract](experiment-configuration.md#selective-figure-2-and-read-only-export-ids-058062).
+This checkpoint is local implementation evidence only; the consolidated
+two-machine 100-series acceptance still requires separate authorisation.

@@ -82,6 +82,8 @@ class ExecutionProfile:
     dask_memory_poll_interval_seconds: float | None = None
     dask_memory_breach_grace_seconds: float | None = None
     dask_swap_growth_limit_gib: float | None = None
+    # Execution global: optional profile override of the stored sensitivity batch.
+    table_sensitivity_batch_size: int | None = None
     machine_environment: MachineEnvironment | None = field(
         default=None, repr=False, compare=False
     )
@@ -261,6 +263,12 @@ def resolve_execution_profile(
         raise ValueError("ShapeFM requires exactly one database writer")
     if profile.profile_version < 1:
         raise ValueError("profile_version must be positive")
+    if profile.table_sensitivity_batch_size is not None and (
+        isinstance(profile.table_sensitivity_batch_size, bool)
+        or not isinstance(profile.table_sensitivity_batch_size, int)
+        or profile.table_sensitivity_batch_size < 1
+    ):
+        raise ValueError("table_sensitivity_batch_size must be a positive integer")
     if profile.required_accelerator in {"mps", "cuda"} and profile.chronos_processes != 1:
         raise ValueError("MPS and CUDA profiles permit exactly one Chronos process")
     if profile.system_memory_min_available_gib < 0 or profile.accelerator_memory_min_available_gib < 0:

@@ -161,6 +161,15 @@ def expected_task_counts(
     """
     if instance_count < 0:
         raise ValueError("instance count cannot be negative")
+    if workflow.get("table_reproduction"):
+        ordinary = sum(not model.startswith("directional_") for model in workflow["models"])
+        candidates = ordinary + (workflow["combination"]["method"] != "none")
+        variants = len(workflow["cleaning"]) * len(workflow["transformations"])
+        return {2: instance_count * len(workflow["cleaning"]),
+                3: instance_count * variants,
+                4: 30 + instance_count * (14 + variants * ordinary),
+                5: instance_count * variants * candidates,
+                6: 29 + variants * candidates + 2}
     if set(workflow["models"]) == {"directional_dtw"}:
         horizons = workflow["models"]["directional_dtw"]["labels"]["horizons"]
         return {
@@ -366,6 +375,8 @@ class ExperimentCoordinator:
         )
         self._hardware_cache: dict[str, dict[str, Any]] = {}
         self._active_machine_environment = None
+        self._active_dask_client = None
+        self.table_sensitivity_batch_size = self.configuration.execution["batch_sizes"].get("table_sensitivity")
 
     def close(self) -> None:
         """Close the coordinator's writable DuckDB connection."""
@@ -531,6 +542,9 @@ class ExperimentCoordinator:
         self._validate_official_configuration(availability)
         available_instances = int(availability["available_instances"])
         limit = self.configuration.series_count
+        expected_total = self.configuration.resolved["data"]["selection"].get("expected_source_total")
+        if expected_total is not None and available_instances != expected_total:
+            raise ValueError(f"full Daily scope requires {expected_total} official instances, found {available_instances}")
         if limit > available_instances:
             raise ValueError(
                 f"configured series count {limit} exceeds {available_instances} available M4 Daily instances"
@@ -600,30 +614,33 @@ class ExperimentCoordinator:
             )
         if dry_run:
             task_counts = expected_task_counts(len(instances), self.config)
-            directional = self.configuration.version in {10, 11}
-            directional_models = 2 if self.configuration.version == 11 else 1
+            directional = self.configuration.version in {10, 11, 12}
+            directional_models = 2 if self.configuration.version >= 11 else 1
             return {
                 "scope": requested_scope,
                 "mode": "dry-run",
                 "selection": self.configuration.resolved["data"]["selection"],
                 "series_count": len(set(series_ids)),
                 "forecast_instances": len(instances),
-                "candidate_forecast_rows": 0 if directional else task_counts[5],
+                "candidate_forecast_rows": (task_counts[5] if self.configuration.version == 12
+                                            else 0 if directional else task_counts[5]),
                 "directional_calibration_identities": 1 if directional else 0,
                 "mantis_representation_identities": (
-                    1 if self.configuration.version == 11 else 0
+                    1 if self.configuration.version >= 11 else 0
                 ),
                 "classifier_horizon_identities": (
-                    14 if self.configuration.version == 11 else 0
+                    14 if self.configuration.version >= 11 else 0
                 ),
                 "directional_prediction_identities": (
                     len(instances) * 14 * directional_models if directional else 0
                 ),
-                "process_05_no_work_identities": 1 if directional else 0,
+                "process_05_no_work_identities": 1 if self.configuration.version in {10, 11} else 0,
+                "paper_table_identities": 1 if self.configuration.version == 12 else 0,
                 "directional_evaluation_identities": (
                     14 * directional_models if directional else 0
                 ),
-                "official_evaluation_rows": 0 if directional else task_counts[6],
+                "official_evaluation_rows": (task_counts[6] - 29 if self.configuration.version == 12
+                                             else 0 if directional else task_counts[6]),
                 "benchmark_configuration": official["configuration_name"],
                 "task_counts": {
                     str(process): count
@@ -771,7 +788,7 @@ class ExperimentCoordinator:
                                 experiment_id, 3, instance_id, variant_id, None
                             )
                         )
-                        if self.configuration.version in {10, 11}:
+                        if self.configuration.version in {10, 11, 12}:
                             for horizon in range(1, 15):
                                 task_rows.append(
                                     self._task_row(
@@ -781,13 +798,16 @@ class ExperimentCoordinator:
                                         variant_id,
                                         (
                                             f"directional_dtw:predict:h{horizon:02d}"
-                                            if self.configuration.version == 11
+                                            if self.configuration.version >= 11
                                             else f"directional_dtw:h{horizon:02d}"
                                         ),
                                     )
                                 )
-                            continue
+                            if self.configuration.version != 12:
+                                continue
                         for model in self.config["models"]:
+                            if model.startswith("directional_"):
+                                continue
                             task_rows.append(
                                 self._task_row(
                                     experiment_id,
@@ -801,6 +821,8 @@ class ExperimentCoordinator:
                             *self.config["models"].keys(),
                             self.config["combination"]["method"],
                         ):
+                            if candidate.startswith("directional_") or candidate == "none":
+                                continue
                             task_rows.append(
                                 self._task_row(
                                     experiment_id,
@@ -825,7 +847,7 @@ class ExperimentCoordinator:
         self.connection.execute("BEGIN TRANSACTION")
         try:
             evaluation_tasks = []
-            if self.configuration.version in {10, 11}:
+            if self.configuration.version in {10, 11, 12}:
                 variant_id = variants[0][0]
                 evaluation_tasks.extend(
                     [
@@ -836,7 +858,7 @@ class ExperimentCoordinator:
                             variant_id,
                             (
                                 "directional_dtw:train"
-                                if self.configuration.version == 11
+                                if self.configuration.version >= 11
                                 else "directional_dtw:calibration"
                             ),
                         ),
@@ -863,7 +885,7 @@ class ExperimentCoordinator:
                     )
                     for horizon in range(1, 15)
                 )
-                if self.configuration.version == 11:
+                if self.configuration.version >= 11:
                     evaluation_tasks.append(
                         self._task_row(
                             experiment_id,
@@ -903,17 +925,29 @@ class ExperimentCoordinator:
                         )
                         for horizon in range(1, 15)
                     )
+            if self.configuration.version == 12:
+                evaluation_tasks = [row for row in evaluation_tasks if row[2] != 5]
+                evaluation_tasks.append(self._task_row(
+                    experiment_id, 6, None, variants[0][0], "paper_tables"
+                ))
             for variant_id, _, _ in variants:
                 if self.configuration.version in {10, 11}:
                     continue
                 for candidate in (
                     *self.config["models"].keys(), self.config["combination"]["method"]
                 ):
+                    if candidate.startswith("directional_") or candidate == "none":
+                        continue
                     evaluation_tasks.append(
                         self._task_row(
                             experiment_id, 6, None, variant_id, candidate
                         )
                     )
+            if self.configuration.version == 12:
+                evaluation_tasks.extend(
+                    self._task_row(experiment_id, 6, None, "official_reference", candidate)
+                    for candidate in ("m4_smyl", "m4_fforma")
+                )
             self.connection.executemany(
                 """INSERT INTO experiment_tasks
                 (task_id, experiment_id, stage, forecast_instance_id,
@@ -1407,7 +1441,7 @@ class ExperimentCoordinator:
         Outputs: Ordered incomplete task IDs and instance/variant/candidate dimensions
         read from DuckDB without changing task state.
         """
-        if process == 4 and self.configuration.version == 11:
+        if process == 4 and self.configuration.version >= 11:
             self._reopen_missing_fitted_model_tasks(experiment_id)
         return self.connection.execute(
             """SELECT task_id, forecast_instance_id, variant_id, candidate
@@ -1491,6 +1525,10 @@ class ExperimentCoordinator:
             profile, overrides = execution
             configured_settings = ExecutionSettings()
         self._active_machine_environment = profile.machine_environment
+        self.table_sensitivity_batch_size = (
+            profile.table_sensitivity_batch_size
+            or configured_batches.get("table_sensitivity")
+        )
         settings = execution_settings or configured_settings
         if (
             process == 4
@@ -1513,7 +1551,7 @@ class ExperimentCoordinator:
         hardware: dict[str, Any] = coordinator_hardware
         resolved_device = profile.required_accelerator or device
         dask_client = None
-        if settings.mode == "dask" and process != 6:
+        if settings.mode == "dask" and (process != 6 or self.configuration.version == 12):
             from distributed import Client
 
             from .shared_distributed_execution import (
@@ -1536,14 +1574,15 @@ class ExperimentCoordinator:
                                      timeout=f"{settings.dask_timeout_seconds}s")
             expected_gpu_name = None
             try:
-                if self.configuration.version in {10, 11}:
+                if self.configuration.version in {10, 11, 12}:
                     topology = profile.distributed_topology(
                         self.configuration.version == 11
+                        or self.configuration.version == 12 and settings.dask_expected_gpu_workers > 0
                     )
                     paths = self.configuration.execution_paths
                     lock_path = self.root / paths["classifiers_lock"]
                     gpu_workers = 0
-                    if self.configuration.version == 11:
+                    if self.configuration.version >= 11:
                         gpu_workers = int(
                             settings.dask_expected_gpu_workers
                             if settings is not None
@@ -1552,7 +1591,7 @@ class ExperimentCoordinator:
                         )
                     mantis_lock_path = (
                         self.root / paths["mantis_lock"]
-                        if self.configuration.version == 11
+                        if self.configuration.version >= 11
                         else None
                     )
                     cluster = validate_directional_cluster(
@@ -1596,8 +1635,30 @@ class ExperimentCoordinator:
                         ),
                     )
                     resolved_device = (
-                        "cuda" if self.configuration.version == 11 else "cpu"
+                        "cuda" if self.configuration.version == 11 or gpu_workers else "cpu"
                     )
+                    if self.configuration.version == 12 and process == 4 and gpu_workers:
+                        # Mixed work must pass both existing provider boundaries.
+                        chronos_cluster = validate_cluster(
+                            dask_client, expected_workers=settings.dask_expected_workers,
+                            timeout=settings.dask_timeout_seconds,
+                            expected_commit=subprocess.run(
+                                ["git", "rev-parse", "HEAD"], cwd=self.root,
+                                check=True, capture_output=True, text=True,
+                            ).stdout.strip(),
+                            expected_configuration_hash=self.configuration.scientific_hash,
+                            expected_gift_eval_revision=self.configuration.resolved["evaluation"]["gift_eval"]["code_revision"],
+                            expected_chronos_revision=self.config["models"]["chronos_2"]["revision"],
+                            expected_chronos_version=self.config["models"]["chronos_2"]["chronos_forecasting"],
+                            chronos_repository=self.config["models"]["chronos_2"]["repository"],
+                            chronos_environment=paths["chronos_environment"],
+                            gift_eval_source_directory=self.configuration.resolved["evaluation"]["gift_eval"]["source_directory"],
+                            require_gpu=True,
+                            expected_gpu_name=profile.expected_accelerator_name,
+                            expected_gpu_workers=gpu_workers,
+                            expected_manifest=repository_source_manifest(),
+                        )
+                        cluster = {"directional": cluster, "chronos": chronos_cluster}
                 elif ("chronos_2" not in self.config["models"] or
                         process == 4 and self.configuration.seasonal_period_tuning is not None):
                     topology = profile.distributed_topology(False)
@@ -1674,6 +1735,8 @@ class ExperimentCoordinator:
         ).fetchone()
         invocation_overrides = {
             **overrides,
+            **({"table_sensitivity_batch_size": self.table_sensitivity_batch_size}
+               if self.configuration.version == 12 else {}),
             "selection": {
                 **self.configuration.resolved["data"]["selection"],
                 "series_count_actual": int(actual_series),
@@ -1694,7 +1757,9 @@ class ExperimentCoordinator:
                     )
                 ),
                 5: int(configured_batches.get("combine", 1)),
-                6: int(configured_batches.get("gift_eval", 1)),
+                6: int(self.table_sensitivity_batch_size
+                       if self.configuration.version == 12
+                       else configured_batches.get("gift_eval", 1)),
             }[process],
             profile,
             invocation_overrides,
@@ -1702,6 +1767,8 @@ class ExperimentCoordinator:
         )
         rows = self._pending(experiment_id, process)
         attempts = self._start_tasks(rows, invocation)
+        # Borrowed client: Process 06 reuses this connection; run_process owns closure.
+        self._active_dask_client = dask_client
         started = time.monotonic()
         failures = []
         execution_error: BaseException | None = None
@@ -1792,6 +1859,7 @@ class ExperimentCoordinator:
         )
         if dask_client is not None:
             dask_client.close()
+        self._active_dask_client = None
         if execution_error is not None and not failures:
             # A post-commit orchestration/acknowledgement failure must remain
             # visible even when every scientific row was durably accepted.
@@ -1983,7 +2051,7 @@ class ExperimentCoordinator:
         Outputs: None; computes transformed vectors locally or on Dask and atomically
         persists values, parameters, lineage, fingerprints, and task completions.
         """
-        if self.configuration.version in {10, 11}:
+        if self.configuration.version in {10, 11, 12}:
             if not rows:
                 return
             self._run_03_directional_preparation(
@@ -1995,7 +2063,8 @@ class ExperimentCoordinator:
                 settings,
                 profile,
             )
-            return
+            if self.configuration.version != 12:
+                return
         prepared = []
         metadata = []
         for task_id, instance_id, variant_id, _ in rows:
@@ -2305,13 +2374,18 @@ class ExperimentCoordinator:
                     )
                     self._insert_or_verify("directional_actual_labels", label_record)
 
-                self._commit_task(
-                    task_id,
-                    attempts[task_id],
-                    response["runtime_seconds"] / len(batch),
-                    insert,
-                    response.get("worker"),
-                )
+                if self.configuration.version == 12:
+                    # The shared task completes only after the full-history point
+                    # transformation below has also been persisted successfully.
+                    insert()
+                else:
+                    self._commit_task(
+                        task_id,
+                        attempts[task_id],
+                        response["runtime_seconds"] / len(batch),
+                        insert,
+                        response.get("worker"),
+                    )
         if errors:
             raise RuntimeError("; ".join(errors))
 
@@ -2334,7 +2408,7 @@ class ExperimentCoordinator:
         Chronos OOM batches, inverse-transforms outputs, and transactionally persists
         original-scale forecast arrays, provenance, hashes, and task state.
         """
-        if self.configuration.version in {10, 11}:
+        if self.configuration.version in {10, 11, 12}:
             if not rows:
                 return
             dtw_rows = [
@@ -2344,7 +2418,7 @@ class ExperimentCoordinator:
                 self._run_04_directional_dtw(
                     experiment_id, dtw_rows, attempts, profile, dask_client, settings
                 )
-            if self.configuration.version == 11:
+            if self.configuration.version >= 11:
                 mantis_rows = [
                     row for row in rows
                     if row[3].startswith("directional_mantis_rf:")
@@ -2391,7 +2465,11 @@ class ExperimentCoordinator:
                         dask_client=dask_client,
                         settings=settings,
                     )
-            return
+            if self.configuration.version != 12:
+                return
+            rows = [row for row in rows if not row[3].startswith("directional_")]
+            if not rows:
+                return
         if self.configuration.seasonal_period_tuning is not None:
             from .p04_04_seasonal_period_tuning import (
                 run_distributed_tuned_forecasts,
@@ -2565,7 +2643,7 @@ class ExperimentCoordinator:
         paths = self.configuration.execution_paths
         worker_key = (
             "directional_dtw_training_worker"
-            if self.configuration.version == 11
+            if self.configuration.version >= 11
             else "directional_dtw_worker"
         )
         worker_path = self.root / paths[worker_key]
@@ -2659,7 +2737,7 @@ class ExperimentCoordinator:
         paths = self.configuration.execution_paths
         worker_script = (
             paths["directional_dtw_prediction_worker"]
-            if self.configuration.version == 11 and operation == "prediction"
+            if self.configuration.version >= 11 and operation == "prediction"
             else paths.get("directional_dtw_training_worker", paths.get("directional_dtw_worker"))
         )
         outcomes = run_gate_compute_flow(
@@ -2672,12 +2750,12 @@ class ExperimentCoordinator:
                 "reference_fingerprint": reference_fingerprint,
                 "model_storage": (
                     self.configuration.model_storage
-                    if self.configuration.version == 11
+                    if self.configuration.version >= 11
                     else None
                 ),
                 "frequency": (
                     self.configuration.resolved["data"]["benchmark"]["frequency"]
-                    if self.configuration.version == 11
+                    if self.configuration.version >= 11
                     else None
                 ),
                 "timeout": float(
@@ -2792,7 +2870,7 @@ class ExperimentCoordinator:
         }
         training_candidate = (
             "directional_dtw:train"
-            if self.configuration.version == 11
+            if self.configuration.version >= 11
             else "directional_dtw:calibration"
         )
         calibration_row = next(
@@ -2804,7 +2882,7 @@ class ExperimentCoordinator:
             width_proportions.setdefault(int(proportion * 64), proportion)
         if set(width_proportions) != set(range(64)):
             raise RuntimeError("configured candidates do not cover all 64 effective widths")
-        if calibration_row is not None and self.configuration.version == 11:
+        if calibration_row is not None and self.configuration.version >= 11:
             stored_widths = tuple(
                 (int(row[0]), int(row[1]))
                 for row in self.connection.execute(
@@ -2988,7 +3066,7 @@ class ExperimentCoordinator:
                     self._insert_or_verify("directional_selected_widths", record)
 
             artifact_evidence = None
-            if self.configuration.version == 11:
+            if self.configuration.version >= 11:
                 artifact_evidence = self._publish_directional_dtw_model(
                     tuple(record["effective_width"] for record in selected_records),
                     reference_fingerprint,
@@ -4104,6 +4182,18 @@ class ExperimentCoordinator:
         input fingerprints, provenance, and task completion.
         """
         configuration_version = getattr(self.configuration, "version", 0)
+        if configuration_version == 12:
+            from .p06_01_table_flow import run_table_evaluation
+
+            run_table_evaluation(coordinator=self, experiment_id=experiment_id,
+                                 rows=[row for row in rows if row[3] == "paper_tables"
+                                       or row[3].startswith("directional_")],
+                                 attempts=attempts, workers=workers,
+                                 settings=settings)
+            rows = [row for row in rows if row[3] != "paper_tables"
+                    and not row[3].startswith("directional_")]
+            if not rows:
+                return
         if configuration_version == 11:
             from .shared_labels import directional_accuracy
 
@@ -4273,14 +4363,30 @@ class ExperimentCoordinator:
         ).fetchone()[0]
         prepared = []
         for task_id, _, variant_id, candidate in rows:
-            records = self.connection.execute(
-                """SELECT f.forecast_instance_id, i.official_position, f.mean,
-                          f.quantiles, f.content_hash, f.forecast_capability
-                   FROM forecasts f JOIN forecast_instances i USING (forecast_instance_id)
-                WHERE f.experiment_id=? AND f.variant_id=? AND f.candidate=?
-                ORDER BY i.official_position""",
-                [experiment_id, variant_id, candidate],
-            ).fetchall()
+            if candidate in {"m4_smyl", "m4_fforma"}:
+                records = self.connection.execute(
+                    """SELECT i.forecast_instance_id, i.official_position, r.mean,
+                              NULL, r.content_hash, r.forecast_capability
+                       FROM forecast_instances i
+                       JOIN experiments x ON x.benchmark_configuration_id=i.benchmark_configuration_id
+                       JOIN reference_forecasts r ON r.dataset_id=i.dataset_id
+                         AND r.series_id=i.series_id AND r.forecast_id=?
+                       WHERE x.experiment_id=? AND EXISTS (
+                           SELECT 1 FROM experiment_tasks t
+                           WHERE t.experiment_id=x.experiment_id AND t.stage=2
+                             AND t.forecast_instance_id=i.forecast_instance_id
+                       ) ORDER BY i.official_position""",
+                    [candidate, experiment_id],
+                ).fetchall()
+            else:
+                records = self.connection.execute(
+                    """SELECT f.forecast_instance_id, i.official_position, f.mean,
+                              f.quantiles, f.content_hash, f.forecast_capability
+                       FROM forecasts f JOIN forecast_instances i USING (forecast_instance_id)
+                    WHERE f.experiment_id=? AND f.variant_id=? AND f.candidate=?
+                    ORDER BY i.official_position""",
+                    [experiment_id, variant_id, candidate],
+                ).fetchall()
             instance_ids = [record[0] for record in records]
             positions = [int(record[1]) for record in records]
             capabilities = {record[5] for record in records}
@@ -4881,8 +4987,14 @@ def experiment_status(
                       CAST(completed_at AS VARCHAR), summary, last_error
                FROM experiment_processes ORDER BY process_id"""
         ).fetchall()
+        table_summary = None
+        if configuration[0] == 12:
+            from .p06_02_table_storage import TableStorage
+
+            table_summary = TableStorage(connection).summary(experiment_id)
         return {
             "experiment_id": experiment_id,
+            **({"paper_tables": table_summary} if configuration[0] == 12 else {}),
             "name": experiment[0],
             "scope": experiment[1],
             "status": experiment[2],
@@ -4969,6 +5081,14 @@ def configuration_status(database_path: Path) -> dict[str, Any]:
         }
     finally:
         connection.close()
+
+
+def table_results(database_path: Path, experiment_id: str) -> dict[str, Any]:
+    """Read paper diagnostics through their storage owner without opening a writer."""
+    from .p06_02_table_storage import TableStorage
+
+    with duckdb.connect(str(Path(database_path).resolve()), read_only=True) as connection:
+        return TableStorage(connection).summary(experiment_id)
 
 
 def official_results(

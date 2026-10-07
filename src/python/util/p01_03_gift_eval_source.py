@@ -97,6 +97,12 @@ class ConfiguredGiftEvalSource:
     def records(self) -> Iterator[SourceSeries]:
         """Stream the configured bounded records in authoritative source order."""
         settings = self.settings
+        expected = self.configuration.resolved["data"]["selection"].get("expected_source_total")
+        if expected is not None:
+            with pa.memory_map(str(self.path / SOURCE_ARROW_NAME), "r") as source:
+                total = sum(batch.num_rows for batch in ipc.open_stream(source))
+            if total != expected:
+                raise ImportValidationError(f"full Daily source requires {expected} series, found {total}")
         return iter_source_series(
             self.path,
             settings["benchmark"]["frequency"],
