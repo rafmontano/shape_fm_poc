@@ -45,6 +45,13 @@ prediction used a historical holdout. Activating either definition would embed
 different information at training and prediction time. ID 014 does not choose a
 replacement strategy and keeps futures and labels outside the base provider.
 
+ID 033 subsequently implemented and accepted the underlying historical
+calculations as a dormant, model-neutral R utility. It preserves the formulas
+for controlled research without activating these eight fields, fitting
+AutoARIMA or ETS inside the feature provider, or resolving the
+training/prediction mismatch. See the
+[ID 033 decision](poc2-id033-directional-forecast-metrics.md).
+
 ## Connected optional workflow
 
 The sole researcher entry point exposes `prepare-features`. It is not invoked by

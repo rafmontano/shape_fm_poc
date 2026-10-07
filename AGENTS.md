@@ -73,6 +73,17 @@ and restart are accepted under the closure evidence above. This acceptance
 does not claim comparative scientific accuracy; ID 021 remains closed and its
 mathematics were not changed.
 
+POC2 ID 033 directional forecast metrics were implemented, accepted and closed
+as a dormant research capability on 7 October 2026. Follow
+`docs/poc2-id033-directional-forecast-metrics.md` and
+`docs/amp-poc2-id033-directional-forecast-metrics-instructions.md`. Import only
+the five historical metric calculations and one model-neutral aggregator into
+`src/r/util/directional_forecast_metrics.R`. Reuse already stored forecast
+means; do not refit AutoARIMA or ETS, duplicate time-series conversion, activate
+the eight disabled directional features, or change the six-process pipeline.
+The historical PT calculation remains explicitly legacy rather than being
+presented as the canonical Pesaran-Timmermann test.
+
 The machine-environment and coordinator-selection architecture was approved on
 6 October 2026. Follow `docs/machine-environment.md` and
 `docs/amp-poc2-machine-environment-instructions.md`. A tracked machine inventory
