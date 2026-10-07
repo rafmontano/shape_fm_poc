@@ -59,6 +59,19 @@ accuracy by frequency, model and horizon. This common result supports terminal
 Table 1/Table 2 cells, Figure 2 horizon profiles and descriptive ranks, and POC3
 Figure 5 profiles/distributions without separate evaluation calculations.
 
+Selected diagnostic recalculation retains vectors only. The first stored surface
+owns selection and fingerprints; identities, membership and directional counts
+must match exactly. Aggregate-only cross-host rounding is checked against the
+measured 1e-13 absolute / 5e-15 relative retention tolerance, never used to replace
+the authoritative values or relax other scientific checks.
+
+Chronos preflight and native loading resolve one complete pinned local snapshot.
+Execution is offline, and each GPU worker owns a persistent model process with
+continuous lifetime-scoped resource monitoring across batches. Per-call admission
+does not destroy that ownership; errors, unsafe state, incompatible configuration
+or worker shutdown do. This remains the existing native-provider boundary and
+does not introduce a scheduler or change forecast mathematics.
+
 The local IDs 038/041 implementation candidate now exposes that boundary through
 `TableEvaluation`, coordinator-only `TableStorage` and `TableReports`. One R
 paper-profile kernel serves sequential and CPU-Dask batches. The additive v12

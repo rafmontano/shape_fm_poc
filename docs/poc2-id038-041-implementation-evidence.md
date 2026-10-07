@@ -1,5 +1,68 @@
 # IDs 038/041 integrated implementation checkpoint
 
+## Authorized recovery correction, 8 October 2026
+
+The reboot cleared the observed Chronos native preflight crash: the direct
+fault-handled probe and unchanged 24-worker cluster preflight passed, and the
+fresh reboot experiment completed Processes 01–05, including RTX 5090 forecasts.
+This establishes recovery, not the underlying cause of the earlier segmentation
+fault. No dependency, driver, lockfile, scientific formula or model setting changed.
+
+That fresh experiment failed in selected diagnostic retention. Isolated native
+R recalculations on Mac and Ubuntu matched every selected identity, lambda,
+experiment/input/source/grid fingerprint, membership and discrete count exactly.
+Mac-stored Chronos–Mantis MASE was 19.88743462958401; Ubuntu recalculated
+19.887434629583925 (absolute difference 8.526512829121202e-14, relative
+4.28738697973513e-15). Oracle MASE/OWA also exhibited machine-level rounding;
+directional counts and sMAPE were unchanged. The measured discrepancy is confined
+to floating-point aggregates, not scientific consistency or selection.
+
+`TableEvaluation.validate_retained` now verifies all nonmetric identity and count
+fields exactly, checks DA exactly and permits only `math.isclose` with absolute
+tolerance **1e-13** and relative tolerance **5e-15** for sMAPE, MASE and OWA.
+These bounds narrowly cover the measured discrepancy and remain below the
+authorised 1e-12 ceiling. The first stored surface remains authoritative: its
+values, candidate, deterministic selection and fingerprints are never replaced.
+The selected recalculation only supplies retained vectors linked to that original
+candidate. Material metric differences and all identity/count differences fail.
+
+Copy-only recovery also found two of 300 vectors whose integral JSON values
+were fingerprinted as integers but stored as DuckDB `DOUBLE[]`. Reconstructing
+those integer representations reproduced the mismatch exactly. Retained vectors
+are now normalized to Python floats before storage and hashing, preserving their
+numerical values and original candidate lineage. No checksum tolerance is used.
+Process 06 recovery passed against a second disposable copy; the original failed
+database and evidence were not modified.
+
+Chronos previously restarted on every batch because monitor object identity
+triggered replacement and successful-batch cleanup always closed the child.
+The corrected worker owns one persistent model/monitor pair across batches and
+idle intervals. Admission is refreshed per call; safety extrema and swap baseline
+remain lifetime-scoped. Configuration changes, errors, unsafe state, worker
+replacement and shutdown release that ownership. A worker cleanup plugin and
+process-exit hook close the child and monitor without changing scheduling.
+
+Preflight and native loading share the standard-library
+`shared_chronos_checkpoint.py` resolver. It requires the exact pinned snapshot,
+readable configuration and complete local safetensors data. The native provider
+loads that local path with `local_files_only=True`, `HF_HUB_OFFLINE=1` and
+`TRANSFORMERS_OFFLINE=1`; no repository-name download fallback is permitted.
+The small stateless resolver uses the documented bounded functional exception.
+
+Original failed databases and evidence are preserved unchanged. Recovery checks
+and field-level comparison records are derived files under `results/`, never
+committed scientific records. Fresh acceptance and restart remain required.
+
+Local validation passed 225 combined focused/regression tests, followed by the
+updated 10-test Process 06 suite (including integral JSON storage/retrieval).
+The copy recovery preserved all 1,057 surface identities/fingerprints and
+produced 17 official evaluations. Locked R metric/worker/adjustment/rendering
+checks, 11 DTW numerical tests, Python parsing, documentation links and whitespace
+checks passed. Dependencies/locks are unchanged. Controlled Chronos tests prove
+two batches reuse a real protocol child with load count one, preserve monitoring
+and close on unsafe/configuration/shutdown boundaries; real GPU validation follows
+source synchronization and is not yet claimed by these local tests.
+
 ## Current Part A / Part B implementation status
 
 The researcher subsequently authorised the complete Part A/Part B sequence.

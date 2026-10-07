@@ -77,6 +77,59 @@ class PaperTableTests(unittest.TestCase):
         boundary.start()
         self.addCleanup(boundary.stop)
 
+    def test_retained_comparison_preserves_surface_and_rejects_material_changes(self):
+        """Only small aggregate rounding may differ; identities and counts never may."""
+        evaluation = TableEvaluation("experiment/test", input_fixture(), SCIENCE)
+        job = {"model": "chronos_2", "lambda_up": 1.015, "lambda_down": .99,
+               "retain_means": True}
+        result = {**job, "evaluation_count": 2, "correct_counts": [1] * 14,
+                  "metrics": {"smape": 9.381961462125233, "mase": 19.88743462958401,
+                              "owa": .9790508509791165, "da": .5}}
+        stored = evaluation.record(result, job)
+        original = deepcopy(stored)
+        evaluation.validate_retained(result, job, stored)
+        rounded = deepcopy(result)
+        rounded["metrics"]["mase"] = 19.887434629583925
+        rounded["metrics"]["owa"] += 2.220446049250313e-16
+        evaluation.validate_retained(rounded, job, stored)
+        self.assertEqual(stored, original)
+        for key, value in (("candidate_id", "wrong"), ("input_fingerprint", "other"),
+                           ("experiment_id", "other"), ("lambda_up", 1.02),
+                           ("evaluation_count", 3), ("correct_counts", [0] * 14)):
+            wrong = deepcopy(stored)
+            wrong[key] = value
+            with self.subTest(key=key), self.assertRaises(RuntimeError):
+                evaluation.validate_retained(result, job, wrong)
+        wrong = deepcopy(result)
+        wrong["lambda_down"] = .98
+        with self.assertRaises(RuntimeError):
+            evaluation.validate_retained(wrong, job, stored)
+        for metric in ("smape", "mase", "owa"):
+            wrong = deepcopy(result)
+            wrong["metrics"][metric] += 1e-10
+            with self.subTest(metric=metric), self.assertRaisesRegex(RuntimeError, "tolerance"):
+                evaluation.validate_retained(wrong, job, stored)
+
+    def test_retained_integer_json_values_fingerprint_as_duckdb_doubles(self):
+        """An integral R JSON value among fractional means survives exact storage reuse."""
+        inputs = input_fixture()
+        record = {"experiment_id": "fixture", "frequency": "Daily", "model": "m4_smyl",
+                  "candidate_id": "selected", "lambda_up": 1.015, "lambda_down": .99,
+                  "input_fingerprint": "input"}
+        vector = [2030.245625, 2033] * 7
+        retained = [{"series_id": s["series_id"], "mean": vector} for s in inputs["series"]]
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "fixture.duckdb"
+            migrate_database(database)
+            with duckdb.connect(str(database)) as c:
+                storage = TableStorage(c)
+                storage.save_selected(record, "m4_smyl_mantis", retained, inputs["series"])
+                first = storage.diagnostic_mean("fixture", "m4_smyl_mantis", "instance/D1")
+                self.assertEqual(first["mean"], [float(v) for v in vector])
+                self.assertTrue(all(type(v) is float for v in first["mean"]))
+                self.assertEqual(first["metadata"]["candidate_id"], "selected")
+                self.assertEqual(first, storage.diagnostic_mean("fixture", "m4_smyl_mantis", "instance/D1"))
+
     def test_grid_batches_and_dependency_invalidation(self):
         """Exact surface identities are unique; changes invalidate only dependent science."""
         inputs = input_fixture()

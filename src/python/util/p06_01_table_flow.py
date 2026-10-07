@@ -159,6 +159,25 @@ class TableEvaluation:
             batches.extend(group[i:i + size] for i in range(0, len(group), size))
         return batches
 
+    def validate_retained(self, result: dict, job: dict, stored: dict) -> None:
+        """Validate vector-only recalculation against the authoritative first surface.
+
+        Identity, membership, parameters and counts remain exact. Measured Mac/R
+        versus Ubuntu/R reductions differed by at most 8.53e-14 absolute and
+        4.29e-15 relative; only aggregate floats allow 1e-13/5e-15 respectively.
+        Never replace the stored values, selection or fingerprint with this record.
+        """
+        current = self.record(result, job)
+        exact = set(stored) - {"metrics", "result_fingerprint"}
+        if set(current) != set(stored) or any(current[k] != stored[k] for k in exact):
+            raise RuntimeError("selected retention identity or discrete counts mismatch")
+        if current["metrics"]["da"] != stored["metrics"]["da"] or any(
+            not math.isclose(current["metrics"][k], stored["metrics"][k],
+                             abs_tol=1e-13, rel_tol=5e-15)
+            for k in ("smape", "mase", "owa")
+        ):
+            raise RuntimeError("selected retention metrics exceed numerical tolerance")
+
     def select(self, records: list[dict]) -> dict[str, dict]:
         """Select independent complete surfaces and retain seven baseline/direct identities."""
         selected = {}
@@ -258,8 +277,7 @@ def run_table_evaluation(*, coordinator, experiment_id: str, rows: list,
     for batch, response in compute(retain_jobs):
         for job, result in zip(batch, response["results"], strict=True):
             model = "m4_smyl_oracle" if job["model"] == "smyl_oracle" else job["model"] + "_mantis"
-            if evaluation.record(result, job) != selected[model]:
-                raise RuntimeError("selected recalculation disagrees with stored surface")
+            evaluation.validate_retained(result, job, selected[model])
             retained[model] = result["adjusted_means"]
 
     def finish():

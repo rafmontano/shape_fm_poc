@@ -32,7 +32,8 @@ from typing import Any
 
 import dask
 import distributed
-from distributed import Client, Future, as_completed, get_worker
+from distributed import Client, Future, WorkerPlugin, as_completed, get_worker
+from distributed.utils import sync
 
 from .shared_configuration import canonical_json, json_fingerprint
 from .p05_01_forecast_combination import combine_equal_weight, combine_m4_point
@@ -1616,16 +1617,30 @@ _chronos_worker: Any = None
 _chronos_key: tuple[str, str, str, str, int, str, str, float, float] | None = None
 # Monotonic process-local restart counter reported with forecast provenance.
 _chronos_generation = 0
+_chronos_monitor: TuningMemoryMonitor | None = None
+_chronos_monitor_key: tuple[Any, ...] | None = None
 
 
-def _close_chronos() -> None:
-    """Purpose: Dispose of the process-global Chronos bridge. Inputs: None; uses the module-owned worker, key, and lock. Outputs: None; force-terminates any child process and clears cached process identity state."""
-    global _chronos_worker, _chronos_key
+class ChronosWorkerCleanup(WorkerPlugin):
+    """Release the process-owned bridge and monitor when its Dask worker closes."""
+
+    def teardown(self, worker: Any) -> None:
+        """Use the same idempotent cleanup as process exit and terminal failure."""
+        _close_chronos()
+
+
+def _close_chronos(stop_monitor: bool = True) -> None:
+    """Close the owned child and safety monitor; OOM splitting may retain monitoring."""
+    global _chronos_worker, _chronos_key, _chronos_monitor, _chronos_monitor_key
     with _chronos_lock:
         if _chronos_worker is not None:
             _chronos_worker.close(force=True)
         _chronos_worker = None
         _chronos_key = None
+        if stop_monitor and _chronos_monitor is not None:
+            _chronos_monitor.stop()
+            _chronos_monitor = None
+            _chronos_monitor_key = None
 
 
 atexit.register(_close_chronos)
@@ -1659,9 +1674,16 @@ def _get_chronos(
         request_timeout,
     )
     with _chronos_lock:
+        try:
+            dask_worker = get_worker()
+        except ValueError:
+            dask_worker = None  # Direct/local tests still have process-exit cleanup.
+        if dask_worker is not None and "shapefm-chronos-cleanup" not in dask_worker.plugins:
+            sync(dask_worker.loop, dask_worker.plugin_add,
+                 ChronosWorkerCleanup(), name="shapefm-chronos-cleanup")
         if (_chronos_worker is None or _chronos_key != key
-                or (memory_monitor is not None
-                    and _chronos_worker.memory_monitor is not memory_monitor)):
+                or _chronos_worker.process is None
+                or _chronos_worker.process.poll() is not None):
             if _chronos_worker is not None:
                 _chronos_worker.close(force=True)
             command = [
@@ -1707,6 +1729,7 @@ def chronos_batch(
 ) -> dict[str, Any]:
     """Purpose: Forecast one homogeneous batch through the cached Chronos subprocess. Inputs: ``batch`` contains coordinator jobs with IDs, numeric contexts, and a common positive horizon; model identity, quantiles in [0,1], device/dtype and batching flags configure inference; thread count and timeouts are bounded execution controls; retry count is zero-based. Outputs: Forecasts, elapsed seconds, worker/process generation, effective batch size, inference seconds, and memory telemetry; may start/restart or close the cached subprocess on out-of-memory errors."""
     started = time.monotonic()
+    global _chronos_monitor, _chronos_monitor_key
     monitor = None
     safety_evidence: dict[str, Any] = {}
     if accelerator_safety is not None:
@@ -1717,22 +1740,38 @@ def chronos_batch(
                    if not isinstance(accelerator_safety.get(key), (int, float))
                    or accelerator_safety[key] <= 0]
         if invalid:
+            _close_chronos()
             raise ResourceSafetyInterruption(
                 "Chronos accelerator protection requires positive controls: "
                 + ", ".join(invalid)
             )
+        monitor_key = (model, revision, device, dtype, internal_cpu_threads,
+                       environment, worker_script, startup_timeout, request_timeout,
+                       tuple(sorted(accelerator_safety.items())))
+        if _chronos_monitor_key != monitor_key:
+            _close_chronos()
         try:
-            monitor = TuningMemoryMonitor(
-                minimum_available_gib=float(accelerator_safety["host_minimum_available_gib"]),
-                minimum_accelerator_available_gib=float(accelerator_safety["minimum_available_gib"]),
-                poll_interval_seconds=float(accelerator_safety["poll_interval_seconds"]),
-                breach_grace_seconds=float(accelerator_safety["breach_grace_seconds"]),
-                swap_growth_limit_gib=float(accelerator_safety["swap_growth_limit_gib"]),
-                probe=_gpu_host_probe,
-            )
+            monitor = _chronos_monitor
+            if monitor is None:
+                monitor = TuningMemoryMonitor(
+                    minimum_available_gib=float(accelerator_safety["host_minimum_available_gib"]),
+                    minimum_accelerator_available_gib=float(accelerator_safety["minimum_available_gib"]),
+                    poll_interval_seconds=float(accelerator_safety["poll_interval_seconds"]),
+                    breach_grace_seconds=float(accelerator_safety["breach_grace_seconds"]),
+                    swap_growth_limit_gib=float(accelerator_safety["swap_growth_limit_gib"]),
+                    probe=_gpu_host_probe,
+                )
+                monitor.start()
+                _chronos_monitor = monitor
+                _chronos_monitor_key = monitor_key
+            # Admission is per call; safety extrema and swap baseline remain
+            # lifetime-scoped so idle pressure cannot be erased by a new batch.
+            monitor.admission = {}
         except BaseException as error:
+            _close_chronos()
             raise ResourceSafetyInterruption(f"Chronos GPU safety probe failed closed: {error}") from error
-        monitor.start()
+    elif _chronos_monitor is not None:
+        _close_chronos()
     pending = deque([(batch, 0)])
     results: list[dict[str, Any]] = []
     subdivisions: list[int] = []
@@ -1785,7 +1824,7 @@ def chronos_batch(
                 if response.get("error_kind") == "out_of_memory":
                     _close_chronos()
                 raise RuntimeError(error)
-            _close_chronos()
+            _close_chronos(stop_monitor=False)
             midpoint = max(1, len(current) // 2)
             splits = [current[index:index + midpoint]
                       for index in range(0, len(current), midpoint)]
@@ -1793,12 +1832,10 @@ def chronos_batch(
         if monitor is not None:
             monitor.sample_once()
             monitor.raise_if_unsafe()
-            safety_evidence = monitor.evidence()
-    finally:
-        if monitor is not None:
-            # Protected models never remain resident without their monitor.
-            _close_chronos()
-            monitor.stop()
+            safety_evidence = {**monitor.evidence(), "monitor_scope": "worker_model_lifetime"}
+    except BaseException:
+        _close_chronos()
+        raise
     runtime = time.monotonic() - started
     return {
         "results": results,
@@ -1840,9 +1877,10 @@ def worker_preflight(
     """Purpose: Probe one Dask worker for cluster compatibility. Inputs: Coordinator configuration hash, pinned Chronos repository/revision, repository-relative Python environment and GIFT-Eval checkout paths, plus an optional Dask Worker object. Outputs: Serializable host/resources, Git state, Python/Dask/R/Chronos versions, checkpoint and CUDA evidence; launches Python, R, and Git subprocesses and reads the local model cache."""
     chronos_script = """
 import importlib.metadata as metadata, json, os, pathlib, sys, torch
-cache = pathlib.Path(os.environ.get('HF_HOME', pathlib.Path.home() / '.cache/huggingface')) / 'hub'
-root = cache / ('models--' + sys.argv[1].replace('/', '--'))
+sys.path.insert(0, str(pathlib.Path.cwd() / 'src/python'))
+from util.shared_chronos_checkpoint import local_chronos_snapshot
 revision = sys.argv[2]
+snapshot = local_chronos_snapshot(sys.argv[1], revision)
 print(json.dumps({
     'chronos_forecasting': metadata.version('chronos-forecasting'),
     'torch': torch.__version__,
@@ -1850,7 +1888,8 @@ print(json.dumps({
     'cuda_available': torch.cuda.is_available(),
     'cuda_name': torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
     'checkpoint_revision': revision,
-    'checkpoint_present': (root / 'snapshots' / revision / 'model.safetensors').exists(),
+    'checkpoint_present': True,
+    'checkpoint_location': str(snapshot),
 }))
 """
     chronos = json.loads(

@@ -25,9 +25,14 @@ from typing import Any
 
 import numpy as np
 import torch
+
+# Set before importing the HF-backed provider; execution is strictly offline.
+os.environ["HF_HUB_OFFLINE"] = "1"
+os.environ["TRANSFORMERS_OFFLINE"] = "1"
 from chronos import BaseChronosPipeline, Chronos2Pipeline
 
 from util.p04_00_forecast_contract import ForecastContract
+from util.shared_chronos_checkpoint import local_chronos_snapshot
 
 
 def _apple_device_name() -> str:
@@ -238,9 +243,10 @@ def serve(args: argparse.Namespace) -> None:
     model_started = time.monotonic()
     if args.dtype != "float32":
         raise ValueError("only the configured float32 Chronos dtype is supported")
+    snapshot = local_chronos_snapshot(args.model, args.revision)
     pipeline = BaseChronosPipeline.from_pretrained(
-        args.model,
-        revision=args.revision,
+        str(snapshot),
+        local_files_only=True,
         device_map=device,
         dtype=torch.float32,
     )
@@ -253,6 +259,7 @@ def serve(args: argparse.Namespace) -> None:
             "model": args.model,
             "revision": args.revision,
             "dtype": args.dtype,
+            "checkpoint_location": str(snapshot),
             "cache_location": str(
                 Path(os.environ.get("HF_HOME", Path.home() / ".cache/huggingface"))
             ),

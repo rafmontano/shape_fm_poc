@@ -152,6 +152,9 @@ class TableStorage:
             mean = item["mean"]
             if len(mean) != len(s["actual"]) or any(not math.isfinite(v) for v in mean):
                 raise RuntimeError("selected diagnostic vector is invalid")
+            # DuckDB stores DOUBLE[]; fingerprint that representation, including
+            # R JSON numbers emitted as integers for exactly integral means.
+            mean = [float(v) for v in mean]
             metadata = {"profile": "m4_paper_tables_v1", "ex_post": True,
                         "candidate_id": record["candidate_id"],
                         "lambda_up": record["lambda_up"], "lambda_down": record["lambda_down"],

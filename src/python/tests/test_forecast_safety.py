@@ -10,6 +10,9 @@
 """Focused safety tests; simple functions avoid needless stateful test objects."""
 
 from pathlib import Path
+import json
+import os
+import runpy
 import multiprocessing
 import sys
 import tempfile
@@ -19,6 +22,7 @@ from unittest.mock import patch, MagicMock
 
 from util import shared_distributed_execution as distributed_execution
 from util.shared_execution_profiles import PersistentChronosWorker, resolve_execution_profile
+from util.shared_chronos_checkpoint import local_chronos_snapshot
 from util.p04_02_forecast_provider import (
     DistributedForecastProvider,
     ForecastSafetyPolicy,
@@ -103,6 +107,130 @@ def _accelerator_safety() -> dict:
 
 class ForecastSafetyTests(unittest.TestCase):
     """Exercise provider contracts and safety responses without real pressure."""
+
+    def tearDown(self):
+        """Release resident Chronos state even when a simulated batch fails."""
+        distributed_execution._close_chronos()
+
+    def test_exact_snapshot_and_incomplete_checkpoint(self):
+        """Resolve only the pin and reject missing config or truncated weights."""
+        revision = "a" * 40
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            os.environ, {"HF_HUB_CACHE": directory}
+        ):
+            snapshot = Path(directory) / "models--org--model" / "snapshots" / revision
+            snapshot.mkdir(parents=True)
+            with self.assertRaisesRegex(RuntimeError, "Incomplete local pinned"):
+                local_chronos_snapshot("org/model", revision)
+            (snapshot / "config.json").write_text('{"model_type":"t5"}')
+            header = json.dumps({"weight": {"data_offsets": [0, 4]}}).encode()
+            weights = snapshot / "model.safetensors"
+            weights.write_bytes(len(header).to_bytes(8, "little") + header + b"1234")
+            self.assertEqual(local_chronos_snapshot("org/model", revision), snapshot)
+            with self.assertRaises(ValueError):
+                local_chronos_snapshot("org/model", "main")
+            with self.assertRaises(RuntimeError):
+                local_chronos_snapshot("org/model", "b" * 40)
+            weights.write_bytes(weights.read_bytes()[:-1])
+            with self.assertRaisesRegex(RuntimeError, "truncated"):
+                local_chronos_snapshot("org/model", revision)
+
+    def test_native_loader_is_local_only(self):
+        """Execute serve with fake provider imports and inspect its actual call."""
+        import types
+
+        pipeline_type = type("Pipeline", (), {})
+        base = MagicMock()
+        base.from_pretrained.return_value = pipeline_type()
+        torch = MagicMock()
+        chronos = types.SimpleNamespace(BaseChronosPipeline=base, Chronos2Pipeline=pipeline_type)
+        script = Path(__file__).parents[1] / "04_02_forecast_chronos.py"
+        with patch.dict(sys.modules, {"torch": torch, "chronos": chronos}), patch.dict(os.environ):
+            native = runpy.run_path(str(script))
+            serve = native["serve"]
+            with (patch.dict(serve.__globals__, {
+                "local_chronos_snapshot": MagicMock(return_value=Path("/cache/pinned")),
+                "select_device": MagicMock(return_value="cuda"),
+                "hardware": MagicMock(return_value={}), "emit": MagicMock(),
+            }), patch.object(sys, "stdin", [])):
+                serve(types.SimpleNamespace(model="repo", revision="a" * 40,
+                                            dtype="float32", device="cuda", internal_cpu_threads=1))
+            base.from_pretrained.assert_called_once_with(
+                "/cache/pinned", local_files_only=True, device_map="cuda", dtype=torch.float32)
+            self.assertEqual(os.environ["HF_HUB_OFFLINE"], "1")
+            self.assertEqual(os.environ["TRANSFORMERS_OFFLINE"], "1")
+
+    def test_two_batches_share_resident_child_and_monitor(self):
+        """Use a real protocol child across calls; admission remains per-call."""
+        with tempfile.TemporaryDirectory() as directory:
+            script = Path(directory) / "worker.py"
+            script.write_text(
+                "import json,sys\n"
+                "print(json.dumps({'type':'ready','model_load_count':1}),flush=True)\n"
+                "for line in sys.stdin:\n"
+                " r=json.loads(line)\n"
+                " print(json.dumps({'type':'result','batch_id':r['batch_id'],"
+                "'results':r['jobs'],'effective_batch_size':len(r['jobs']),"
+                "'inference_seconds':0.01,'peak_process_memory_bytes':1,"
+                "'accelerator_memory':{}}),flush=True)\n"
+            )
+            safe = {"available_gib": 32, "swap_used_gib": 0, "accelerator_available_gib": 8}
+            def batch(safety=None, revision="rev"):
+                return distributed_execution.chronos_batch(
+                    [{"id": "a", "horizon": 1}], "repo", revision, [0.5], "cuda",
+                    "float32", False, False, 1, str(Path(sys.executable).parents[1]),
+                    str(script), 5, 5, accelerator_safety=safety or _accelerator_safety())
+            with (patch.object(distributed_execution, "_gpu_host_probe", return_value=safe),
+                  patch.object(distributed_execution, "_worker_provenance", return_value={})):
+                first = batch()
+                worker = distributed_execution._chronos_worker
+                child = worker.process
+                monitor = worker.memory_monitor
+                first_admission = dict(monitor.admission)
+                monitor.admission["stale_call"] = True
+                safe["accelerator_available_gib"] = 7
+                second = batch()
+                self.assertIs(worker, distributed_execution._chronos_worker)
+                self.assertIs(child, worker.process)
+                self.assertIs(monitor, worker.memory_monitor)
+                self.assertIs(monitor._process, child)
+                self.assertIsNotNone(monitor._thread)
+                self.assertNotIn("stale_call", monitor.admission)
+                self.assertTrue(first_admission)
+                self.assertEqual(first["worker"]["worker_generation"], second["worker"]["worker_generation"])
+                self.assertEqual(second["worker"]["model_load_count"], 1)
+                self.assertEqual(second["worker"]["accelerator_safety"]["minimum_accelerator_available_gib_during_work"], 7)
+                changed = batch(revision="other")
+                self.assertGreater(changed["worker"]["worker_generation"], second["worker"]["worker_generation"])
+                self.assertIsNotNone(child.poll())
+                self.assertIsNone(monitor._thread)
+                monitor = distributed_execution._chronos_monitor
+                child = distributed_execution._chronos_worker.process
+                revised_safety = {**_accelerator_safety(), "minimum_available_gib": 5}
+                reconfigured = batch(safety=revised_safety, revision="other")
+                self.assertGreater(reconfigured["worker"]["worker_generation"], changed["worker"]["worker_generation"])
+                self.assertIsNotNone(child.poll())
+                self.assertIsNone(monitor._thread)
+                monitor = distributed_execution._chronos_monitor
+                monitor._mark_unsafe("idle probe fault")
+                with self.assertRaises(distributed_execution.ResourceSafetyInterruption):
+                    batch(safety=revised_safety, revision="other")
+                self.assertIsNone(distributed_execution._chronos_worker)
+                self.assertIsNone(monitor._thread)
+                from distributed import Client, LocalCluster
+
+                with LocalCluster(n_workers=1, threads_per_worker=1, processes=False,
+                                  dashboard_address=None) as cluster, Client(cluster) as client:
+                    client.submit(batch, revised_safety, "other", pure=False).result(timeout=10)
+                    child = distributed_execution._chronos_worker.process
+                    monitor = distributed_execution._chronos_monitor
+                # Normal Dask worker shutdown invokes the registered teardown,
+                # rather than relying on interpreter exit in this in-process cluster.
+                self.assertIsNone(distributed_execution._chronos_worker)
+                self.assertIsNotNone(child.poll())
+                self.assertIsNone(monitor._process)
+                self.assertIsNone(monitor._thread)
+                distributed_execution._close_chronos()  # Repeated cleanup is safe.
 
     def test_real_flock_serializes_startup_but_not_inference(self) -> None:
         """Spawned workers share the OS startup lock and overlap after releasing it."""
@@ -310,8 +438,8 @@ class ForecastSafetyTests(unittest.TestCase):
                 accelerator_safety=safety)
         start.assert_not_called()
 
-    def test_protected_gpu_success_releases_model_and_monitor(self):
-        """The startup gate is short lived and protected models close after inference."""
+    def test_protected_gpu_success_retains_model_and_monitor(self):
+        """The startup gate is short lived while protection remains resident."""
         worker = _ChronosWorker([_result()])
         safe = {"available_gib": 32, "swap_used_gib": 0,
                 "accelerator_available_gib": 8}
@@ -324,7 +452,8 @@ class ForecastSafetyTests(unittest.TestCase):
                 "float32", False, False, 1, ".venv", "worker.py", 1, 1,
                 accelerator_safety=_accelerator_safety())
         self.assertEqual(response["results"], [{"id": "a"}])
-        close.assert_called_once()
+        close.assert_called_once()  # Initial configuration selection, not success cleanup.
+        self.assertIsNotNone(distributed_execution._chronos_monitor._thread)
         self.assertEqual(response["worker"]["accelerator_safety"]["unsafe_reason"], None)
 
     def test_protected_gpu_oom_reacquires_startup_admission(self):
