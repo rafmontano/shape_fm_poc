@@ -520,7 +520,7 @@ class ExecutionProfileTests(unittest.TestCase):
         )
 
     def test_memory_monitor_handles_transient_and_sustained_pressure(self) -> None:
-        """Only sustained floor pressure terminates the registered owned process."""
+        """Threshold pressure is evidence, not a reason to terminate useful work."""
         from util.shared_distributed_execution import (
             ResourceSafetyInterruption,
             TuningMemoryMonitor,
@@ -552,11 +552,11 @@ class ExecutionProfileTests(unittest.TestCase):
             monitor.sample_once()
             monitor.sample_once()
             monitor.sample_once()
-        terminate.assert_called_once_with(321, 15)
-        process.wait.assert_called_once_with(timeout=2)
-        with self.assertRaisesRegex(ResourceSafetyInterruption, "resource safety"):
-            monitor.raise_if_unsafe()
-        self.assertEqual(monitor.evidence()["safety_responses"], 1)
+        terminate.assert_not_called()
+        monitor.raise_if_unsafe()
+        self.assertEqual(monitor.evidence()["safety_responses"], 0)
+        self.assertEqual(monitor.evidence()["resource_warnings"],
+                         {"available_memory_below_threshold": 3})
 
     def test_memory_monitor_detects_swap_growth_without_unrelated_kill(self) -> None:
         """Sustained swap growth records pressure without killing unowned work."""
@@ -585,8 +585,46 @@ class ExecutionProfileTests(unittest.TestCase):
             monitor.sample_once()
             monitor.sample_once()
         terminate.assert_not_called()
-        with self.assertRaisesRegex(ResourceSafetyInterruption, "swap grew"):
-            monitor.raise_if_unsafe()
+        monitor.raise_if_unsafe()
+        self.assertEqual(monitor.evidence()["resource_warnings"],
+                         {"swap_growth_above_threshold": 2})
+
+    def test_dtw_resource_warnings_continue_but_native_and_integrity_failures_raise(self):
+        """The native result survives pressure; failed execution/cache identity never does."""
+        from util import shared_distributed_execution as execution
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory)
+            payload = {"references": []}
+            fingerprint = execution.json_fingerprint(payload)
+            (cache / f"{fingerprint}.json").write_text(json.dumps(payload))
+            arguments = ([], "calibration", ".venv", "worker.py", fingerprint,
+                         None, None, 60, {"mac": 3, "ubuntu": 16}, 0.25)
+            with (patch.object(execution, "_immutable_cache_directory", return_value=cache),
+                  patch.object(execution, "worker_resource_snapshot", side_effect=ValueError),
+                  patch.object(execution, "_worker_provenance", return_value={"hostname": "test"}),
+                  patch("psutil.virtual_memory", side_effect=[MagicMock(available=2*1024**3),
+                                                             MagicMock(available=1024**3)]),
+                  patch("psutil.swap_memory", side_effect=[MagicMock(used=1024**3),
+                                                          MagicMock(used=2*1024**3)]),
+                  patch.object(execution.subprocess, "run", return_value=subprocess.CompletedProcess(
+                      [], 0, json.dumps({"operation": "calibration", "results": [{"correct": [3]}]})))):
+                result = execution.directional_dtw_batch(*arguments)
+            self.assertEqual(result["results"], [{"correct": [3]}])
+            usage = result["resource_usage"]
+            self.assertEqual(usage["resource_warnings"],
+                             ["available_memory_below_threshold", "swap_growth_above_threshold"])
+            self.assertEqual(usage["swap_growth_bytes"], 1024**3)
+            self.assertEqual(usage["subprocess_exit_code"], 0)
+            with (patch.object(execution, "_immutable_cache_directory", return_value=cache),
+                  patch.object(execution, "worker_resource_snapshot", side_effect=ValueError),
+                  patch.object(execution.subprocess, "run", side_effect=subprocess.CalledProcessError(
+                      -9, ["worker"], stderr="OOM killed")),
+                  self.assertRaises(subprocess.CalledProcessError)):
+                execution.directional_dtw_batch(*arguments)
+            (cache / f"{fingerprint}.json").write_text('{"references": ["altered"]}')
+            with (patch.object(execution, "_immutable_cache_directory", return_value=cache),
+                  self.assertRaisesRegex(RuntimeError, "content verification")):
+                execution.directional_dtw_batch(*arguments)
 
     def test_memory_admission_waits_for_headroom_and_records_throttling(self) -> None:
         """Admission pauses on pressure and proceeds only after budget plus floor fits."""

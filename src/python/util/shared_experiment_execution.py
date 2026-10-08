@@ -2948,7 +2948,7 @@ class ExperimentCoordinator:
                 for width in range(64)
             }
             workers_used: dict[str, int] = {}
-            resource_evidence: dict[str, dict[str, int]] = {}
+            resource_evidence: dict[str, dict[str, Any]] = {}
             runtime = 0.0
             for _, response in responses:
                 runtime += float(response["runtime_seconds"])
@@ -2968,6 +2968,7 @@ class ExperimentCoordinator:
                         "maximum_swap_growth_bytes": 0,
                         "peak_dask_spilled_memory_bytes": 0,
                         "peak_dask_spilled_disk_bytes": 0,
+                        "warning_batches": [],
                     },
                 )
                 host_evidence["minimum_available_memory_bytes"] = min(
@@ -2984,6 +2985,8 @@ class ExperimentCoordinator:
                     host_evidence[target] = max(
                         host_evidence[target], int(usage[source])
                     )
+                if usage.get("resource_warnings"):
+                    host_evidence["warning_batches"].append(dict(usage))
                 for result in response["results"]:
                     width = int(result["effective_width"])
                     for horizon, (correct, evaluated) in enumerate(

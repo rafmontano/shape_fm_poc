@@ -1,5 +1,39 @@
 # IDs 038/041 integrated implementation checkpoint
 
+## Part B operational recovery, 9 October 2026
+
+The researcher classified the preserved Process 04 stop as an operational
+interruption, not a scientific failure. The
+[resource-policy amendment](execution-policy.md#part-b-operational-recovery-amendment-9-october-2026)
+retains configured measurements/thresholds but records swap/headroom breaches
+as warnings. The DTW subprocess still fails on native execution errors,
+timeouts and invalid cache/response identity. Existing continuous R/Chronos
+monitoring records threshold warning counts without killing useful work;
+failed safety probes remain fatal. No scientific settings, admission budgets,
+topology, worker counts or dependency locks changed.
+
+DTW returns host/process, RAM/swap before/after, delta, unchanged thresholds,
+spill, native exit status and retry provenance. Calibration persists warning
+batches with per-host extrema through existing task-attempt evidence. Focused
+tests demonstrate warning/continue behaviour and fatal native OOM/SIGKILL and
+altered-cache failures. The 70 focused execution/safety/window tests, 11 pinned
+DTW tests and three pinned GIFT-Eval semantics tests passed. Eight relevant R
+scripts passed, including explicit device cleanup and standalone figures; all
+R source files parse. Changed-document file links and `git diff --check` pass.
+
+Schema version 12 is authoritative in the existing initializer/migration; the
+stale window-fixture expectation was corrected from 11 to 12 without changing
+schema code. Broad discovery ran 353 entries with one skip and one import error:
+GIFT-Eval integration was mistakenly loaded in the project environment. Its
+three tests subsequently passed in the existing dedicated pinned environment.
+The correctly separated project suite passed all **345 tests**. Resumed execution
+evidence will be recorded after completion; this paragraph does not claim Part B
+success. Before restart, copies of both interrupted databases and its summary
+were preserved in `evidence/pre-resource-recovery/`; database hashes exactly
+match the failed-run hashes recorded below.
+The preceding failed-run addendum and generated evidence remain preserved.
+Publication and historical cleanup remain outside this recovery increment.
+
 ## First authorised Process 03 cross-host correction
 
 The researcher first authorised this policy after the stopped run documented
@@ -52,6 +86,70 @@ launcher. Dependency and lock files remain unchanged. The broader suite is not
 reported as wholly green, and its remaining fixture limitation accompanies the
 fresh execution evidence rather than being confused with an experiment
 structural failure.
+
+### Fresh full-Daily ULP run: Process 03 passed; Process 04 resource stop
+
+The fresh `poc2_m4_daily_full_paper_tables_ulp_20261008` run used identical,
+clean Mac/Ubuntu revision `c20223a68930924575aaaafe9b933a0ce98bca0a` and the
+unchanged approved 8 Mac CPU/15 Ubuntu CPU/one Ubuntu GPU topology. Its Prefect
+workflow ran from 21:29:38 AEDT on 8 October to 00:19:39 on 9 October 2026;
+the command exited nonzero after **10,223.20 seconds**. The normal cluster
+preflight passed. Dependencies, model locks, observations and scientific
+parameters were not changed.
+
+Processes 01–03 completed and passed validation for **4,227** series each.
+There are **8,454** archived forecasts, **4,227** forecast instances and
+**124,706** prepared windows with directional labels. Source reconciliation
+again classified all 10,023,836 paired observations as **informational**:
+maximum normalized difference 0.000058736088095187654%, zero flagged/material
+series and zero changed actual directional labels. The producing worker's
+transformation values and hashes were retained. Four records (zero-based IDs
+124, 670, 2606 and 2739, produced on Ubuntu) differ from Mac recomputation:
+fitted scales by one ULP and transformed values by at most two ULPs, with maximum
+absolute transformed difference 4.440892098500626e-16. All 4,227 comparisons
+are computationally equivalent; **zero** exceed four ULPs and **zero** measured
+directional labels change. This fresh result validates the correction beyond
+the earlier failed-database copy check; it does not establish unmeasured
+counterfactual model/selection/rank effects.
+
+Process 04 stopped in its distributed DTW calibration subflow with
+`directional DTW swap-growth safety limit was breached`. The unchanged native
+batch wrapper compares local host-wide swap before/after the classifier
+subprocess against **0.25 GiB**; this is a resource safety stop, not a numerical
+warning, hash failure or source-reconciliation rejection. The process-level
+failure propagated to all **118,386** planned Process 04 task/attempt records,
+whose failed records have no runtime/resource payload. Those records do not
+represent 118,386 independently executed model failures. No fitted model,
+generated forecast, directional prediction/evaluation, official evaluation or
+sensitivity result was persisted. Processes 05–06 remain pending; their planned
+counts are 63,405 and 46, not completed-result counts.
+
+The 46 periodic samples recorded minimum available memory **3.182 GiB** on
+Mac and **116.485 GiB** on Ubuntu. Sampled Mac swap decreased from approximately
+0.420 to 0.373 GiB before calibration. A post-run Mac check measured **2.244
+GiB** swap (approximately 1.871 GiB above the final periodic sample); Ubuntu
+showed zero used swap and zero cumulative swap-in/out counters. The sampling
+interval missed the final calibration interval, and the exception does not
+retain the failed batch's host or before/after values. Consequently these
+observations support Mac pressure but do not measure the offending subprocess's
+individual memory peak or exact batch swap delta. Completed recorded task
+contributions are **2,192 Mac** and **6,262 Ubuntu**; window-batch work has
+separate operational logging.
+
+The failed database, window database, logs, source reconciliation and numerical
+records are preserved under `results/poc2_m4_daily_full_paper_tables_ulp_20261008*`.
+Read-only extraction generated `evidence/execution-summary.json` without
+changing database bytes. Main/window SHA-256 values are respectively
+`793391e684773a35ac15167dc06cd34c5ad8d1122c60f4e46b964d164c55b2bc` and
+`8703c104c07f753786e298e485b97291ec3858c2bfc71a0b6cd3147f4d8214ca`.
+No restart, aggregate alternative-source comparison, result tables, figure
+export or historical numerical comparison was performed because the required
+scientific results do not exist. Owned services stopped and ports
+4200/8786/8787/8725 were closed. Neither host's repository root contains
+CSV/PDF/PNG or `Rplots.pdf`. Both source HEADs remain the unpublished correction
+checkpoint; Ubuntu's five stashes and the published Part A are unchanged.
+This factual failure addendum remains unstaged on Mac. No push, historical
+cleanup, retry, resource-guard bypass or scientific closure is claimed.
 
 ## Part B cross-source reconciliation, 8 October 2026
 

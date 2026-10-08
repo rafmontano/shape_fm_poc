@@ -80,6 +80,11 @@ does not destroy that ownership; errors, unsafe state, incompatible configuratio
 or worker shutdown do. This remains the existing native-provider boundary and
 does not introduce a scheduler or change forecast mathematics.
 
+The [Part B operational recovery policy](execution-policy.md#part-b-operational-recovery-amendment-9-october-2026)
+classifies measured swap growth and memory-threshold breaches as warnings,
+retained in existing task/resource evidence. Thresholds and admission budgets
+remain unchanged; actual native execution and integrity failures remain fatal.
+
 The local IDs 038/041 implementation candidate now exposes that boundary through
 `TableEvaluation`, coordinator-only `TableStorage` and `TableReports`. One R
 paper-profile kernel serves sequential and CPU-Dask batches. The additive v12

@@ -696,7 +696,7 @@ class ResourceSafetyInterruption(RuntimeError):
 
 
 class TuningMemoryMonitor:
-    """Continuously protect a host floor and only terminate its owned R process.
+    """Record pressure warnings; cancel owned work only on failed safety probes.
 
     Inputs are profile-owned GiB thresholds and timing controls. The monitor
     records host/child extrema for provenance and never inspects or kills an
@@ -739,6 +739,7 @@ class TuningMemoryMonitor:
         self._breach_started: float | None = None
         self._unsafe_reason: str | None = None
         self.safety_responses = 0
+        self.resource_warnings: dict[str, int] = {}
 
     @staticmethod
     def _host_probe() -> dict[str, float]:
@@ -781,8 +782,7 @@ class TuningMemoryMonitor:
             return 0.0
 
     def sample_once(self) -> None:
-        """Sample safety state and trigger bounded owned-process cancellation."""
-        now = self._clock()
+        """Sample resource state without treating numeric thresholds as failures."""
         try:
             snapshot = self._probe()
         except BaseException as error:
@@ -809,33 +809,17 @@ class TuningMemoryMonitor:
         )
         reasons = []
         if available < self.minimum_available_gib:
-            reasons.append(
-                f"available memory {available:.2f} GiB below {self.minimum_available_gib:.2f} GiB floor"
-            )
+            reasons.append("available_memory_below_threshold")
         if swap_used - self.initial_swap_used_gib > self.swap_growth_limit_gib:
-            reasons.append(
-                f"swap grew {swap_used - self.initial_swap_used_gib:.2f} GiB"
-            )
+            reasons.append("swap_growth_above_threshold")
         if (
             self.minimum_accelerator_available_gib is not None
             and (accelerator_available is None
                  or accelerator_available < self.minimum_accelerator_available_gib)
         ):
-            reasons.append(
-                "accelerator free memory unavailable or below "
-                f"{self.minimum_accelerator_available_gib:.2f} GiB floor"
-            )
-        if not reasons:
-            self._breach_started = None
-            return
-        if self._breach_started is None:
-            self._breach_started = now
-            return
-        if now - self._breach_started < self.breach_grace_seconds or self._unsafe_reason:
-            return
-        self._unsafe_reason = "; ".join(reasons)
-        self.safety_responses += 1
-        self._cancel_owned(process)
+            reasons.append("accelerator_memory_below_threshold")
+        for reason in reasons:
+            self.resource_warnings[reason] = self.resource_warnings.get(reason, 0) + 1
 
     def _mark_unsafe(self, reason: str) -> None:
         """Fail closed immediately when a safety probe itself is unavailable."""
@@ -887,14 +871,8 @@ class TuningMemoryMonitor:
             )
 
     def raise_if_current_pressure(self) -> None:
-        """Reject startup on one fresh below-floor sample, independent of grace."""
-        if self.current_available_gib < self.minimum_available_gib or (
-            self.minimum_accelerator_available_gib is not None
-            and (self.current_accelerator_available_gib is None
-                 or self.current_accelerator_available_gib
-                 < self.minimum_accelerator_available_gib)
-        ):
-            raise ResourceSafetyInterruption("resource pressure blocks model startup")
+        """Keep actual probe failures fatal; threshold warnings do not reject startup."""
+        self.raise_if_unsafe()
 
     def evidence(self) -> dict[str, Any]:
         """Return admission, ongoing telemetry extrema, and safety-response count."""
@@ -909,6 +887,7 @@ class TuningMemoryMonitor:
             "peak_owned_process_tree_rss_gib": self.peak_owned_process_tree_rss_gib,
             "safety_responses": self.safety_responses,
             "unsafe_reason": self._unsafe_reason,
+            "resource_warnings": dict(self.resource_warnings),
             "minimum_accelerator_available_gib": self.minimum_accelerator_available_gib,
             "minimum_accelerator_available_gib_during_work": self.min_accelerator_available_gib,
         }
@@ -1182,12 +1161,11 @@ def directional_dtw_batch(
     )
     available_floor = floor_gib * 1024**3
     swap_growth = max(0, int(swap_after.used) - int(swap_before.used))
+    warnings = []
     if min(memory_before.available, memory_after.available) < available_floor:
-        raise RuntimeError(
-            f"directional DTW {host_kind} memory safety floor was breached"
-        )
+        warnings.append("available_memory_below_threshold")
     if swap_growth > float(swap_growth_limit_gib) * 1024**3:
-        raise RuntimeError("directional DTW swap-growth safety limit was breached")
+        warnings.append("swap_growth_above_threshold")
     child_peak = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
     child_peak_bytes = int(child_peak if platform.system() == "Darwin" else child_peak * 1024)
     return {
@@ -1196,6 +1174,13 @@ def directional_dtw_batch(
         "worker": _worker_provenance(retry_count),
         "resource_usage": {
             "hostname": socket.gethostname(),
+            "process": "Process 04 directional DTW " + operation,
+            "pid": os.getpid(),
+            "resource_warnings": warnings,
+            "minimum_available_memory_threshold_bytes": int(available_floor),
+            "swap_growth_warning_threshold_bytes": int(swap_growth_limit_gib * 1024**3),
+            "subprocess_exit_code": completed.returncode,
+            "worker_retry_count": retry_count,
             "available_memory_bytes_before": int(memory_before.available),
             "available_memory_bytes_after": int(memory_after.available),
             "swap_used_bytes_before": int(swap_before.used),

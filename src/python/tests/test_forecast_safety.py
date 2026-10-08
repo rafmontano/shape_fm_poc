@@ -283,7 +283,7 @@ class ForecastSafetyTests(unittest.TestCase):
                 pass
 
     def test_monitor_pressure_during_startup_and_inference_cancels_owned_child(self):
-        """Sustained pressure cancels the registered child in either lifecycle phase."""
+        """Memory thresholds warn without cancelling a healthy registered child."""
         for phase in ("startup", "inference"):
             snapshots = iter([
                 {"available_gib": 8, "swap_used_gib": 0,
@@ -304,9 +304,10 @@ class ForecastSafetyTests(unittest.TestCase):
             with patch.object(distributed_execution.os, "killpg") as kill_group:
                 monitor.sample_once()
                 monitor.sample_once()
-            kill_group.assert_called_once_with(child.pid, 15)
-            with self.assertRaises(distributed_execution.ResourceSafetyInterruption):
-                monitor.raise_if_unsafe()
+            kill_group.assert_not_called()
+            monitor.raise_if_unsafe()
+            self.assertEqual(monitor.evidence()["resource_warnings"],
+                             {"accelerator_memory_below_threshold": 2})
 
     def test_probe_failure_before_registration_cancels_only_later_owned_child(self):
         """The unsafe-before-register race is closed without targeting unrelated PIDs."""
@@ -410,19 +411,20 @@ class ForecastSafetyTests(unittest.TestCase):
                 self.assertEqual(list(path.glob("*.json")), [])
 
     def test_gpu_pressure_admission_starts_no_model(self):
-        """An initially unsafe shared GPU fails closed before model startup."""
+        """Low headroom alone records a warning and allows healthy model execution."""
         safety = _accelerator_safety()
         with (patch.object(distributed_execution, "_gpu_host_probe",
                            return_value={"available_gib": 32, "swap_used_gib": 0,
                                          "accelerator_available_gib": 1}),
-              patch.object(distributed_execution, "_get_chronos") as start,
-              self.assertRaises(distributed_execution.ResourceSafetyInterruption)):
-            distributed_execution.chronos_batch(
+              patch.object(distributed_execution, "_get_chronos",
+                           return_value=(_ChronosWorker([_result()]), 1)) as start):
+            result = distributed_execution.chronos_batch(
                 [{"id": "a", "horizon": 1}], "repo", "rev", [0.5], "cuda",
                 "float32", False, False, 1, ".venv", "worker.py", 1, 1,
                 accelerator_safety=safety,
             )
-        start.assert_not_called()
+        start.assert_called_once()
+        self.assertEqual(result["results"], [{"id": "a"}])
 
     def test_gpu_probe_failure_fails_closed_before_start(self):
         """Unavailable NVIDIA telemetry is a pressure interruption, not a model retry."""

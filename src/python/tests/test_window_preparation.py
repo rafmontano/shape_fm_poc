@@ -518,7 +518,7 @@ class WindowPersistenceTests(unittest.TestCase):
         with duckdb.connect(str(parent)) as connection:
             self.assertEqual(
                 connection.execute("SELECT max(version) FROM schema_versions").fetchone(),
-                (11,),
+                (12,),
             )
 
     def test_version_11_executes_real_process_03_window_preparation(self) -> None:

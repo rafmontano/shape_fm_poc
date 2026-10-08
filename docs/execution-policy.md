@@ -150,6 +150,26 @@ write. Do not introduce automatic state migration in the MVP.
 
 ## Memory safety and workload placement
 
+### Part B operational recovery amendment, 9 October 2026
+
+The researcher authorised the following correction after the full-Daily
+Process 04 swap-growth interruption. It supersedes threshold-triggered
+cancellation below, without changing profile thresholds, admission budgets,
+worker counts, scientific settings or task identity. Swap presence/growth and
+transient memory/headroom threshold breaches are operational warnings, not
+scientific failures. Existing probes retain measurements and warning counts;
+DTW batch evidence retains host/process, before/after available RAM and swap,
+swap delta, Dask spill, subprocess status and worker retry count. Calibration
+retains warning batches alongside per-host extrema in execution evidence.
+
+Actual OOM/allocation failure, repeated worker death, sustained loss of progress,
+machine instability and integrity threats remain fatal. Existing failed-probe,
+native-subprocess, timeout and integrity safeguards remain enabled. Do not tune
+placement or concurrency during this accepted run. Resume through the supported
+entry point; if exact source identity rejects reuse, preserve the interrupted
+experiment and start a fresh full-population experiment. No push or historical
+cleanup is authorised by this recovery.
+
 Keep one thread per R job and avoid nested parallelism. Python on the selected
 coordinator is the sole DuckDB writer; remote workers receive serializable inputs
 and return results, never database connections.
