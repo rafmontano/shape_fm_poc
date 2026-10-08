@@ -172,6 +172,22 @@ class ResultExportTests(unittest.TestCase):
         shutil.copyfile(self.fixture, self.database)
         self.output = self.database.with_suffix("")
 
+    def test_numeric_scientific_impact_is_exported_without_changing_identity(self):
+        """An operational assessment reaches the human evidence, not report fingerprints."""
+        from util.shared_process_storage import ProcessStorage
+        record = ProcessStorage.compare_float64([1.0], [1.0])
+        numerical = {**ProcessStorage.numerical_review([record], {"rank": True}), "records": [record]}
+        with duckdb.connect(str(self.database)) as c:
+            before = c.execute("SELECT input_fingerprint,result_fingerprint FROM paper_table_reports").fetchall()
+            configuration = load_database_configuration(self.database, c)
+            c.execute("UPDATE experiment_processes SET summary=? WHERE process_id=3",
+                      [canonical_json({"numerical_reproducibility": numerical})])
+            evidence = TableStorage(c).execution_evidence(configuration)
+            self.assertEqual(evidence["research_review_status"], "researcher_review_required")
+            self.assertEqual(evidence["numerical_reproducibility"]["scientific_changes"], {"rank": True})
+            self.assertEqual(c.execute("SELECT input_fingerprint,result_fingerprint FROM paper_table_reports").fetchall(), before)
+            self.assertEqual(load_database_configuration(self.database, c).scientific_hash, configuration.scientific_hash)
+
     def test_entry_export_parity_readonly_and_recreation(self):
         """Exact stored CSV/JSON parity and byte-stable regeneration traverse the actual entry action."""
         before = self.database.read_bytes()

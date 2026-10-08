@@ -287,6 +287,15 @@ class TableStorage:
             """SELECT json_extract_string(provenance,'$.worker.hostname'),count(*),
                       sum(json_array_length(candidate_ids)) FROM paper_execution_batches
                GROUP BY 1 ORDER BY 1""").fetchall()]
+        from .shared_process_storage import ProcessStorage
+        numerical = [p["summary"]["numerical_reproducibility"] for p in processes
+                     if p["summary"] and "numerical_reproducibility" in p["summary"]]
+        changes = {}
+        for evidence in numerical:
+            for effect, changed in evidence["scientific_changes"].items():
+                changes[effect] = changes.get(effect, False) or changed
+        review = ProcessStorage.numerical_review(
+            [record for evidence in numerical for record in evidence["records"]], changes)
         restarts = []
         for _, state, value, _ in events[1:]:
             summary = json.loads(value) if value else {}
@@ -299,6 +308,8 @@ class TableStorage:
                 "scientific_fingerprint": configuration.scientific_hash,
                 "configuration_integrity_fingerprint": configuration.configuration_integrity_hash,
                 "processes": processes, "task_counts": tasks, "counts": counts,
+                "numerical_reproducibility": review,
+                "research_review_status": review["classification"],
                 "sensitivity_counts": {"expected": 1050, "stored": c.execute(
                     "SELECT count(*) FROM paper_metric_candidates WHERE lambda_up IS NOT NULL").fetchone()[0]},
                 "worker_contribution": workers, "sensitivity_contribution": batches,

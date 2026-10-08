@@ -1,6 +1,7 @@
 """Test independent gate validation and failed-state safety."""
 
 import json
+import math
 import tempfile
 import unittest
 from pathlib import Path
@@ -13,7 +14,7 @@ from util.shared_database import initialize_experiment_database
 from util.shared_model_storage import ModelStorage
 from util.shared_process_storage import ProcessStorage
 from util.p00_01_researcher_actions import ProcessAction
-from util.shared_transformations import transform
+from util.shared_transformations import TransformationResult, transform
 
 ROOT = Path(__file__).resolve().parents[3]
 CONFIGURATION = ROOT / "config/experiments/poc2_m4_daily_100.json"
@@ -164,6 +165,127 @@ class ProcessStorageTests(unittest.TestCase):
         connection.execute("DELETE FROM experiment_tasks WHERE stage=3")
         connection.close()
         with self.assertRaisesRegex(RuntimeError, "incomplete tasks or missing"):
+            ProcessStorage(self.database).validate(3)
+
+    def test_float64_ulp_boundaries_signed_zero_and_subnormals(self):
+        value = 1.0
+        for steps in range(7):
+            if steps:
+                value = math.nextafter(value, math.inf)
+            result = ProcessStorage.compare_float64([1.0, -0.0], [value, 0.0])
+            self.assertEqual(result["maximum_ulp_distance"], steps)
+            self.assertEqual(result["affected_value_count"], int(steps != 0))
+            self.assertEqual(result["classification"], "computationally_equivalent" if steps <= 4
+                             else "numeric_reproducibility_warning")
+        tiny = math.nextafter(0.0, 1.0)
+        self.assertEqual(ProcessStorage.compare_float64([-tiny], [tiny])["maximum_ulp_distance"], 2)
+        largest = float.fromhex("0x1.fffffffffffffp+1023")
+        overflow = ProcessStorage.compare_float64([-largest], [largest])
+        self.assertEqual(overflow["classification"], "numeric_reproducibility_warning")
+        self.assertEqual(overflow["maximum_relative_difference"], 2.0)
+        canonical_json(overflow)
+        for invalid in (None, math.nan, math.inf, -math.inf, True):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(RuntimeError, "finite"):
+                ProcessStorage.compare_float64([1.0], [invalid])
+
+    def test_gate3_cross_host_numeric_warning_continues_without_rewriting(self):
+        self._insert_gate_fixture()
+        original = transform([1.0, 2.0, 3.0], "identity")
+        with duckdb.connect(str(self.database), read_only=True) as c:
+            before = c.execute("SELECT transformed_target,output_hash FROM transformed_series").fetchall()
+            scientific = c.execute("SELECT configuration_hash FROM experiments").fetchall()
+        for steps in (0, 1, 4, 5):
+            value = original.values[0]
+            for _ in range(steps):
+                value = math.nextafter(value, math.inf)
+            recalculated = TransformationResult((value, *original.values[1:]), original.parameters)
+            with mock.patch("util.shared_process_storage.transform", return_value=recalculated):
+                result = ProcessStorage(self.database).validate(3)["numerical_reproducibility"]
+            self.assertEqual(result["maximum_ulp_distance"], steps)
+            self.assertEqual(result["warning_count"], int(steps > 4))
+            self.assertEqual(len(result["records"]), 1)
+        with duckdb.connect(str(self.database), read_only=True) as c:
+            self.assertEqual(c.execute("SELECT transformed_target,output_hash FROM transformed_series").fetchall(), before)
+            self.assertEqual(c.execute("SELECT configuration_hash FROM experiments").fetchall(), scientific)
+
+    def test_gate3_integrity_is_not_a_numeric_warning(self):
+        self._insert_gate_fixture()
+        changes = [
+            ("input_hash", "'wrong'", "hash"),
+            ("output_hash", "'wrong'", "hash"),
+            ("transformed_target", "[1.0,2.0]", "shape"),
+            ("transformed_target", "[1.0,NULL,3.0]", "shape"),
+            ("transformed_target", "[1.0,9.0,3.0]", "hash"),
+            ("forecast_instance_id", "'wrong'", "missing"),
+            ("variant_id", "'wrong'", "missing"),
+            ("experiment_id", "'wrong'", "missing"),
+            ("parent_result_id", "'wrong'", "lineage"),
+            ("transformation_method", "'standardise_sample_v1'", "lineage"),
+            ("parameters", "'{\"unexpected\":1}'", "parameters"),
+        ]
+        for field, value, message in changes:
+            with self.subTest(field=field, value=value):
+                with duckdb.connect(str(self.database)) as c:
+                    old = c.execute(f"SELECT {field} FROM transformed_series").fetchone()[0]
+                    c.execute(f"UPDATE transformed_series SET {field}={value}")
+                with self.assertRaisesRegex(RuntimeError, message):
+                    ProcessStorage(self.database).validate(3)
+                with duckdb.connect(str(self.database)) as c:
+                    c.execute(f"UPDATE transformed_series SET {field}=?", [old])
+
+    def test_scientific_impact_requires_researcher_review_even_below_four_ulps(self):
+        record = ProcessStorage.compare_float64([1.0], [math.nextafter(1.0, math.inf)])
+        for effect in ("directional_label", "selected_candidate", "selected_lambda",
+                       "model_prediction", "classification", "rank", "reporting_precision",
+                       "population_impact"):
+            evidence = ProcessStorage.numerical_review([record], {effect: True})
+            self.assertEqual(evidence["classification"], "researcher_review_required")
+        self.assertEqual(ProcessStorage.numerical_review([record], {"rank": False})["classification"],
+                         "computationally_equivalent")
+
+    def test_cross_host_changed_direction_marks_review_without_stopping(self):
+        self._insert_gate_fixture()
+        future = [3.0, 5.0, 6.0]
+        with duckdb.connect(str(self.database)) as c:
+            c.execute("UPDATE forecast_instances SET actual_target=?", [future])
+        origin = math.nextafter(math.nextafter(3.0, -math.inf), -math.inf)
+        alternative = TransformationResult((1.0, 2.0, origin), {})
+        with mock.patch("util.shared_process_storage.transform", return_value=alternative):
+            evidence = ProcessStorage(self.database).validate(3)["numerical_reproducibility"]
+        self.assertEqual(evidence["maximum_ulp_distance"], 2)
+        self.assertEqual(evidence["directional_label_changes"], 1)
+        self.assertEqual(evidence["classification"], "researcher_review_required")
+
+    def test_execution_persists_operational_validation_only(self):
+        self._insert_gate_fixture()
+        action = ProcessAction()
+        wrapper = mock.Mock()
+        wrapper.run.return_value = {"selected": 1}
+        with mock.patch.object(action.registry, "load", return_value=wrapper):
+            result = action._execute(ProcessStorage(self.database), None, None, 3)
+        self.assertEqual(result["summary"]["numerical_reproducibility"]["maximum_ulp_distance"], 0)
+        with duckdb.connect(str(self.database), read_only=True) as c:
+            summary = json.loads(c.execute("SELECT summary FROM experiment_processes WHERE process_id=3").fetchone()[0])
+            self.assertEqual(summary, result["summary"])
+            self.assertEqual(c.execute("SELECT configuration_hash FROM experiments").fetchone()[0], "h")
+
+    def test_fitted_numeric_state_is_compared_but_recipe_metadata_is_exact(self):
+        self._insert_gate_fixture()
+        fitted = transform([1.0, 2.0, 3.0], "standardise_sample_v1")
+        with duckdb.connect(str(self.database)) as c:
+            c.execute("UPDATE experiment_variants SET transformation_method='standardise_sample_v1'")
+            c.execute("UPDATE transformed_series SET transformation_method='standardise_sample_v1', transformed_target=?,output_hash=?,parameters=?",
+                      [list(fitted.values), json_fingerprint(fitted.values), canonical_json(fitted.parameters)])
+        alternative = {**fitted.parameters, "scale": math.nextafter(fitted.parameters["scale"], math.inf)}
+        from util.shared_transformations import apply_transformation
+        recalculated = TransformationResult(apply_transformation([1.0, 2.0, 3.0], alternative), alternative)
+        with mock.patch("util.shared_process_storage.transform", return_value=recalculated):
+            result = ProcessStorage(self.database).validate(3)["numerical_reproducibility"]
+        self.assertEqual(result["classification"], "computationally_equivalent")
+        self.assertEqual(result["records"][0]["fitted_state_comparison"]["maximum_ulp_distance"], 1)
+        with duckdb.connect(str(self.database)) as c:
+            c.execute("UPDATE transformed_series SET parameters=?", [canonical_json({**fitted.parameters, "count": 2})])
+        with self.assertRaisesRegex(RuntimeError, "parameters"):
             ProcessStorage(self.database).validate(3)
 
 

@@ -460,3 +460,12 @@ not another observation store. The same summary is recorded in existing import
 run/invocation evidence and the completed process summary; review-stop evidence
 is retained in the failed import run. Generated reports are never committed.
 Forecast/evaluation mathematics and the six-process workflow are unchanged.
+
+The separately approved [Process 03 cross-host validation policy](architecture.md#process-03-cross-host-numerical-validation)
+uses an operational four-ULP classification boundary, not a configurable
+scientific tolerance. Per-record comparisons, warnings and measured-impact
+review flags belong in existing process/execution evidence and exported
+execution summaries; they never enter resolved scientific settings or their
+fingerprints. The fresh full-Daily configuration uses the distinct
+`poc2_m4_daily_full_paper_tables_ulp_20261008` database/result/model namespace
+and preserves all 4,227 series, seed 1234 and the accepted reconciliation policy.

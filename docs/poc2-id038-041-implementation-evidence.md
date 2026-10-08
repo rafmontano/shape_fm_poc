@@ -1,5 +1,58 @@
 # IDs 038/041 integrated implementation checkpoint
 
+## First authorised Process 03 cross-host correction
+
+The researcher first authorised this policy after the stopped run documented
+below. The accepted source-provider reconciliation is unchanged. The
+[separate integrity/ULP contract](architecture.md#process-03-cross-host-numerical-validation)
+is implemented in `ProcessStorage`: exact linked identities, input and payload
+hashes, configured metadata, lineage and finite shapes remain mandatory.
+Stored worker values and fitted state are authoritative. Numerical comparison
+uses IEEE-754 ULP distance, with signed zero equivalent: up to four ULPs continue
+as computationally equivalent; larger finite differences continue as warnings.
+Fitted centre/scale are compared numerically, while recipe/version/count and
+constant metadata remain exact. Stored fitted state must reproduce its own
+payload. No transformation or observation formula changed.
+
+The existing process action persists per-record operational evidence in the
+process summary; normal execution-event validation and read-only export retain
+it without changing scientific configuration or report fingerprints. Measured
+directional effects are checked from identical futures/origins under both
+states. Explicit downstream-impact flags escalate exported evidence to
+`researcher_review_required`; they do not discard outputs. Unassessed effects
+are not claimed unchanged. Focused tests exercise both ULP and scientific-impact
+boundaries, stale hashes, identity/lineage/shape corruption and operational-only
+evidence persistence, with bounded functional fixtures as the normal test
+exception to OOP.
+
+Validation against automatically removed copies of both failed databases passed
+all **4,227** transformations. The same three affected records have fitted scale
+distance **one ULP** and transformed-value distance at most **two ULPs**;
+there are **zero** warnings above four ULPs and **zero** directional-label
+changes. Original and copied database bytes, stored Process 01–03 rows, vectors
+and hashes remained unchanged. The failed experiment was neither resumed nor
+repaired. The new full-Daily configuration selects
+`poc2_m4_daily_full_paper_tables_ulp_20261008` and keeps the entire approved
+population, model settings, seed, thresholds and workflow. Publication and
+historical cleanup are not authorised in this increment.
+
+Local checks passed **22** focused ProcessStorage/export tests and the earlier
+**75** combined ProcessStorage/export/main/table/configuration checks. All eight
+relevant R scripts passed, including the nine-method forecast suite and five
+plotting groups; **11** DTW tests and **3** GIFT-Eval semantics tests passed in
+their existing pinned provider environments. The final broader project run
+executed **344 tests: 343 passed, one failed**. Its sole failure is the unchanged
+window-fixture assertion expecting schema version 11 while the current,
+unchanged schema initializer creates version 12. It is not a regression from
+this correction; the stale unrelated assertion was not edited or suppressed.
+Earlier discovery used the wrong environment for GIFT-Eval, and an inline
+test launcher could not support multiprocessing spawn; those harness mistakes
+were corrected by the dedicated environment and normal `python -m unittest`
+launcher. Dependency and lock files remain unchanged. The broader suite is not
+reported as wholly green, and its remaining fixture limitation accompanies the
+fresh execution evidence rather than being confused with an experiment
+structural failure.
+
 ## Part B cross-source reconciliation, 8 October 2026
 
 Part A remains accepted, published and closed. The first full-Daily attempt
@@ -37,8 +90,57 @@ fingerprinting, report publication, review-before-reference storage and unchange
 canonical values. The combined locked Python regression suite passed **253
 tests**; R adapter/reconciliation checks, syntax, documentation links and
 whitespace checks passed. Dependencies and locks are unchanged.
-Full Part B execution, restart, export and alternative-source
-aggregate sensitivity remain outstanding until the fresh execution completes.
+
+### Fresh full-Daily execution: stopped at Process 03 validation
+
+Mac and Ubuntu ran the identical unpublished source checkpoint
+`115cf050943abf3e8497b53ffccd15f96261d452`, with clean worktrees before execution.
+The fresh experiment ran 17:07:11–19:56:07 AEDT on 8 October 2026, exiting
+nonzero after 10,136.49 seconds. Process 01 imported all 4,227 series and 8,454
+archived forecasts; its stored reconciliation reproduced the informational
+measurements above. Process 02 completed and validated all 4,227 items.
+Process 03 stored 124,706 rolling windows and all 4,227 transformations, but
+its final validation failed with
+`stored transformation failed value, hash or lineage validation`.
+Processes 04–06 did not execute: no fitted models, generated forecasts,
+evaluations or sensitivity candidates were produced. Completed task rows do
+not mean Process 03 passed validation.
+
+Read-only diagnosis isolated zero-based series IDs **670, 2606 and 2739**, all
+transformed on Ubuntu. Model recipe, input/output hashes, lengths and both
+parent/preprocessing lineage checks pass exactly. On each record, the fitted
+scale differs from Mac recomputation by **4.547473508864641e-13** (one ULP);
+the maximum absolute transformed-value difference is
+**4.440892098500626e-16**. Recomputing those identical stored inputs on Ubuntu
+reproduces both stored parameters and output fingerprints exactly. Both hosts
+use Python 3.12.14, but Mac is ARM64/macOS and Ubuntu is x86_64/Linux. This is
+a cross-host exact-equality validator failure, not a source-reconciliation
+threshold breach. No transformation formula, tolerance, stored value or
+fingerprint was changed to bypass it.
+
+The failed database, window database, logs, resource samples, reconciliation,
+execution summary and read-only cross-host diagnostics are preserved under
+`results/poc2_m4_daily_full_paper_tables_reconciled_20261008*`. Evidence extraction
+left the experiment database SHA-256 unchanged:
+`2a70490f2addf9e8fbf9750b851a99a01b0846f92f5b6aa8d96c1ad6f5ff8c1d`.
+Stored completed attempts identify 3,288 Mac and 5,166 Ubuntu contributions.
+The 23 later operational samples show minimum available memory of 4.354 GiB
+on Mac and 116.776 GiB on Ubuntu. Earlier import monitoring observed Mac swap
+growth to approximately 0.779 GiB, subsequently decreasing; Ubuntu swap
+remained zero. These samples are not continuous-run minima or evidence of
+zero resource pressure. Prefect event-queue overflow and shutdown cancellation
+warnings also remain in the log; they do not replace the recorded validation
+exception as the stopping failure.
+
+Owned Prefect/Dask/native services stopped; ports 4200/8786/8787 and the
+temporary Prefect port 8385 were closed, and neither root contained CSV/PDF/PNG
+or `Rplots.pdf`. Ubuntu's five stashes remain unchanged. The checkpoint was
+not pushed; no failed outputs were removed. Full execution, restart, tables,
+figures and alternative-source aggregate-metric comparison remain outstanding.
+There are no completed scientific aggregate results from which to assess
+changes to reported conclusions. Resume requires addressing the Process 03
+cross-host validation contract separately; the data-provider policy must not
+be silently expanded to waive transformation-integrity checks.
 
 ## Fresh corrected Part A technical acceptance, 8 October 2026
 

@@ -300,7 +300,9 @@ class ProcessAction:
                 if execution is not None and process_id != 1
                 else wrapper.run(storage.database)
             )
-            storage.validate(process_id, summary)
+            validation = storage.validate(process_id, summary)
+            if "numerical_reproducibility" in validation:
+                summary = {**summary, "numerical_reproducibility": validation["numerical_reproducibility"]}
             storage.transition(process_id, "completed", summary)
             return {"process_id": process_id, "status": "completed", "summary": summary}
         except BaseException as exc:

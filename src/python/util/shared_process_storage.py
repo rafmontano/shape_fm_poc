@@ -13,13 +13,18 @@ from __future__ import annotations
 
 import json
 import math
+import socket
+import struct
 from pathlib import Path
 from typing import Any
 
 import duckdb
 
 from .shared_configuration import canonical_json, json_fingerprint
-from .shared_transformations import transform
+from .shared_transformations import apply_transformation, transform
+
+# Operational policy approved for cross-host Process 03 validation; not scientific identity.
+COMPUTATIONALLY_EQUIVALENT_ULPS = 4
 
 
 class ProcessStorage:
@@ -78,6 +83,7 @@ class ProcessStorage:
     def validate(self, process_id: int, summary: dict[str, Any] | None = None) -> dict[str, Any]:
         """Compare authoritative planned identities with tasks and accepted outputs."""
         connection = duckdb.connect(str(self.database), read_only=True)
+        numerical = None
         try:
             if process_id == 1:
                 from .shared_database import load_database_configuration
@@ -132,7 +138,7 @@ class ProcessStorage:
                     if process_id == 2:
                         self._validate_preprocessed(connection)
                     elif process_id == 3:
-                        self._validate_transformed(connection)
+                        numerical = self._validate_transformed(connection)
                     elif process_id == 4:
                         self._validate_forecasts(connection)
         finally:
@@ -142,8 +148,11 @@ class ProcessStorage:
                 f"completed Process {process_id} has incomplete tasks or missing stored output: "
                 f"expected={expected}, incomplete={incomplete}, missing={missing}"
             )
-        return {"output_validated": True, "expected_task_count": expected,
-                "stored_task_count": stored}
+        evidence = {"output_validated": True, "expected_task_count": expected,
+                    "stored_task_count": stored}
+        if numerical is not None:
+            evidence["numerical_reproducibility"] = numerical
+        return evidence
 
     def _validate_directional(
         self, connection: duckdb.DuckDBPyConnection, process_id: int, version: int
@@ -453,32 +462,138 @@ class ProcessStorage:
                 raise RuntimeError("stored preprocessing failed value, hash or lineage validation")
 
     @staticmethod
-    def _validate_transformed(connection: duckdb.DuckDBPyConnection) -> None:
-        """Recompute Gate 3 transformation values, state, hashes and parent lineage."""
+    def compare_float64(stored, calculated) -> dict:
+        """Measure finite binary64 differences without an absolute tolerance or mutation."""
+        if len(stored) != len(calculated) or not stored:
+            raise RuntimeError("transformation comparison shape or length mismatch")
+        distances, absolute, relative = [], [], []
+        overflow_absolute = None
+        def ordered(value):
+            # Collapse signed zero, then order the finite IEEE-754 bit patterns.
+            bits = struct.unpack(">Q", struct.pack(">d", abs(value)))[0]
+            return -bits if value < 0 else bits
+        for left, right in zip(stored, calculated, strict=True):
+            if (type(left) not in (int, float) or type(right) not in (int, float)
+                    or not math.isfinite(left) or not math.isfinite(right)):
+                raise RuntimeError("transformation comparison requires finite values")
+            distances.append(abs(ordered(left) - ordered(right)))
+            delta = abs(left - right)
+            absolute.append(delta)
+            scale = max(abs(left), abs(right))
+            relative.append((delta / scale if math.isfinite(delta) else
+                             abs(left / scale - right / scale)) if scale else 0.0)
+            if not math.isfinite(delta):
+                from decimal import Decimal
+                exact = abs(Decimal.from_float(left) - Decimal.from_float(right))
+                overflow_absolute = max(overflow_absolute or exact, exact)
+        return {"maximum_ulp_distance": max(distances),
+                "maximum_absolute_difference": (str(overflow_absolute) if overflow_absolute is not None
+                                                else max(absolute)),
+                "maximum_relative_difference": max(relative),
+                "affected_value_count": sum(d != 0 for d in distances),
+                "classification": ("computationally_equivalent" if max(distances) <= COMPUTATIONALLY_EQUIVALENT_ULPS
+                                   else "numeric_reproducibility_warning")}
+
+    @staticmethod
+    def numerical_review(records: list[dict], scientific_changes: dict | None = None) -> dict:
+        """Keep operational warnings separate from explicitly measured scientific impacts."""
+        changes = scientific_changes or {}
+        allowed = {"directional_label", "selected_candidate", "selected_lambda",
+                   "model_prediction", "classification", "rank", "reporting_precision",
+                   "population_impact"}
+        if set(changes) - allowed or any(type(v) is not bool for v in changes.values()):
+            raise ValueError("scientific changes require explicit supported boolean evidence")
+        warnings = sum(r["classification"] == "numeric_reproducibility_warning" for r in records)
+        return {"classification": ("researcher_review_required" if any(changes.values()) else
+                                   "numeric_reproducibility_warning" if warnings else
+                                   "computationally_equivalent"),
+                "warning_count": warnings,
+                "maximum_ulp_distance": max((r["maximum_ulp_distance"] for r in records), default=0),
+                "scientific_changes": changes,
+                "scientific_impact_assessment": "measured" if changes else "not_assessed"}
+
+    @staticmethod
+    def _validate_transformed(connection: duckdb.DuckDBPyConnection) -> dict:
+        """Validate stored integrity exactly; report, never substitute, cross-host floats."""
         rows = connection.execute(
             """SELECT r.transformation_method,v.transformation_method,p.context_target,
                       r.transformed_target,r.parameters,r.input_hash,r.output_hash,
-                      r.preprocessing_id,r.parent_result_id,p.preprocessing_id
+                      r.preprocessing_id,r.parent_result_id,p.preprocessing_id,
+                      r.transformation_id,r.experiment_id,r.variant_id,i.series_id,
+                      i.dataset_id,i.window_id,i.actual_target,
+                      (SELECT json_extract_string(a.resource_usage,'$.hostname')
+                       FROM experiment_task_attempts a WHERE a.task_id=t.task_id
+                       AND a.status='completed' ORDER BY a.attempt_number DESC LIMIT 1)
                FROM experiment_tasks t
                JOIN transformed_series r ON r.experiment_id=t.experiment_id
                  AND r.variant_id=t.variant_id AND r.forecast_instance_id=t.forecast_instance_id
                JOIN experiment_variants v ON v.variant_id=t.variant_id
+                 AND v.experiment_id=t.experiment_id
+               JOIN forecast_instances i ON i.forecast_instance_id=t.forecast_instance_id
+               JOIN experiments e ON e.experiment_id=t.experiment_id
+                 AND e.dataset_id=i.dataset_id
+                 AND e.benchmark_configuration_id=i.benchmark_configuration_id
                LEFT JOIN preprocessed_series p ON p.experiment_id=t.experiment_id
                  AND p.forecast_instance_id=t.forecast_instance_id
                  AND p.cleaning_method=v.cleaning_method
                WHERE t.stage=3"""
         ).fetchall()
-        for method, expected_method, source, output, parameters, input_hash, output_hash, pre_id, parent, expected_parent in rows:
+        if len(rows) != connection.execute("SELECT count(*) FROM experiment_tasks WHERE stage=3").fetchone()[0]:
+            raise RuntimeError("stored transformation has missing or mismatched identity")
+        records = []
+        directional_changes = 0
+        for (method, expected_method, source, output, parameters, input_hash, output_hash,
+             pre_id, parent, expected_parent, record_id, experiment, variant, series,
+             dataset, window, actual, producer) in rows:
             if source is None:
                 raise RuntimeError("stored transformation has missing preprocessing lineage")
             calculated = transform(source, expected_method)
             stored_parameters = json.loads(parameters) if isinstance(parameters, str) else parameters
             if (method != expected_method or pre_id != expected_parent or parent != expected_parent
                     or input_hash != json_fingerprint(source)
-                    or output != list(calculated.values)
-                    or stored_parameters != calculated.parameters
+                    or len(output) != len(calculated.values)
+                    or any(v is None or not math.isfinite(v) for v in output)
                     or output_hash != json_fingerprint(output)):
-                raise RuntimeError("stored transformation failed value, hash or lineage validation")
+                raise RuntimeError("stored transformation failed shape, hash or lineage validation")
+            # Recipe/version/count/constant are exact configured/structural metadata.
+            # Centre and scale are fitted numeric state, not configured parameters.
+            numeric = {"centre", "scale"} & set(calculated.parameters)
+            if (set(stored_parameters) != set(calculated.parameters)
+                    or any(type(stored_parameters[k]) is not type(calculated.parameters[k])
+                           or stored_parameters[k] != calculated.parameters[k]
+                           for k in calculated.parameters if k not in numeric)
+                    or any(type(stored_parameters[k]) not in (int, float)
+                           or not math.isfinite(stored_parameters[k]) for k in numeric)
+                    or ("scale" in numeric and stored_parameters["scale"] <= 0)):
+                raise RuntimeError("stored transformation has invalid method or parameters")
+            if method in {"identity", "standardise_sample_v1"} and output != list(
+                apply_transformation(source, stored_parameters)
+            ):
+                raise RuntimeError("stored transformation payload disagrees with its fitted parameters")
+            changed_labels = 0
+            if method in {"identity", "standardise_sample_v1"}:
+                worker_future = apply_transformation(actual, stored_parameters)
+                validator_future = apply_transformation(actual, calculated.parameters)
+                changed_labels = sum((a > output[-1]) != (b > calculated.values[-1])
+                                     for a, b in zip(worker_future, validator_future, strict=True))
+                directional_changes += changed_labels
+            values = ProcessStorage.compare_float64(output, calculated.values)
+            state = (ProcessStorage.compare_float64(
+                [stored_parameters[k] for k in sorted(numeric)],
+                [calculated.parameters[k] for k in sorted(numeric)]) if numeric else None)
+            comparison = dict(values)
+            if state is not None:
+                comparison["maximum_ulp_distance"] = max(values["maximum_ulp_distance"], state["maximum_ulp_distance"])
+                comparison["classification"] = ("computationally_equivalent" if comparison["maximum_ulp_distance"] <= COMPUTATIONALLY_EQUIVALENT_ULPS
+                                                else "numeric_reproducibility_warning")
+            records.append({"record_id": record_id, "experiment_id": experiment,
+                            "dataset_id": dataset, "series_id": series, "window_id": window,
+                            "variant_id": variant, "transformation": method,
+                            "producing_host": producer, "validating_host": socket.gethostname(),
+                            **comparison, "fitted_state_comparison": state,
+                            "directional_label_changes": changed_labels})
+        return {**ProcessStorage.numerical_review(records, {"directional_label": directional_changes > 0}),
+                "directional_label_changes": directional_changes, "records": records}
 
     @staticmethod
     def _task_join(process_id: int) -> str:

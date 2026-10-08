@@ -723,3 +723,36 @@ disposition of former globals, machine settings, protocol constants, and test
 expectations is in [`configuration-inventory.md`](configuration-inventory.md).
 The scoped follow-up findings and removal candidates are recorded in
 [`vision-alignment-review.md`](vision-alignment-review.md).
+
+## Process 03 cross-host numerical validation
+
+The researcher first authorised this correction after the stopped full-Daily
+run on 8 October 2026. It does not broaden the accepted source-reconciliation
+policy. `ProcessStorage` separates exact integrity from numerical reproduction.
+Experiment/dataset/series/window/variant links, source fingerprints, method,
+configured recipe metadata, lineage, shapes, lengths and finite payload values
+remain exact requirements. The stored vector must match its own stored hash.
+Applying its stored fitted state must reproduce that payload; the producing
+worker's vector and fitted state remain authoritative and are never replaced.
+
+Coordinator refitting compares finite binary64 values and fitted centre/scale
+in ULPs, collapsing positive/negative zero. Zero through four ULPs are
+`computationally_equivalent`; larger finite differences are
+`numeric_reproducibility_warning` and do not stop execution. No absolute
+tolerance or coordinator-recalculated content hash substitutes for integrity.
+Each record reports producer/validator hosts, all record identities, maximum
+ULP/absolute/relative differences, affected count, fitted-state differences and
+classification. Values whose absolute difference exceeds binary64 range use a
+decimal string in operational evidence, not a non-finite JSON number.
+
+Process summaries and existing execution-event validation evidence retain the
+comparison; read-only export projects it into `evidence/execution-summary.json`.
+It is operational evidence, outside scientific identity. Directional impact
+compares the same future and origin through both fitted states without changing
+stored labels. Explicit measured downstream effects on direction, selection,
+lambda, prediction/classification, ranks, reporting precision or approved
+population thresholds escalate evidence to `researcher_review_required`, not
+discarded results. Evidence identifies which effects were assessed; absence of
+a counterfactual model assessment is not evidence that its output cannot change.
+Structural/integrity failures still stop. Prefect/Dask and the six processes,
+scientific transformations and data authority are unchanged.

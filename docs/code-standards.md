@@ -912,3 +912,10 @@ Obtain the Chief Developer's decision where an item genuinely lacks one.
 
 The working discipline remains: agree, change one bounded item, test, review,
 and then continue.
+
+For Process 03 cross-host float64 validation, follow the separately approved
+[integrity and ULP contract](architecture.md#process-03-cross-host-numerical-validation).
+Do not weaken exact scientific identity or payload integrity, replace producing
+worker output with coordinator recomputation, or use an absolute epsilon to
+hide differences. Numeric-only reproduction warnings are operational evidence,
+not automatic execution failures or changes to scientific fingerprints.
