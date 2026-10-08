@@ -230,6 +230,44 @@ class M4ReferenceTests(unittest.TestCase):
         self.assertEqual(smyl["provenance"]["submission_id"], 118)
         self.assertEqual(smyl["requested_provider"], smyl["executed_provider"])
 
+    def test_reconciliation_publishes_evidence_and_stops_review_before_references(self):
+        """Derived reports do not correct canonical observations or bypass the review gate."""
+        connection = duckdb.connect(str(self.database))
+        holder = ImportCoordinator.__new__(ImportCoordinator)
+        holder.connection = connection
+        holder.database_path = self.database
+        holder._source_before = {"source": "unchanged"}
+        holder._selected_ids = ["0"]
+        source = SimpleNamespace(fingerprint=lambda: holder._source_before, settings={})
+        before = connection.execute("SELECT target FROM series").fetchall()
+        for status in ("informational", "warning", "researcher_review_required"):
+            summary = {"run_id": "fixture", "dataset_id": "dataset"}
+            evidence = {"summary": {"status": status}, "series": [{"source_position": 0,
+                        "maximum_normalized_difference_pct": .00001, "differing_positions": "2"}]}
+            def read(*_):
+                holder._source_reconciliation = evidence
+                return self.records
+            with patch.object(holder, "_verify_expected_membership"), \
+                 patch.object(holder, "_read_m4_reference_forecasts", side_effect=read), \
+                 patch.object(holder, "_store_reference_forecasts", return_value=(0, 2)) as store, \
+                 patch.object(holder, "verify_import_completion"), \
+                 patch.object(holder, "record_import_outcome") as outcome:
+                if status == "researcher_review_required":
+                    with self.assertRaisesRegex(ImportValidationError, "before Process 02"):
+                        holder.finish_configured_import(source, summary)
+                    store.assert_not_called()
+                    outcome.assert_not_called()
+                else:
+                    holder.finish_configured_import(source, summary)
+                    store.assert_called_once()
+                    outcome.assert_called_once_with(summary)
+                self.assertEqual(summary["source_reconciliation"], evidence["summary"])
+                directory = self.database.with_suffix("") / "evidence/source-reconciliation"
+                self.assertEqual(json.loads((directory / "summary.json").read_text()), evidence["summary"])
+                self.assertIn("0,1e-05,2", (directory / "series-discrepancies.csv").read_text())
+                self.assertEqual(connection.execute("SELECT target FROM series").fetchall(), before)
+        connection.close()
+
     def test_gate4_rejects_incompatible_requests_without_fallback(self):
         cases = (
             ({"series_id": "1"}, "instance"),

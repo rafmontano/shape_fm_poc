@@ -1,5 +1,45 @@
 # IDs 038/041 integrated implementation checkpoint
 
+## Part B cross-source reconciliation, 8 October 2026
+
+Part A remains accepted, published and closed. The first full-Daily attempt
+imported every series but its older strict reference adapter rejected legitimate
+cross-provider numeric differences. That preserved rejection is not evidence
+that ShapeFM architecture or the experiment population is invalid. The
+researcher approved the explicit [cross_source_v1 policy](experiment-configuration.md#cross-source-reconciliation-approved-8-october-2026)
+for a fresh full-Daily experiment; the previous database is not reconfigured.
+
+Read-only application to the preserved sources compared 4,227 series and
+10,023,836 observations. Exactly unequal representations occur at 8,225,949
+positions: 3,056 histories and 3,045 futures contain differences. The largest
+per-series normalized difference is **0.000058736088095187654%**, below 0.01%.
+No series is flagged or material, and no strict directional label changes among
+59,178 comparisons. Status is **informational**. Per-series measurements and
+one-based discrepancy locations are retained under the preserved experiment's
+`evidence/source-reconciliation/`; observations are neither copied into that
+report nor corrected. The database SHA-256 remained unchanged.
+
+The existing R reference adapter owns the pure reconciliation kernels; the
+existing `ImportCoordinator` owns report publication, coordinator-only evidence
+and the before-Process-02 review barrier. Central configuration validates and
+stores the versioned opt-in thresholds; absent policy preserves older meaning.
+The full tracked configuration selects the fresh
+`poc2_m4_daily_full_paper_tables_reconciled_20261008` namespace, all 4,227 series,
+seed 1234 and unchanged models/workflow. Small stateless R kernels and focused
+fixtures use the existing pragmatic functional exception. No dependency, model
+parameter, forecast formula or accepted Part A configuration changed.
+
+Focused R fixtures exercise representation differences, constant/near-zero
+series, exact/above population boundaries, material differences, directional
+ties/changes and structural failures. Python import/reference/configuration
+checks passed **36 tests**, including explicit resolved-policy storage and
+fingerprinting, report publication, review-before-reference storage and unchanged
+canonical values. The combined locked Python regression suite passed **253
+tests**; R adapter/reconciliation checks, syntax, documentation links and
+whitespace checks passed. Dependencies and locks are unchanged.
+Full Part B execution, restart, export and alternative-source
+aggregate sensitivity remain outstanding until the fresh execution completes.
+
 ## Fresh corrected Part A technical acceptance, 8 October 2026
 
 The fresh `poc2_m4_daily_100_paper_tables_corrected_20261008` experiment passed

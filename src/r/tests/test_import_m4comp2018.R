@@ -94,4 +94,57 @@ assert(!grepl("utils::data", core_text), "core must only use injected objects")
 assert(!grepl("DBI|duckdb|INSERT|UPDATE|DELETE", source_text), "adapter must not write databases")
 assert(grepl("digits = 17", source_text, fixed = TRUE), "CLI must encode 17 digits")
 
+policy <- list(version = "cross_source_v1", series_warning_pct = .01,
+  population_review_pct = 1, single_series_material_pct = 1,
+  directional_impact_review_pct = .1)
+reconciled <- payload; reconciled$source_reconciliation <- policy
+unchanged <- reconciled
+r <- import_m4comp2018(reconciled, M4, info)$reconciliation
+assert(r$summary$status == "informational" && r$summary$differing_observations == 0, "identical reconciliation")
+reconciled$series[[1]]$history[[1]] <- 1 + 1e-7
+r <- import_m4comp2018(reconciled, M4, info)$reconciliation
+assert(r$summary$status == "informational" && r$summary$differing_observations == 1, "representation differences")
+assert(reconciled$series[[1]]$history[[1]] == 1 + 1e-7, "GIFT values unchanged")
+reconciled <- unchanged; reconciled$series[[1]]$history[[1]] <- 1.001
+r <- import_m4comp2018(reconciled, M4, info)$reconciliation
+assert(r$summary$status == "researcher_review_required" && r$summary$flagged_series == 1, "population breach")
+# One warning in 101 series is below 1%; one warning in 100 is exactly 1%.
+population <- rep(r$series, 101); population[-1] <- rep(import_m4comp2018(unchanged, M4, info)$reconciliation$series, 100)
+assert(.m4_reconciliation_summary(population, policy, list())$status == "warning", "below population threshold")
+assert(.m4_reconciliation_summary(population[1:100], policy, list())$status == "warning", "population boundary")
+assert(.m4_reconciliation_summary(population[1:99], policy, list())$status == "researcher_review_required", "above population boundary")
+boundary <- r$series[[1]]; boundary$maximum_normalized_difference_pct <- .01
+assert(.m4_reconciliation_summary(list(boundary), policy, list())$status == "informational", "warning equality")
+population[[1]]$maximum_normalized_difference_pct <- 1
+assert(.m4_reconciliation_summary(population, policy, list())$status == "warning", "material equality")
+population[[1]]$maximum_normalized_difference_pct <- 1 + 1e-8
+assert(.m4_reconciliation_summary(population, policy, list())$materially_different_series == 1, "above material boundary")
+boundary$maximum_normalized_difference_pct <- 0
+boundary$direction_comparisons <- 1000; boundary$directional_label_changes <- 1
+assert(.m4_reconciliation_summary(list(boundary), policy, list())$status == "informational", "directional equality")
+boundary$directional_label_changes <- 2
+assert(.m4_reconciliation_summary(list(boundary), policy, list())$status == "researcher_review_required", "above directional boundary")
+reconciled$series[[1]]$history[[1]] <- 2
+assert(import_m4comp2018(reconciled, M4, info)$reconciliation$summary$materially_different_series == 1, "material breach")
+constant <- series("D1"); constant$x[] <- 0; constant$xx[] <- 0
+zero <- request(); zero$history <- as.list(c(0,0,0)); zero$future <- as.list(c(0,0))
+assert(.m4_reconcile_series(zero, constant)$series_scale == 1e-12, "zero scale floor")
+zero$future[[1]] <- 1e-15
+z <- .m4_reconcile_series(zero, constant)
+assert(abs(z$maximum_normalized_difference_pct - .1) < 1e-12, "near-zero normalized discrepancy")
+assert(z$directional_label_changes == 1 && z$changed_direction_horizons == "1", "strict tie direction impact")
+assert(.m4_reconciliation_summary(list(z), policy, list())$status == "researcher_review_required", "direction review")
+assert(.m4_difference(c(2,4),c(1,2),10)$rms_normalized_difference_pct == 100 * sqrt(2.5)/10, "independent RMS fixture")
+bad <- unchanged; bad$series[[1]]$history <- list(1,2)
+fails(import_m4comp2018(bad, M4, info), "structural")
+bad <- unchanged; bad$series[[1]]$history[1] <- list(NULL)
+fails(import_m4comp2018(bad, M4, info), "structural")
+bad <- unchanged; bad$series[[1]]$future[[1]] <- Inf
+fails(import_m4comp2018(bad, M4, info), "structural")
+bad <- unchanged; bad$series <- list(request(1L, "D2",100),request())
+fails(import_m4comp2018(bad, M4, info), "ordering")
+bad <- unchanged; bad$series[[1]]$official_m4_series_id <- "D2"
+fails(import_m4comp2018(bad, M4, info), "official_id")
+assert(identical(unchanged$series, payload$series), "reconciliation never mutates input")
+
 cat("ok - M4comp2018 adapter contract\n")

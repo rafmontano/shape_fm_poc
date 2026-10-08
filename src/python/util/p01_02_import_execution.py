@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import csv
 import hashlib
 import importlib.metadata
 import json
@@ -639,6 +640,7 @@ class ImportCoordinator:
         reads package data only and neither it nor this method writes DuckDB.
         """
         archived = config.get("archived_forecasts")
+        self._source_reconciliation = None
         if archived is None:
             return []
         enabled = list(archived["enabled"])
@@ -679,6 +681,12 @@ class ImportCoordinator:
                 for row in rows
             ],
         }
+        if "source_reconciliation" in archived:
+            source = self.configuration.resolved["data"]["source"]
+            metadata = source_metadata(repository_root() / source["directory"] / config["dataset_name"])
+            payload.update(source_reconciliation=archived["source_reconciliation"],
+                gift_eval_source={"name": source["system"], "revision": source["revision"],
+                    "version": metadata["dataset_info.json"]["version"]})
         worker = self.configuration.execution_paths["r_m4comp2018_worker"]
         try:
             completed = subprocess.run(
@@ -699,7 +707,8 @@ class ImportCoordinator:
                 f"M4comp2018 reference adapter failed: {detail}"
             ) from error
         try:
-            records = json.loads(completed.stdout)["records"]
+            response = json.loads(completed.stdout)
+            records = response["records"]
         except (json.JSONDecodeError, KeyError, TypeError) as error:
             raise ImportValidationError(
                 "M4comp2018 reference adapter returned invalid JSON"
@@ -741,6 +750,13 @@ class ImportCoordinator:
             raise ImportValidationError(
                 "M4comp2018 reference adapter omitted a selected series or provider"
             )
+        if "source_reconciliation" in archived:
+            reconciliation = response["reconciliation"]
+            if (reconciliation["summary"]["thresholds"] != archived["source_reconciliation"]
+                    or len(reconciliation["series"]) != len(rows)
+                    or [r["source_position"] for r in reconciliation["series"]] != [r[1] for r in rows]):
+                raise ImportValidationError("incomplete source reconciliation evidence")
+            self._source_reconciliation = reconciliation
         return records
 
     def _store_reference_forecasts(self, records: list[dict[str, Any]]) -> tuple[int, int]:
@@ -1076,6 +1092,18 @@ class ImportCoordinator:
             raise ImportValidationError("source files changed during import")
         self._verify_expected_membership(summary["run_id"], summary["dataset_id"], self._selected_ids)
         references = self._read_m4_reference_forecasts(summary["dataset_id"], source.settings)
+        if self._source_reconciliation is not None:
+            reconciliation = self._source_reconciliation
+            summary["source_reconciliation"] = reconciliation["summary"]
+            directory = self.database_path.with_suffix("") / "evidence/source-reconciliation"
+            directory.mkdir(parents=True, exist_ok=True)
+            (directory / "summary.json").write_text(canonical_json(reconciliation["summary"]) + "\n")
+            with (directory / "series-discrepancies.csv").open("w", newline="", encoding="utf-8") as stream:
+                writer = csv.DictWriter(stream, fieldnames=list(reconciliation["series"][0]), lineterminator="\n")
+                writer.writeheader()
+                writer.writerows(reconciliation["series"])
+            if reconciliation["summary"]["status"] == "researcher_review_required":
+                raise ImportValidationError("cross-source reconciliation requires researcher review before Process 02")
         inserted, skipped = self._store_reference_forecasts(references)
         summary.update(reference_forecasts_inserted=inserted, reference_forecasts_skipped=skipped)
         summary["task_counts"] = dict(self.connection.execute(

@@ -1256,7 +1256,18 @@ def _validate_table_configuration(value: dict[str, Any]) -> None:
     archived = _require_mapping(value["archived_forecasts"], "archived_forecasts")
     if archived.get("enabled") != ["m4_smyl", "m4_fforma"]:
         raise ExperimentConfigurationError("v12 requires both approved archive means")
+    policy = archived.get("source_reconciliation")
+    if "source_reconciliation" in archived:
+        policy = _require_mapping(policy, "source_reconciliation")
+        _require_keys(policy, {"version", "series_warning_pct", "population_review_pct",
+            "single_series_material_pct", "directional_impact_review_pct"}, "source_reconciliation")
+        if (policy["version"] != "cross_source_v1" or any(
+                type(v) not in (int, float) or not 0 <= v <= 100
+                for k, v in policy.items() if k != "version")
+                or policy["series_warning_pct"] > policy["single_series_material_pct"]):
+            raise ExperimentConfigurationError("invalid source reconciliation thresholds")
     projected = deepcopy(value)
+    projected["archived_forecasts"].pop("source_reconciliation", None)
     data = _require_mapping(value["data"], "data")
     selection = _require_mapping(data.get("selection"), "data.selection")
     count = selection.get("count")
@@ -1302,6 +1313,7 @@ def _validate_table_configuration(value: dict[str, Any]) -> None:
 
     # Validation-only ordinary projection reuses the immutable v9 contract.
     ordinary = deepcopy(value)
+    ordinary["archived_forecasts"].pop("source_reconciliation", None)
     ordinary["configuration_version"] = 9
     ordinary["data"]["selection"] = {"method": "first_official", "count": 100}
     ordinary["models"] = {key: models[key] for key in (*R_FORECAST_METHODS, "chronos_2")}

@@ -36,6 +36,14 @@ selected by the inventory and execution profile. JSON stdin/stdout is the
 language and isolated-subprocess boundary, not a second state store. The
 coordinator is the sole DuckDB writer.
 
+The opt-in [cross-source reconciliation contract](experiment-configuration.md#cross-source-reconciliation-approved-8-october-2026)
+keeps GIFT-Eval observations authoritative and M4comp2018 forecasts separate.
+Process 01 validates structure exactly, measures paired numeric discrepancies
+in its existing stateless R adapter, and records coordinator-owned summary
+evidence plus derived reports under the experiment results directory. Review
+thresholds block Process 02 without correcting observations. No new scheduler,
+observation store or scientific evaluation path is introduced.
+
 The approved [IDs 038/041 table-reproduction decision](poc2-id038-041-table-reproduction.md)
 adds a frequency-neutral Process 06 diagnostic path. It repeats the historical
 525-pair lambda grid for SMYL and Chronos-2, stores aggregate evaluation evidence,

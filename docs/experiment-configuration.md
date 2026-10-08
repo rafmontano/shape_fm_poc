@@ -422,3 +422,41 @@ serialized arguments. The Mac coordinator remains the only DuckDB writer.
 
 An incompatible scientific change requires a new database. Never reinterpret
 or silently modify scientific settings in an existing database.
+
+## Cross-source reconciliation, approved 8 October 2026
+
+Full Daily v12 creation may explicitly select
+`archived_forecasts.source_reconciliation.version = cross_source_v1`. This
+additive opt-in does not reinterpret older documents: absent policy retains the
+historical strict adapter. Thresholds are stored in original/resolved DuckDB
+configuration and its scientific fingerprint; a changed policy requires a fresh
+experiment. Part A remains accepted, published and closed.
+
+GIFT-Eval remains the observation authority. M4comp2018 supplies only archived
+forecast means and submission metadata. Identity/position/order, Daily frequency,
+history length, future horizon, paired missing/non-finite status and submission
+identity must match exactly. No observations are rounded, averaged or replaced.
+
+For each series, pool finite history and future values from both providers.
+The shared scale is max(P95 of absolute pooled values, pooled IQR, 1e-12), using
+R quantile type 7. Maximum and RMS differences are divided by that scale and
+reported as percentages. Secondary relative differences use max(abs(GIFT),
+abs(M4)) per pair; two zeros have relative difference zero. Exact unequal finite
+pairs are counted even when their discrepancy is informational. History/future
+reports include one-based differing positions; strict future-versus-final-history
+directions are compared at every evaluable horizon, without changing labels.
+
+Initial project thresholds (not universal statistical laws) are 0.01% per-series
+warning, 1% population review, 1% single-series material difference and 0.1%
+directional-impact review. Comparisons are strict `>`: equality does not breach.
+Informational and warning statuses continue automatically; exceeding any review
+threshold stops before Process 02. Structural incompatibility always stops.
+Later approved experiments may consciously revise explicit thresholds.
+
+Process 01's R adapter performs one reconciliation. `ImportCoordinator` writes
+`evidence/source-reconciliation/summary.json` and `series-discrepancies.csv`
+under `results/<experiment>/`, retaining aggregate measurements and locations,
+not another observation store. The same summary is recorded in existing import
+run/invocation evidence and the completed process summary; review-stop evidence
+is retained in the failed import run. Generated reports are never committed.
+Forecast/evaluation mathematics and the six-process workflow are unchanged.

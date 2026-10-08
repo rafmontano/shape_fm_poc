@@ -80,6 +80,28 @@ class TableConfigurationTests(unittest.TestCase):
         self.assertEqual(expected_task_counts(100, config.workflow),
                          {2: 100, 3: 100, 4: 2830, 5: 1500, 6: 46})
 
+    def test_reconciliation_policy_is_stored_and_fingerprinted(self):
+        """Review thresholds are explicit science; older v12 documents stay strict."""
+        path = CONFIG.with_name("poc2_m4_daily_full_paper_tables.json")
+        config = load_experiment_configuration(path)
+        policy = config.original["archived_forecasts"]["source_reconciliation"]
+        self.assertEqual(policy["series_warning_pct"], .01)
+        self.assertEqual(policy["population_review_pct"], 1)
+        self.assertEqual(policy["single_series_material_pct"], 1)
+        self.assertEqual(policy["directional_impact_review_pct"], .1)
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "policy.duckdb"
+            initialize_experiment_database(database, path)
+            self.assertEqual(load_database_configuration(database).resolved["archived_forecasts"]["source_reconciliation"], policy)
+        changed = deepcopy(config.original)
+        changed["archived_forecasts"]["source_reconciliation"]["series_warning_pct"] = .02
+        self.assertNotEqual(config.scientific_hash, resolve_experiment_configuration(changed).scientific_hash)
+        for bad in (True, float("nan"), -1, 101):
+            changed["archived_forecasts"]["source_reconciliation"]["series_warning_pct"] = bad
+            with self.assertRaises(ExperimentConfigurationError):
+                resolve_experiment_configuration(changed)
+        self.assertNotIn("source_reconciliation", load_experiment_configuration(CONFIG).original["archived_forecasts"])
+
     def test_complete_pool_and_resolved_counts(self):
         """Reuse approved model contracts and count each mixed branch explicitly."""
         approved = load_experiment_configuration(CONFIG.with_name(

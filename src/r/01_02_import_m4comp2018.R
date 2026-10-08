@@ -33,6 +33,74 @@ M4_APPROVED_SUBMISSIONS <- data.frame(
   all(abs(observed - expected) <= tolerance)
 }
 
+# Pure reporting kernels: paired finite values, never corrected observations.
+.m4_difference <- function(gift, official, scale) {
+  status <- function(x) ifelse(is.na(x), "missing", ifelse(is.infinite(x),
+    ifelse(x > 0, "positive_infinity", "negative_infinity"), "finite"))
+  if (length(gift) != length(official) || !identical(status(gift), status(official))) {
+    stop("structural mismatch: lengths or missing/non-finite status", call. = FALSE)
+  }
+  finite <- is.finite(gift)
+  delta <- abs(gift[finite] - official[finite])
+  denominator <- pmax(abs(gift[finite]), abs(official[finite]))
+  relative <- ifelse(denominator == 0, 0, delta / denominator)
+  positions <- which(finite & replace(rep(FALSE, length(gift)), which(finite), delta != 0))
+  list(observations = length(gift), finite_observations = sum(finite),
+    differing_observations = length(positions), differing_pct = 100 * length(positions) / length(gift),
+    maximum_absolute_difference = max(c(0, delta)),
+    maximum_relative_difference = max(c(0, relative)),
+    maximum_normalized_difference_pct = 100 * max(c(0, delta)) / scale,
+    rms_normalized_difference_pct = if (length(delta)) 100 * sqrt(mean(delta^2)) / scale else 0,
+    differing_positions = paste(positions, collapse = ";"))
+}
+
+.m4_reconcile_series <- function(request, official) {
+  numeric_vector <- function(x) vapply(x, function(v) {
+    if (is.null(v)) return(NA_real_)
+    if (!is.numeric(v) || length(v) != 1L) stop("structural mismatch: numeric observations required", call. = FALSE)
+    as.numeric(v)
+  }, numeric(1L))
+  history <- numeric_vector(request$history); future <- numeric_vector(request$future)
+  x <- as.numeric(official$x); y <- as.numeric(official$xx)
+  pooled <- c(history, future, x, y); pooled <- pooled[is.finite(pooled)]
+  scale <- if (length(pooled)) max(as.numeric(stats::quantile(abs(pooled), .95, type = 7)),
+    stats::IQR(pooled, type = 7), 1e-12) else 1e-12
+  h <- .m4_difference(history, x, scale); f <- .m4_difference(future, y, scale)
+  all <- .m4_difference(c(history, future), c(x, y), scale)
+  valid <- is.finite(future) & is.finite(y) & is.finite(tail(history, 1L)) & is.finite(tail(x, 1L))
+  changed <- which(valid & ((future > tail(history, 1L)) != (y > tail(x, 1L))))
+  c(list(series_id = request$series_id, source_position = request$source_position,
+    official_m4_series_id = official$st, series_scale = scale), all,
+    setNames(h, paste0("history_", names(h))), setNames(f, paste0("future_", names(f))),
+    list(direction_comparisons = sum(valid), directional_label_changes = length(changed),
+      changed_direction_horizons = paste(changed, collapse = ";")))
+}
+
+.m4_reconciliation_summary <- function(rows, policy, sources) {
+  maxima <- vapply(rows, `[[`, numeric(1L), "maximum_normalized_difference_pct")
+  total <- function(field) sum(vapply(rows, `[[`, numeric(1L), field))
+  flagged <- sum(maxima > policy$series_warning_pct)
+  material <- sum(maxima > policy$single_series_material_pct)
+  population <- 100 * flagged / length(rows)
+  directions <- total("direction_comparisons"); changes <- total("directional_label_changes")
+  directional_pct <- if (directions) 100 * changes / directions else 0
+  review <- population > policy$population_review_pct || material > 0 ||
+    directional_pct > policy$directional_impact_review_pct
+  list(sources = sources, thresholds = policy, total_series = length(rows),
+    total_observations = total("observations"), differing_observations = total("differing_observations"),
+    differing_observations_pct = 100 * total("differing_observations") / total("observations"),
+    maximum_absolute_difference = max(vapply(rows, `[[`, numeric(1L), "maximum_absolute_difference")),
+    maximum_relative_difference = max(vapply(rows, `[[`, numeric(1L), "maximum_relative_difference")),
+    histories_with_differences = sum(vapply(rows, `[[`, numeric(1L), "history_differing_observations") > 0),
+    futures_with_differences = sum(vapply(rows, `[[`, numeric(1L), "future_differing_observations") > 0),
+    flagged_series = flagged, materially_different_series = material, flagged_series_pct = population,
+    materially_different_series_pct = 100 * material / length(rows),
+    normalized_difference_distribution_pct = as.list(stats::quantile(maxima, c(0, .5, .95, .99, 1), type = 7)),
+    maximum_normalized_difference_pct = max(maxima), direction_comparisons = directions,
+    directional_label_changes = changes, directional_label_change_pct = directional_pct,
+    status = if (review) "researcher_review_required" else if (flagged) "warning" else "informational")
+}
+
 # Purpose: Extract a required scalar integer without permissive coercion.
 .m4_integer <- function(value, name, minimum = 0L) {
   if (!is.numeric(value) || length(value) != 1L || !is.finite(value) ||
@@ -70,7 +138,7 @@ M4_APPROVED_SUBMISSIONS <- data.frame(
 }
 
 # Purpose: Validate one requested ShapeFM series against its official M4 entry.
-.m4_validate_series <- function(request, official) {
+.m4_validate_series <- function(request, official, policy = NULL) {
   required <- c(
     "series_id", "source_position", "official_m4_series_id", "history", "future"
   )
@@ -94,10 +162,11 @@ M4_APPROVED_SUBMISSIONS <- data.frame(
   if (horizon != as.integer(official$h) || horizon != length(official$xx)) {
     stop("horizon does not match official M4 series", call. = FALSE)
   }
-  if (!.m4_float32_equal(unlist(request$history, use.names = FALSE), as.numeric(official$x))) {
+  reconciliation <- if (!is.null(policy)) .m4_reconcile_series(request, official) else NULL
+  if (is.null(policy) && !.m4_float32_equal(unlist(request$history, use.names = FALSE), as.numeric(official$x))) {
     stop("history does not match official M4 series at float32 precision", call. = FALSE)
   }
-  if (!.m4_float32_equal(unlist(request$future, use.names = FALSE), as.numeric(official$xx))) {
+  if (is.null(policy) && !.m4_float32_equal(unlist(request$future, use.names = FALSE), as.numeric(official$xx))) {
     stop("future does not match official M4 series at float32 precision", call. = FALSE)
   }
   point <- official$pt_ff
@@ -106,7 +175,7 @@ M4_APPROVED_SUBMISSIONS <- data.frame(
   }
   list(
     series_id = series_id, position = position,
-    official_m4_series_id = official_id, point = point
+    official_m4_series_id = official_id, point = point, reconciliation = reconciliation
   )
 }
 
@@ -148,16 +217,27 @@ import_m4comp2018 <- function(
   ))
   if (!length(daily_positions)) stop("M4 contains no Daily series", call. = FALSE)
   records <- list()
+  reconciliation <- list()
   seen <- integer()
   for (request in payload$series) {
     position <- .m4_integer(request$source_position, "source_position")
+    if (!is.null(payload$source_reconciliation) && position != length(seen)) {
+      stop("structural mismatch: source ordering", call. = FALSE)
+    }
     if (position >= length(daily_positions)) stop("source_position is outside M4 Daily", call. = FALSE)
     if (position %in% seen) stop("source_position must be unique", call. = FALSE)
     seen <- c(seen, position)
     if (.m4_integer(request$horizon, "horizon", 1L) != expected_horizon) {
       stop("series horizon does not match expected_horizon", call. = FALSE)
     }
-    checked <- .m4_validate_series(request, M4[[daily_positions[[position + 1L]]]])
+    checked <- .m4_validate_series(request, M4[[daily_positions[[position + 1L]]]], payload$source_reconciliation)
+    if (!is.null(checked$reconciliation)) {
+      checked$reconciliation$flagged <- checked$reconciliation$maximum_normalized_difference_pct >
+        payload$source_reconciliation$series_warning_pct
+      checked$reconciliation$potentially_material <- checked$reconciliation$maximum_normalized_difference_pct >
+        payload$source_reconciliation$single_series_material_pct
+      reconciliation[[length(reconciliation) + 1L]] <- checked$reconciliation
+    }
     for (forecast_id in forecast_ids) {
       approved <- M4_APPROVED_SUBMISSIONS[
         M4_APPROVED_SUBMISSIONS$forecast_id == forecast_id, , drop = FALSE
@@ -183,7 +263,14 @@ import_m4comp2018 <- function(
       ))
     }
   }
-  list(records = records)
+  result <- list(records = records)
+  if (!is.null(payload$source_reconciliation)) {
+    result$reconciliation <- list(series = reconciliation, summary = .m4_reconciliation_summary(
+      reconciliation, payload$source_reconciliation, list(
+        gift_eval = payload$gift_eval_source,
+        m4comp2018 = list(name = .M4_SOURCE_PACKAGE, version = package_version, revision = source_revision))))
+  }
+  result
 }
 
 # CLI boundary: package datasets are loaded exactly once per invocation and are
