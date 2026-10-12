@@ -1,5 +1,70 @@
 # IDs 038/041 integrated implementation checkpoint
 
+## Day-end failed-run technical checkpoint, 12 October 2026
+
+The researcher authorised publication and two-host synchronisation of the existing
+implementation commits plus this separate documentation-only record, followed by
+owned-service shutdown and clean Ubuntu OS shutdown. This is **failed-run technical
+checkpoint publication**, not successful Part B acceptance or POC2 scientific
+closure. No experiment continuation, retry, historical cleanup, tag, dependency
+change or rewrite of earlier commits is authorised. Earlier publication restrictions
+below describe their historical increments, not this day-end authorisation.
+
+The supported resume of `poc2_m4_daily_full_paper_tables_ulp_20261008` used
+`5635e57e1a2be6443c9fe5f619d543f445d14280` and skipped completed Processes 01–03.
+Its command exited **1** after **143,862.7578 seconds**, approximately **39 hours
+58 minutes** (39:57:42.758). The recorded execution began at 10:13:02 AEDT on
+9 October and ended at 02:10:23 AEDT on 11 October. Authoritative stored state:
+
+| Process/result | Count and final state |
+| --- | --- |
+| Process 01 import | Completed: 4,227 series and forecast instances; 8,454 archived forecasts |
+| Process 02 preprocessing | Completed: 4,227 records |
+| Process 03 transformations | Completed: 4,227 records; 124,706 prepared windows |
+| Process 04 forecasts/models | Failed during distributed DTW calibration; zero generated forecasts, stored calibration scores, selected widths or directional predictions |
+| Process 05 combinations | Not run; pending |
+| Process 06 evaluation/sensitivity | Not run; zero official evaluations, sensitivity candidates, retained diagnostics or paper reports |
+
+Read-only comparison with the preserved pre-recovery database confirms all
+Process 01–03 series, forecast-instance, archived-forecast, preprocessing and
+transformation rows remain unchanged. Source-provider reconciliation remains the
+accepted informational result: 4,227 series, 10,023,836 observations, maximum
+normalized difference 0.000058736088095187654%, zero flagged series and zero
+actual-direction changes. The previously accepted ULP evidence is preserved.
+
+The last trustworthy scheduler snapshot was at **12:45 AEDT on 9 October**:
+**11,645 of 199,232 DTW calibration batches, approximately 5.8%**, 23 active CPU
+workers plus one registered GPU worker, and zero scheduler task errors at that
+time. **This snapshot is stale and is not necessarily the final percentage.**
+Later CPU activity is not a final completion count; no final batch percentage
+has been established. The 118,386 failed Process 04 planned task records reflect
+the process-level abort, not 118,386 independently executed model failures.
+
+At 02:08:47 AEDT on 11 October, Ubuntu's worker log records the native
+`environments/classifiers/.venv/bin/python` subprocess running
+`src/python/04_04_train_directional_dtw.py calibration` terminating with
+**`Signals.SIGSEGV: 11`**. The same `CalledProcessError` is retained in DuckDB
+task-attempt evidence. **The exact underlying native-library cause remains
+unconfirmed.** Shutdown-time communication errors in the coordinator log do not
+establish that native cause. This failure is distinct from the earlier swap-growth
+guard interruption; no scientific formula or dependency is changed to explain it.
+
+The continuation controller recorded `recovery_failed` and did not invoke export,
+alternative-source aggregate comparison or restart validation. No final tables or
+figures were produced. Main/window databases remain local under `results/`;
+their researcher evidence is under the experiment's `evidence/`, including
+`pre-resource-recovery/`, original summaries/logs, resource samples,
+`resource-recovery-status.json`, `resource-recovery-completion.json` and the
+stale `resource-recovery-progress.json`. Ubuntu CPU/GPU logs were additionally
+copied there as `ubuntu-dtw-cpu-failed-run.log` and `ubuntu-gpu-failed-run.log`.
+Original worker/service logs, caches, prior evidence and any existing model
+artifacts are retained on their respective machines; none is committed.
+
+The outstanding requirement before another full run is to **diagnose and
+checkpoint DTW native execution**, with reproducible bounded validation and
+reviewed evidence. Do not infer scientific acceptance from the completed import,
+preprocessing, transformation or earlier Part A acceptance.
+
 ## Part B operational recovery, 9 October 2026
 
 The researcher classified the preserved Process 04 stop as an operational
