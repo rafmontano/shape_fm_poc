@@ -78,6 +78,21 @@ erase already completed predictions. Restart verifies the cohort exactly and
 skips complete identities, scheduling only missing work. Operational completion
 order, host and batch size do not alter scientific identity.
 
+During the fresh run on 13 October, all 59,178 DTW horizon predictions and all
+fifteen fitted directional artifacts were persisted before a Mantis dataset
+staging interruption. Dask's simultaneous full-dataset broadcast failed with
+macOS `OSError: [Errno 55] No buffer space available`; the scheduler log records
+the failed TCP broadcasts. This was not a DTW subprocess/native crash. The
+operational correction stages the unchanged fingerprint-verified classification
+dataset one worker at a time, without changing computation concurrency, worker
+counts, models or membership. The interruption databases and logs are preserved
+under the experiment's `evidence/interruption-01/`. Supported restart must reuse
+completed scientific work; completion and final evidence remain pending. The
+49 comparison-pipeline, experiment-execution and Mantis-component regressions
+passed. A disposable real two-worker Dask fixture exercised the production
+staging block twice, verifying bounded transfer, unchanged payload fingerprint
+and existing-cache reuse. No dependency, model or configuration changed.
+
 The existing entry point remains authoritative. After source synchronization,
 machine availability and parent execution approval, create the fresh run with:
 

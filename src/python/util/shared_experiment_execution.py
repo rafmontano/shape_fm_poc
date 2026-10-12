@@ -3798,16 +3798,21 @@ class ExperimentCoordinator:
                 dataset_cache_fingerprint, dataset_payload
             )
         else:
-            reports = dask_client.run(
-                install_immutable_classification_dataset,
-                dataset_cache_fingerprint,
-                dataset_payload,
-            )
-            if any(
-                report["fingerprint"] != dataset_cache_fingerprint
-                for report in reports.values()
-            ):
-                raise RuntimeError("classification dataset was not verified on every worker")
+            # Stage the same immutable payload serially: simultaneous full-dataset
+            # broadcasts exhausted the coordinator's operating-system TCP buffers.
+            # This bounds transfer pressure, not scientific task concurrency.
+            for worker in sorted(dask_client.scheduler_info()["workers"]):
+                reports = dask_client.run(
+                    install_immutable_classification_dataset,
+                    dataset_cache_fingerprint,
+                    dataset_payload,
+                    workers=[worker],
+                )
+                if any(
+                    report["fingerprint"] != dataset_cache_fingerprint
+                    for report in reports.values()
+                ):
+                    raise RuntimeError("classification dataset was not verified on every worker")
         training_by_horizon = {
             int(row[3].rsplit("h", 1)[1]): row
             for row in rows if ":train:h" in row[3]
