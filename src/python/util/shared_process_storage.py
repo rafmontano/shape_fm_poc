@@ -102,7 +102,7 @@ class ProcessStorage:
                         "SELECT configuration_version FROM experiment_configuration"
                     ).fetchone()[0]
                 )
-                if version == 12 and process_id == 6:
+                if version >= 12 and process_id == 6:
                     from .p06_02_table_storage import TableStorage
 
                     self._validate_directional(connection, process_id, version)
@@ -110,12 +110,12 @@ class ProcessStorage:
                         "SELECT experiment_id FROM experiments"
                     ).fetchone()[0]
                     TableStorage(connection).validate(experiment_id)
-                if version == 12 and process_id in {3, 4}:
+                if version >= 12 and process_id in {3, 4}:
                     self._validate_directional(connection, process_id, version)
                 if version in {10, 11} and process_id >= 3:
                     return self._validate_directional(connection, process_id, version)
                 expected_sql, output_sql = self._contracts(process_id)
-                if version == 12 and process_id == 6:
+                if version >= 12 and process_id == 6:
                     archives = "SELECT experiment_id, 'official_reference' variant_id, unnest(['m4_smyl','m4_fforma']) candidate FROM experiments"
                     expected_sql += " UNION ALL " + archives
                     output_sql += " UNION ALL SELECT e.* FROM (" + archives + ") e JOIN official_evaluations r ON r.experiment_id=e.experiment_id AND r.variant_id=e.variant_id AND r.candidate=e.candidate"
@@ -128,7 +128,7 @@ class ProcessStorage:
                 stored = int(connection.execute(f"SELECT count(*) FROM ({output_sql}) output").fetchone()[0])
                 total_tasks = connection.execute(
                     """SELECT count(*) FROM experiment_tasks WHERE stage=?
-                       AND (? != 12 OR ? NOT IN (4,6) OR
+                       AND (? < 12 OR ? NOT IN (4,6) OR
                             (NOT starts_with(candidate, 'directional_') AND candidate!='paper_tables'))""",
                     [process_id, version, process_id]
                 ).fetchone()[0]
@@ -175,7 +175,7 @@ class ProcessStorage:
         task_count, completed = connection.execute(
             """SELECT count(*), count(*) FILTER (WHERE t.status='completed')
                FROM experiment_tasks AS t WHERE t.stage=?
-                 AND (? != 12 OR ? = 3 OR starts_with(t.candidate, 'directional_'))""",
+                 AND (? < 12 OR ? = 3 OR starts_with(t.candidate, 'directional_'))""",
             [process_id, version, process_id],
         ).fetchone()
         if task_count != expected or completed != expected:
@@ -274,6 +274,28 @@ class ProcessStorage:
                        WHERE candidate IN ('directional_dtw','directional_mantis_rf')"""
                 ).fetchone()[0])
                 reference_count = representations - series_count
+                if version == 13:
+                    from .window_preparation import load_training_cohort
+
+                    preparation = connection.execute(
+                        "SELECT preparation_id, child_database FROM window_preparation_runs WHERE status='completed'"
+                    ).fetchone()
+                    with duckdb.connect(
+                        str((self.database.parent / preparation[1]).resolve()), read_only=True
+                    ) as child:
+                        cohort = load_training_cohort(
+                            child, preparation[0], configuration.resolved["pipeline"]["window_preparation"]["training_cohort"]
+                        )
+                    references = {row[0] for row in connection.execute(
+                        "SELECT input_id FROM directional_representations WHERE role='training'"
+                    ).fetchall()}
+                    fixed_rows = connection.execute(
+                        "SELECT horizon, effective_width, representative_proportion, calibration_accuracy, tie_rule "
+                        "FROM directional_selected_widths ORDER BY horizon"
+                    ).fetchall()
+                    if (references != set(cohort["selected_window_ids"])
+                            or fixed_rows != [(h, 6, 0.10, None, "fixed_configuration") for h in range(1, 15)]):
+                        raise RuntimeError("fixed DTW widths or shared training cohort are invalid")
                 if (
                     dtw_models != 1 or composite_models != 1
                     or (version == 11 and (representations != 595 or reference_count != 495))
@@ -283,7 +305,7 @@ class ProcessStorage:
                     or representation_executions != 1
                     or represented_execution_members != representations
                     or invalid_representations or official_lineage_mismatches
-                    or scores != 64 * 14 or widths != 14
+                    or scores != (0 if version == 13 else 64 * 14) or widths != 14
                     or runs != 14 or predictions != series_count * 28
                     or dtw_lineage != series_count * 14
                     or classifier_lineage != series_count * 14

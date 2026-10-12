@@ -10,6 +10,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -166,6 +167,64 @@ class DirectionalDTWTests(unittest.TestCase):
         )
         self.assertEqual(len(loaded.references), 1)
         self.assertEqual(len(loaded.selected_widths), 14)
+
+    def test_fixed_proportion_publish_save_and_cross_horizon_prediction(self):
+        """Fixed models retain the actual aeon window and reuse one neighbour."""
+        from util.shared_model_storage import ModelStorage
+
+        row = reference("reference/a", "series/a", 2.0, 0)
+        row["labels"] = [index % 2 for index in range(14)]
+        runner, cache = self.runner([row])
+        fingerprint = DTW.content_fingerprint({"references": [row]})
+        fitted = runner.fitted_model((6,) * 14, fingerprint, window_proportion=0.10)
+        self.assertEqual(DTW.effective_width(0.10), 6)
+        with self.assertRaisesRegex(ValueError, "all fourteen widths"):
+            runner.fitted_model((6,) * 13 + (7,), fingerprint, 0.10)
+        job = [{"id": "fixed", "effective_width": 6, "horizons": [1, 4, 14],
+                "queries": [{"identity": "evaluation/a", "values": [2.0] * 64}]}]
+        in_memory = DTW.DirectionalDTWRunner.from_model(fitted)
+        with patch.object(DTW, "dtw_distance", wraps=DTW.dtw_distance) as distance, \
+                patch.object(in_memory, "_nearest", wraps=in_memory._nearest) as nearest:
+            expected = in_memory.predict(job)
+        self.assertEqual(nearest.call_count, 1)
+        self.assertEqual(distance.call_args.kwargs["window"], 0.10)
+        self.assertEqual([item["prediction"] for item in expected[0]["predictions"]],
+                         [0, 1, 1])
+        with tempfile.TemporaryDirectory() as directory:
+            subprocess.run(
+                [sys.executable, str(ROOT / "src/python/04_04_train_directional_dtw.py"),
+                 "publish", "--reference-cache", str(cache),
+                 "--reference-fingerprint", fingerprint, "--model-root", directory,
+                 "--experiment", "fixture", "--frequency", "D"],
+                cwd=ROOT, text=True, capture_output=True, check=True,
+                input=DTW.canonical_json({"selected_widths": [6] * 14,
+                                          "window_proportion": 0.10}),
+            )
+            loaded = ModelStorage(directory, "fixture").load(
+                "directional_dtw", "D", "all_horizons"
+            )
+            with patch.object(DTW, "dtw_distance", wraps=DTW.dtw_distance) as distance:
+                self.assertEqual(DTW.DirectionalDTWRunner.from_model(loaded).predict(job),
+                                 expected)
+            self.assertEqual(distance.call_args.kwargs["window"], 0.10)
+
+    def test_legacy_serialized_state_without_proportion_uses_width_over_64(self):
+        """Pre-field fitted state resolves the default without migrating artifacts."""
+        import pickle
+
+        runner, _ = self.runner([reference("reference/a", "series/a", 2.0, 1)])
+        fingerprint = DTW.content_fingerprint(
+            {"references": [reference("reference/a", "series/a", 2.0, 1)]}
+        )
+        fitted = runner.fitted_model((6,) * 14, fingerprint)
+        object.__delattr__(fitted, "window_proportion")
+        loaded = pickle.loads(pickle.dumps(fitted))
+        with patch.object(DTW, "dtw_distance", wraps=DTW.dtw_distance) as distance:
+            DTW.DirectionalDTWRunner.from_model(loaded).predict(
+                [{"effective_width": 6, "horizons": [1],
+                  "queries": [{"identity": "evaluation/a", "values": [2.0] * 64}]}]
+            )
+        self.assertEqual(distance.call_args.kwargs["window"], 6 / 64)
 
     def test_invalid_values_are_rejected(self):
         invalid = reference("reference/a", "series/a", 0.0, 0)

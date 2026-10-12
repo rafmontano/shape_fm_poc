@@ -81,7 +81,10 @@ def main() -> None:
             raise ValueError("publish requires selected_widths")
         storage = ModelStorage(arguments.model_root, arguments.experiment)
         evidence = storage.save(
-            runner.fitted_model(tuple(widths), arguments.reference_fingerprint),
+            runner.fitted_model(
+                tuple(widths), arguments.reference_fingerprint,
+                window_proportion=request.get("window_proportion"),
+            ),
             "directional_dtw",
             arguments.frequency,
             "all_horizons",

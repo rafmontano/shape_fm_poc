@@ -119,6 +119,7 @@ class DirectionalDTWModel:
     references: tuple[Reference, ...]
     selected_widths: tuple[int, ...]
     reference_fingerprint: str
+    window_proportion: float | None = None
 
     def __post_init__(self) -> None:
         """Validate the complete reusable fitted state without duplicating references."""
@@ -131,6 +132,11 @@ class DirectionalDTWModel:
             for width in self.selected_widths
         ):
             raise ValueError("DTW fitted model requires fourteen widths within 0..63")
+        if self.window_proportion is not None and any(
+            width != effective_width(self.window_proportion)
+            for width in self.selected_widths
+        ):
+            raise ValueError("fixed window proportion must match all fourteen widths")
         payload = {
             "references": [
                 {
@@ -193,16 +199,19 @@ class DirectionalDTWRunner:
         model.__post_init__()
         runner = cls.__new__(cls)
         runner.references = model.references
+        runner.window_proportion = model.window_proportion
         return runner
 
     def fitted_model(
-        self, selected_widths: tuple[int, ...], reference_fingerprint: str
+        self, selected_widths: tuple[int, ...], reference_fingerprint: str,
+        window_proportion: float | None = None,
     ) -> DirectionalDTWModel:
         """Freeze this library once with all selected horizon widths."""
         return DirectionalDTWModel(
             references=self.references,
             selected_widths=selected_widths,
             reference_fingerprint=reference_fingerprint,
+            window_proportion=window_proportion,
         )
 
     def _nearest(
@@ -214,7 +223,11 @@ class DirectionalDTWRunner:
         """Find one deterministic nearest reference using direct aeon DTW."""
         if isinstance(width, bool) or not isinstance(width, int) or not 0 <= width < INPUT_LENGTH:
             raise ValueError("effective width must be an integer within 0..63")
-        proportion = width / INPUT_LENGTH
+        proportion = getattr(self, "window_proportion", None)
+        if proportion is None or excluded_source is not None:
+            proportion = width / INPUT_LENGTH
+        elif width != effective_width(proportion):
+            raise ValueError("prediction width differs from fixed window proportion")
         nearest: Reference | None = None
         nearest_distance = math.inf
         for reference in self.references:

@@ -23,7 +23,7 @@ import uuid
 import csv
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 import duckdb
 
@@ -614,7 +614,7 @@ class ExperimentCoordinator:
             )
         if dry_run:
             task_counts = expected_task_counts(len(instances), self.config)
-            directional = self.configuration.version in {10, 11, 12}
+            directional = self.configuration.version in {10, 11, 12, 13}
             directional_models = 2 if self.configuration.version >= 11 else 1
             return {
                 "scope": requested_scope,
@@ -622,9 +622,10 @@ class ExperimentCoordinator:
                 "selection": self.configuration.resolved["data"]["selection"],
                 "series_count": len(set(series_ids)),
                 "forecast_instances": len(instances),
-                "candidate_forecast_rows": (task_counts[5] if self.configuration.version == 12
+                "candidate_forecast_rows": (task_counts[5] if self.configuration.version >= 12
                                             else 0 if directional else task_counts[5]),
-                "directional_calibration_identities": 1 if directional else 0,
+                "directional_calibration_identities": 1 if directional and self.configuration.version < 13 else 0,
+                "directional_fixed_training_identities": 1 if self.configuration.version == 13 else 0,
                 "mantis_representation_identities": (
                     1 if self.configuration.version >= 11 else 0
                 ),
@@ -635,11 +636,11 @@ class ExperimentCoordinator:
                     len(instances) * 14 * directional_models if directional else 0
                 ),
                 "process_05_no_work_identities": 1 if self.configuration.version in {10, 11} else 0,
-                "paper_table_identities": 1 if self.configuration.version == 12 else 0,
+                "paper_table_identities": 1 if self.configuration.version >= 12 else 0,
                 "directional_evaluation_identities": (
                     14 * directional_models if directional else 0
                 ),
-                "official_evaluation_rows": (task_counts[6] - 29 if self.configuration.version == 12
+                "official_evaluation_rows": (task_counts[6] - 29 if self.configuration.version >= 12
                                              else 0 if directional else task_counts[6]),
                 "benchmark_configuration": official["configuration_name"],
                 "task_counts": {
@@ -788,7 +789,7 @@ class ExperimentCoordinator:
                                 experiment_id, 3, instance_id, variant_id, None
                             )
                         )
-                        if self.configuration.version in {10, 11, 12}:
+                        if self.configuration.version in {10, 11, 12, 13}:
                             for horizon in range(1, 15):
                                 task_rows.append(
                                     self._task_row(
@@ -803,7 +804,7 @@ class ExperimentCoordinator:
                                         ),
                                     )
                                 )
-                            if self.configuration.version != 12:
+                            if self.configuration.version < 12:
                                 continue
                         for model in self.config["models"]:
                             if model.startswith("directional_"):
@@ -847,7 +848,7 @@ class ExperimentCoordinator:
         self.connection.execute("BEGIN TRANSACTION")
         try:
             evaluation_tasks = []
-            if self.configuration.version in {10, 11, 12}:
+            if self.configuration.version in {10, 11, 12, 13}:
                 variant_id = variants[0][0]
                 evaluation_tasks.extend(
                     [
@@ -925,7 +926,7 @@ class ExperimentCoordinator:
                         )
                         for horizon in range(1, 15)
                     )
-            if self.configuration.version == 12:
+            if self.configuration.version >= 12:
                 evaluation_tasks = [row for row in evaluation_tasks if row[2] != 5]
                 evaluation_tasks.append(self._task_row(
                     experiment_id, 6, None, variants[0][0], "paper_tables"
@@ -943,7 +944,7 @@ class ExperimentCoordinator:
                             experiment_id, 6, None, variant_id, candidate
                         )
                     )
-            if self.configuration.version == 12:
+            if self.configuration.version >= 12:
                 evaluation_tasks.extend(
                     self._task_row(experiment_id, 6, None, "official_reference", candidate)
                     for candidate in ("m4_smyl", "m4_fforma")
@@ -1551,7 +1552,7 @@ class ExperimentCoordinator:
         hardware: dict[str, Any] = coordinator_hardware
         resolved_device = profile.required_accelerator or device
         dask_client = None
-        if settings.mode == "dask" and (process != 6 or self.configuration.version == 12):
+        if settings.mode == "dask" and (process != 6 or self.configuration.version >= 12):
             from distributed import Client
 
             from .shared_distributed_execution import (
@@ -1574,10 +1575,10 @@ class ExperimentCoordinator:
                                      timeout=f"{settings.dask_timeout_seconds}s")
             expected_gpu_name = None
             try:
-                if self.configuration.version in {10, 11, 12}:
+                if self.configuration.version in {10, 11, 12, 13}:
                     topology = profile.distributed_topology(
                         self.configuration.version == 11
-                        or self.configuration.version == 12 and settings.dask_expected_gpu_workers > 0
+                        or self.configuration.version >= 12 and settings.dask_expected_gpu_workers > 0
                     )
                     paths = self.configuration.execution_paths
                     lock_path = self.root / paths["classifiers_lock"]
@@ -1637,7 +1638,7 @@ class ExperimentCoordinator:
                     resolved_device = (
                         "cuda" if self.configuration.version == 11 or gpu_workers else "cpu"
                     )
-                    if self.configuration.version == 12 and process == 4 and gpu_workers:
+                    if self.configuration.version >= 12 and process == 4 and gpu_workers:
                         # Mixed work must pass both existing provider boundaries.
                         chronos_cluster = validate_cluster(
                             dask_client, expected_workers=settings.dask_expected_workers,
@@ -1736,7 +1737,7 @@ class ExperimentCoordinator:
         invocation_overrides = {
             **overrides,
             **({"table_sensitivity_batch_size": self.table_sensitivity_batch_size}
-               if self.configuration.version == 12 else {}),
+               if self.configuration.version >= 12 else {}),
             "selection": {
                 **self.configuration.resolved["data"]["selection"],
                 "series_count_actual": int(actual_series),
@@ -1758,7 +1759,7 @@ class ExperimentCoordinator:
                 ),
                 5: int(configured_batches.get("combine", 1)),
                 6: int(self.table_sensitivity_batch_size
-                       if self.configuration.version == 12
+                       if self.configuration.version >= 12
                        else configured_batches.get("gift_eval", 1)),
             }[process],
             profile,
@@ -2051,7 +2052,7 @@ class ExperimentCoordinator:
         Outputs: None; computes transformed vectors locally or on Dask and atomically
         persists values, parameters, lineage, fingerprints, and task completions.
         """
-        if self.configuration.version in {10, 11, 12}:
+        if self.configuration.version in {10, 11, 12, 13}:
             if not rows:
                 return
             self._run_03_directional_preparation(
@@ -2063,7 +2064,7 @@ class ExperimentCoordinator:
                 settings,
                 profile,
             )
-            if self.configuration.version != 12:
+            if self.configuration.version < 12:
                 return
         prepared = []
         metadata = []
@@ -2374,7 +2375,7 @@ class ExperimentCoordinator:
                     )
                     self._insert_or_verify("directional_actual_labels", label_record)
 
-                if self.configuration.version == 12:
+                if self.configuration.version >= 12:
                     # The shared task completes only after the full-history point
                     # transformation below has also been persisted successfully.
                     insert()
@@ -2408,7 +2409,7 @@ class ExperimentCoordinator:
         Chronos OOM batches, inverse-transforms outputs, and transactionally persists
         original-scale forecast arrays, provenance, hashes, and task state.
         """
-        if self.configuration.version in {10, 11, 12}:
+        if self.configuration.version in {10, 11, 12, 13}:
             if not rows:
                 return
             dtw_rows = [
@@ -2465,7 +2466,7 @@ class ExperimentCoordinator:
                         dask_client=dask_client,
                         settings=settings,
                     )
-            if self.configuration.version != 12:
+            if self.configuration.version < 12:
                 return
             rows = [row for row in rows if not row[3].startswith("directional_")]
             if not rows:
@@ -2578,6 +2579,11 @@ class ExperimentCoordinator:
         }
         child = duckdb.connect(str(child_path), read_only=True)
         try:
+            from .window_preparation import load_training_cohort
+
+            cohort = load_training_cohort(
+                child, run[0], self.configuration.resolved["pipeline"]["window_preparation"].get("training_cohort")
+            )
             rows = child.execute(
                 """SELECT w.window_id, w.series_key, w.transformed_input, l.labels,
                           w.transformed_hash
@@ -2599,6 +2605,11 @@ class ExperimentCoordinator:
             ).fetchone()
         finally:
             child.close()
+        if cohort is not None:
+            selected_ids = set(cohort["selected_window_ids"])
+            rows = [row for row in rows if row[0] in selected_ids]
+            if len(rows) != cohort["selected_count"]:
+                raise RuntimeError("DTW training library does not match the shared cohort")
         references = []
         for window_id, series_key, values, labels, transformed_hash in rows:
             if series_key not in series_identities:
@@ -2632,6 +2643,8 @@ class ExperimentCoordinator:
             "source_manifest_hash": metadata[3],
             "reference_count": len(references),
         }
+        if cohort is not None:
+            preparation["training_cohort"] = cohort
         return payload, fingerprint, preparation
 
     def _directional_implementation(
@@ -2729,8 +2742,8 @@ class ExperimentCoordinator:
         dask_client: Any,
         settings: ExecutionSettings | None,
         profile: ExecutionProfile,
-    ) -> list[tuple[list[dict[str, Any]], dict[str, Any]]]:
-        """Execute validated calibration or prediction blocks under Prefect/Dask."""
+    ) -> Iterator[tuple[list[dict[str, Any]], dict[str, Any]]]:
+        """Yield validated bounded outcomes for immediate coordinator checkpointing."""
         from .shared_workflow_orchestration import run_gate_compute_flow
 
         execution = self.configuration.execution
@@ -2777,10 +2790,11 @@ class ExperimentCoordinator:
             max_in_flight=settings.dask_max_in_flight if settings else workers,
             local_workers=workers,
         )
-        completed = []
+        failures = []
         for outcome in outcomes:
             if "response" not in outcome:
-                raise RuntimeError(outcome["error"])
+                failures.append(outcome["error"])
+                continue
             response = outcome["response"]
             runtime = response.get("runtime", {})
             for package, version in {
@@ -2793,8 +2807,9 @@ class ExperimentCoordinator:
                     raise RuntimeError("DTW block runtime differs from the locked environment")
             if runtime.get("numeric_dtype") != "float64" or runtime.get("numba_threads") != 1:
                 raise RuntimeError("DTW block violated numeric dtype or thread controls")
-            completed.append((outcome["batch"], response))
-        return completed
+            yield outcome["batch"], response
+        if failures:
+            raise RuntimeError("; ".join(failures))
 
     def _run_04_directional_dtw(
         self,
@@ -2805,7 +2820,7 @@ class ExperimentCoordinator:
         dask_client: Any,
         settings: ExecutionSettings | None,
     ) -> None:
-        """Calibrate per-horizon widths and predict every pending official identity."""
+        """Fit configured fixed DTW (v13) or historical calibrated DTW, then predict."""
         from .shared_distributed_execution import install_immutable_reference_cache
 
         payload, reference_fingerprint, reference_preparation = (
@@ -2876,11 +2891,44 @@ class ExperimentCoordinator:
         calibration_row = next(
             (row for row in rows if row[3] == training_candidate), None
         )
-        proportions = model_science["constraint"]["candidate_proportions"]
+        fixed = self.configuration.version == 13
+        if fixed and calibration_row is not None:
+            selected_records = []
+            for horizon in range(1, 15):
+                content = {
+                    "model_definition_id": model_id,
+                    "horizon": horizon,
+                    "effective_width": model_science["constraint"]["effective_width"],
+                    "representative_proportion": model_science["constraint"]["proportion"],
+                    "calibration_accuracy": None,
+                    "tie_rule": "fixed_configuration",
+                }
+                selected_records.append({
+                    "selected_width_id": "directional-width/" + json_fingerprint(
+                        {"model": model_id, "horizon": horizon}
+                    )[:32],
+                    **content, "content_hash": json_fingerprint(content),
+                })
+
+            def insert_fixed_configuration() -> None:
+                self._insert_or_verify("directional_model_definitions", model_record)
+                for record in selected_records:
+                    self._insert_or_verify("directional_selected_widths", record)
+
+            artifact_evidence = self._publish_directional_dtw_model((6,) * 14, reference_fingerprint)
+            self._commit_task(
+                calibration_row[0], attempts[calibration_row[0]], 0.0,
+                insert_fixed_configuration,
+                {"width_selection": "fixed_configuration", "calibration_tasks": 0,
+                 "training_cohort": reference_preparation["training_cohort"],
+                 "reference_cache": cache_reports, "fitted_artifact": artifact_evidence},
+            )
+            calibration_row = None
+        proportions = model_science["constraint"].get("candidate_proportions", [])
         width_proportions = {}
         for proportion in proportions:
             width_proportions.setdefault(int(proportion * 64), proportion)
-        if set(width_proportions) != set(range(64)):
+        if not fixed and set(width_proportions) != set(range(64)):
             raise RuntimeError("configured candidates do not cover all 64 effective widths")
         if calibration_row is not None and self.configuration.version >= 11:
             stored_widths = tuple(
@@ -3273,7 +3321,10 @@ class ExperimentCoordinator:
         completed = subprocess.run(
             arguments,
             cwd=self.root,
-            input=canonical_json({"selected_widths": list(selected_widths)}),
+            input=canonical_json({
+                "selected_widths": list(selected_widths),
+                **({"window_proportion": 0.10} if self.configuration.version == 13 else {}),
+            }),
             check=True,
             capture_output=True,
             text=True,
@@ -3454,6 +3505,11 @@ class ExperimentCoordinator:
             str((self.database_path.parent / run[1]).resolve()), read_only=True
         )
         try:
+            from .window_preparation import load_training_cohort
+
+            cohort = load_training_cohort(
+                child, run[0], self.configuration.resolved["pipeline"]["window_preparation"].get("training_cohort")
+            )
             training_rows = child.execute(
                 """SELECT w.window_id, w.series_key, w.transformed_input,
                           w.transformed_hash, l.labels, l.reference_value
@@ -3468,6 +3524,15 @@ class ExperimentCoordinator:
             ).fetchall()
         finally:
             child.close()
+        membership_fingerprint = run[3]
+        if cohort is not None:
+            selected_ids = set(cohort["selected_window_ids"])
+            training_rows = [row for row in training_rows if row[0] in selected_ids]
+            if len(training_rows) != cohort["selected_count"]:
+                raise RuntimeError("Mantis training inputs do not match the shared cohort")
+            membership_fingerprint = json_fingerprint({
+                "split": run[3], "training_cohort": cohort["cohort_fingerprint"],
+            })
         inputs = [
             PreparedDirectionalInput(
                 input_id=row[0],
@@ -3478,7 +3543,7 @@ class ExperimentCoordinator:
                 labels=tuple(int(value) for value in row[4]),
                 preparation_definition_id=run[2],
                 preparation_fingerprint=run[2],
-                membership_fingerprint=run[3],
+                membership_fingerprint=membership_fingerprint,
                 input_fingerprint=row[3],
             )
             for row in training_rows
@@ -3502,14 +3567,14 @@ class ExperimentCoordinator:
                 labels=None,
                 preparation_definition_id=row[4],
                 preparation_fingerprint=row[5],
-                membership_fingerprint=run[3],
+                membership_fingerprint=membership_fingerprint,
                 input_fingerprint=row[6],
             )
             for row in official_rows
         )
         if len(inputs) != len(training_rows) + self.configuration.series_count:
             raise RuntimeError("common Mantis input set is incomplete")
-        return inputs, run[2], run[3]
+        return inputs, run[2], membership_fingerprint
 
     def _run_04_directional_mantis_rf(
         self,
@@ -4185,7 +4250,7 @@ class ExperimentCoordinator:
         input fingerprints, provenance, and task completion.
         """
         configuration_version = getattr(self.configuration, "version", 0)
-        if configuration_version == 12:
+        if configuration_version >= 12:
             from .p06_01_table_flow import run_table_evaluation
 
             run_table_evaluation(coordinator=self, experiment_id=experiment_id,
@@ -4991,13 +5056,13 @@ def experiment_status(
                FROM experiment_processes ORDER BY process_id"""
         ).fetchall()
         table_summary = None
-        if configuration[0] == 12:
+        if configuration[0] >= 12:
             from .p06_02_table_storage import TableStorage
 
             table_summary = TableStorage(connection).summary(experiment_id)
         return {
             "experiment_id": experiment_id,
-            **({"paper_tables": table_summary} if configuration[0] == 12 else {}),
+            **({"paper_tables": table_summary} if configuration[0] >= 12 else {}),
             "name": experiment[0],
             "scope": experiment[1],
             "status": experiment[2],

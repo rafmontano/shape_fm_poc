@@ -1,5 +1,24 @@
 # POC2 ID 021 directional DTW baseline
 
+## Current increment: 12 October 2026
+
+The researcher approved a **new capped, fixed-width design**, not a numerical
+reproduction of the closed tuned baseline below. Configuration version 13 uses
+all 4,227 official Daily inputs, a shared post-S1 training cap of 10,000 and
+direct aeon 1.6.0 DTW at `window=0.10` (effective width 6). One 1-NN query per
+official input supplies the stored neighbour labels for horizons 1–14; equal
+distances still select the lowest stable reference identity. There are no
+calibration grids, tasks or scores. Fourteen configuration-derived width rows
+have `calibration_accuracy=NULL` and `tie_rule=fixed_configuration`; parent
+schema 13 makes accuracy nullable through migration, without rewriting old
+scientific results.
+
+The [current implementation contract](poc2-capped-fixed-dtw-implementation.md)
+governs cohort selection, persistence, execution and restart. Historical closure,
+accepted databases and tuned results remain unchanged. The sections below
+describe that historical baseline, not the new full experiment. Focused local
+validation is recorded in the current contract; full-run evidence remains pending.
+
 Status: Closed and approved for publication on 6 October 2026. The base
 architecture was approved on 5 October 2026; the aeon-only engine amendment,
 execution evidence, and final Researcher/Chief Architect acceptance followed on

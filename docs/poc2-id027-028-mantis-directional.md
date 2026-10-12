@@ -1,5 +1,23 @@
 # POC2 IDs 027 and 028 Mantis directional architecture
 
+## Current increment: 12 October 2026
+
+The approved configuration-version-13 full Daily experiment uses the exact same
+persisted post-S1 training cohort for DTW and Mantis: exactly 10,000 references
+when eligible membership exceeds that cap, otherwise all eligible references.
+The seed-1234 historical first-horizon stratification, ordered membership and
+restart verification are defined in the
+[current implementation contract](poc2-capped-fixed-dtw-implementation.md).
+The normal S1 split, S1 test membership and all 4,227 official inputs remain
+uncapped. Mantis's pinned frozen encoder and independent 200-tree Random Forest
+models with seed 42 are unchanged; cohort selection seed 1234 does not replace
+the classifier seed. Provider conversions begin after the common input boundary.
+
+This is a new capped/fixed-DTW comparison, not numerical reproduction of the
+historical tuned bakeoff. The complete-membership and calibration statements
+below retain their historical version-11 meaning and closure. Focused local
+validation is recorded in the current contract; full execution evidence is pending.
+
 Status: Approved by the Researcher and Chief Architect on 6 October 2026.
 IDs 027 and 028 closed with ID 026 on 7 October 2026 after approval of the
 version-11 implementation, fitted-meta-learner persistence and two-machine

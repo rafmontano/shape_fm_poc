@@ -473,6 +473,130 @@ def _initialize_child_database(
     os.replace(temporary, path)
 
 
+class TrainingCohort:
+    """Shared immutable Process 03 selection; R owns historical RNG semantics.
+
+    Settings are the direct ``window_preparation.training_cohort`` mapping.
+    The eligible population is all S1 training windows in window-id order, with
+    complete stored directional labels. Test and official inputs are untouched.
+    """
+
+    METHOD = "historical_first_horizon_stratified_v1"
+    SCHEMA = """CREATE TABLE IF NOT EXISTS training_cohorts (
+        preparation_id VARCHAR PRIMARY KEY,
+        metadata JSON NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp
+    )"""
+
+    def __init__(self, connection: Any, preparation_id: str, settings: dict[str, Any]):
+        self.connection = connection
+        self.preparation_id = preparation_id
+        if not isinstance(settings, dict) or set(settings) != {"cap", "seed", "method"}:
+            raise ValueError("training cohort requires cap, seed and method")
+        for name, minimum in (("cap", 1), ("seed", 0)):
+            value = settings[name]
+            if type(value) is not int or not minimum <= value <= 2147483647:
+                raise ValueError(f"invalid training cohort {name}")
+        if settings["method"] != self.METHOD:
+            raise ValueError("unsupported training cohort method")
+        self.settings = dict(settings)
+
+    def calculate(self) -> dict[str, Any]:
+        """Bind the complete eligible first-label population and exact R selection."""
+        rows = self.connection.execute(
+            """SELECT w.window_id, l.labels, l.definition_id, l.reference_source
+               FROM prepared_windows w JOIN series_membership m
+                 USING (preparation_id, series_key)
+               LEFT JOIN window_directional_labels l USING (window_id)
+               WHERE w.preparation_id=? AND m.split_id='S1' AND m.partition='train'
+               ORDER BY w.window_id""", [self.preparation_id],
+        ).fetchall()
+        population = []
+        for identity, labels, definition, reference in rows:
+            if (not labels or any(value not in (0, 1) for value in labels)
+                    or definition != DIRECTIONAL_LABEL_DEFINITION_ID
+                    or reference != EXACT_LABEL_REFERENCE_SOURCE):
+                raise RuntimeError("training cohort requires complete exact directional labels")
+            population.append([identity, int(labels[0])])
+        root = repository_root()
+        response = subprocess.run(
+            ["Rscript", str(root / "src/r/03_02_select_training_cohort.R")],
+            input=canonical_json({"labels": [row[1] for row in population],
+                                  "cap": self.settings["cap"], "seed": self.settings["seed"]}),
+            cwd=root, text=True, capture_output=True, check=True, timeout=60,
+            env={**os.environ, "RENV_CONFIG_SYNCHRONIZED_CHECK": "false"},
+        )
+        selection = json.loads(response.stdout)
+        indexes = selection["selected_indices"]
+        if isinstance(indexes, int):
+            indexes = [indexes]
+        selected = [population[index - 1][0] for index in indexes]
+        if len(selected) != min(len(population), self.settings["cap"]) or len(set(selected)) != len(selected):
+            raise RuntimeError("R returned invalid training cohort membership")
+        metadata = {
+            "preparation_id": self.preparation_id,
+            "eligible_count": len(population), "configured_cap": self.settings["cap"],
+            "selected_count": len(selected), "seed": self.settings["seed"],
+            "method": self.settings["method"], "method_version": 1,
+            "eligible_population_fingerprint": json_fingerprint(population),
+            "selected_window_ids": selected,
+            "r_version": selection["r_version"], "rng_kind": selection["rng_kind"],
+        }
+        return {**metadata, "cohort_fingerprint": json_fingerprint(metadata)}
+
+    def load(self) -> dict[str, Any]:
+        """Read only: recompute and reject missing or conflicting saved membership."""
+        exists = self.connection.execute(
+            "SELECT count(*) FROM information_schema.tables WHERE table_name='training_cohorts'"
+        ).fetchone()[0]
+        if not exists:
+            raise RuntimeError("training cohort was not created during preparation")
+        row = self.connection.execute(
+            "SELECT metadata FROM training_cohorts WHERE preparation_id=?", [self.preparation_id]
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("training cohort was not created during preparation")
+        observed = json.loads(row[0])
+        if observed != self.calculate():
+            raise RuntimeError("persisted training cohort conflicts with recomputed membership")
+        return observed
+
+    def persist(self) -> dict[str, Any]:
+        """Preparation-only additive write, never replace a conflicting cohort."""
+        expected = self.calculate()
+        self.connection.execute("BEGIN TRANSACTION")
+        try:
+            self.connection.execute(self.SCHEMA)
+            self.connection.execute(
+                "INSERT INTO training_cohorts (preparation_id, metadata) VALUES (?, ?) "
+                "ON CONFLICT (preparation_id) DO NOTHING",
+                [self.preparation_id, canonical_json(expected)],
+            )
+            row = self.connection.execute(
+                "SELECT metadata FROM training_cohorts WHERE preparation_id=?", [self.preparation_id]
+            ).fetchone()
+            if json.loads(row[0]) != expected:
+                raise RuntimeError("persisted training cohort conflicts with recomputed membership")
+            self.connection.execute("COMMIT")
+        except BaseException:
+            self.connection.execute("ROLLBACK")
+            raise
+        return expected
+
+
+def load_training_cohort(
+    child_connection: Any, preparation_id: str, settings: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Return validated shared metadata without writes; absent settings mean uncapped.
+
+    Pass the direct training_cohort setting, not the full pipeline definition.
+    Missing persisted cohorts are errors, never lazily created by consumers.
+    """
+    if settings is None:
+        return None
+    return TrainingCohort(child_connection, preparation_id, settings).load()
+
+
 class WindowPreparationCoordinator:
     """Sole writer for parent identities and one normalized child windows database."""
 
@@ -1226,6 +1350,25 @@ class WindowPreparationCoordinator:
             [EXACT_LABEL_REFERENCE_SOURCE, self.preparation_id],
         ).fetchone()
         unavailable_labels = int(total_labels) - int(exact_labels)
+        training_cohort = None
+        cohort_settings = self.definition.get("training_cohort")
+        if cohort_settings is not None:
+            try:
+                incomplete = self.child.execute(
+                    "SELECT count(*) FROM window_tasks WHERE preparation_id=? AND status!='completed'",
+                    [self.preparation_id],
+                ).fetchone()[0]
+                if incomplete:
+                    raise RuntimeError("training cohort requires completed prepared windows and labels")
+                training_cohort = TrainingCohort(
+                    self.child, self.preparation_id, cohort_settings
+                ).persist()
+            except BaseException as exc:
+                self.parent.execute(
+                    "UPDATE window_preparation_runs SET status='failed', error=? WHERE preparation_id=?",
+                    [f"{type(exc).__name__}: {exc}", self.preparation_id],
+                )
+                raise
         summary = {
             "preparation_id": self.preparation_id,
             "windows_database": str(self.child_path),
@@ -1254,6 +1397,8 @@ class WindowPreparationCoordinator:
             },
             "local_limits": local_limits,
         }
+        if training_cohort is not None:
+            summary["training_cohort"] = training_cohort
         self.parent.execute(
             """UPDATE window_preparation_runs SET status='completed', summary=?,
                error=NULL, completed_at=current_timestamp WHERE preparation_id=?""",

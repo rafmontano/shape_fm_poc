@@ -101,7 +101,7 @@ class ProcessAction:
             if creating
             else load_database_configuration(database)
         )
-        if configuration.version == 12 and database.stem != configuration.name:
+        if configuration.version >= 12 and database.stem != configuration.name:
             raise ValueError("database filename must match the configured experiment name")
         requires_gpu = bool(
             4 in processes
@@ -231,7 +231,7 @@ class ProcessAction:
             requires_gpu = "chronos_2" in configuration.resolved["models"]
         topology = profile.distributed_topology(requires_gpu)
         gpu_workers = None
-        if requires_gpu and getattr(configuration, "version", 0) in {11, 12}:
+        if requires_gpu and getattr(configuration, "version", 0) in {11, 12, 13}:
             gpu_workers = int(
                 configuration.resolved["execution"]["final_acceptance"][
                     "mantis_gpu_processes"
@@ -773,7 +773,7 @@ class ResearcherActions:
         if all(selectors):
             return {"invocation": invocation, "experiment_id": identity,
                     "forecast": asdict(get_forecast(request.database, identity, *selectors))}
-        if load_database_configuration(request.database).version == 12:
+        if load_database_configuration(request.database).version >= 12:
             return {"invocation": invocation, "experiment_id": identity,
                     "paper_tables": table_results(request.database, identity)}
         results = official_results(request.database, identity)

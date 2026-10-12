@@ -30,7 +30,7 @@ from .shared_configuration import (
 
 
 # Code constant: latest DuckDB migration version implemented by this source revision.
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 # Bootstrap/interface default: legacy library database path; an explicit path from the
 # coordinator overrides it, and the path does not define scientific identity.
 DEFAULT_DATABASE = Path("data/shapefm.duckdb")
@@ -964,6 +964,7 @@ def migrate_database(path: Path = DEFAULT_DATABASE) -> Path:
         connection.execute("ALTER TABLE forecasts ALTER median DROP NOT NULL")
         connection.execute("ALTER TABLE forecasts ALTER quantile_levels DROP NOT NULL")
         connection.execute("ALTER TABLE forecasts ALTER quantiles DROP NOT NULL")
+        connection.execute("ALTER TABLE directional_selected_widths ALTER calibration_accuracy DROP NOT NULL")
         connection.execute(
             "ALTER TABLE forecasts ADD COLUMN IF NOT EXISTS forecast_capability "
             "VARCHAR DEFAULT 'probabilistic'"
@@ -1042,7 +1043,12 @@ def migrate_database(path: Path = DEFAULT_DATABASE) -> Path:
         connection.execute(
             "INSERT INTO schema_versions (version, description) VALUES (?, ?) "
             "ON CONFLICT (version) DO NOTHING",
-            [SCHEMA_VERSION, "Historical paper diagnostics, selections and directional reports"],
+            [12, "Historical paper diagnostics, selections and directional reports"],
+        )
+        connection.execute(
+            "INSERT INTO schema_versions (version, description) VALUES (?, ?) "
+            "ON CONFLICT (version) DO NOTHING",
+            [SCHEMA_VERSION, "Fixed configuration widths have no measured calibration accuracy"],
         )
         connection.execute("COMMIT")
     except BaseException:

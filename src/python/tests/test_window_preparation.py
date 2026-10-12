@@ -19,6 +19,7 @@ import tracemalloc
 import unittest
 import json
 import shutil
+from collections import Counter
 from pathlib import Path
 from unittest.mock import patch
 
@@ -30,11 +31,13 @@ from util.shared_configuration import (
     load_experiment_configuration,
     resolve_experiment_configuration,
 )
-from util.shared_database import initialize_experiment_database, load_database_configuration
+from util.shared_database import SCHEMA_VERSION, initialize_experiment_database, load_database_configuration
 from util.window_preparation import (
     EXACT_LABEL_REFERENCE_SOURCE,
     EXACT_REFERENCE_UNAVAILABLE_REASON,
     WindowPreparationCoordinator,
+    TrainingCohort,
+    load_training_cohort,
     _target_content_hash,
     complete_window_count,
     compute_window_preparation_batch,
@@ -445,6 +448,93 @@ class RollingWindowUnitTests(unittest.TestCase):
             s1_partition([("dataset", "0")], 0.8, 123)
 
 
+class TrainingCohortTests(unittest.TestCase):
+    """Public metadata/restart contract using disposable committed child inputs."""
+
+    SETTINGS = {"cap": 10000, "seed": 1234,
+                "method": "historical_first_horizon_stratified_v1"}
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.path = Path(self.temporary.name) / "child.duckdb"
+        self.child = duckdb.connect(str(self.path))
+        self.child.execute("""
+            CREATE TABLE prepared_windows (window_id VARCHAR, preparation_id VARCHAR, series_key BIGINT);
+            CREATE TABLE series_membership (preparation_id VARCHAR, series_key BIGINT, split_id VARCHAR, partition VARCHAR);
+            CREATE TABLE window_directional_labels (window_id VARCHAR, labels INTEGER[], definition_id VARCHAR, reference_source VARCHAR);
+            INSERT INTO series_membership VALUES ('p', 1, 'S1', 'train'), ('p', 2, 'S1', 'test');
+        """)
+
+    def tearDown(self) -> None:
+        self.child.close()
+        self.temporary.cleanup()
+
+    def populate(self, size: int) -> None:
+        from util.shared_labels import DIRECTIONAL_LABEL_DEFINITION_ID
+        self.child.execute(
+            """INSERT INTO prepared_windows
+               SELECT printf('w/%05d', i), 'p', CASE WHEN i=? THEN 2 ELSE 1 END
+               FROM range(?) r(i)""", [size, size + 1],
+        )
+        self.child.execute(
+            """INSERT INTO window_directional_labels
+               SELECT window_id, [CASE WHEN window_id<'w/11000' THEN 0 ELSE 1 END, 1], ?, ?
+               FROM prepared_windows""",
+            [DIRECTIONAL_LABEL_DEFINITION_ID, EXACT_LABEL_REFERENCE_SOURCE],
+        )
+
+    def test_exact_cap_quotas_repeatability_restart_and_conflict(self) -> None:
+        self.populate(18001)
+        tests_before = self.child.execute(
+            "SELECT w.* FROM prepared_windows w JOIN series_membership m USING (preparation_id, series_key) WHERE partition='test'"
+        ).fetchall()
+        expected = TrainingCohort(self.child, "p", self.SETTINGS).persist()
+        self.assertEqual(expected["eligible_count"], 18001)
+        self.assertEqual(expected["selected_count"], 10000)
+        counts = Counter(0 if identity < 'w/11000' else 1
+                         for identity in expected["selected_window_ids"])
+        # Independent arithmetic: floors 6110/3889, remainder +1 to largest class.
+        self.assertEqual(counts, {0: 6111, 1: 3889})
+        self.assertEqual(expected, TrainingCohort(self.child, "p", self.SETTINGS).persist())
+        self.assertEqual(tests_before, self.child.execute(
+            "SELECT w.* FROM prepared_windows w JOIN series_membership m USING (preparation_id, series_key) WHERE partition='test'"
+        ).fetchall())
+        self.child.close()
+        self.child = duckdb.connect(str(self.path), read_only=True)
+        self.assertEqual(expected, load_training_cohort(self.child, "p", self.SETTINGS))
+        with self.assertRaisesRegex(RuntimeError, "conflicts"):
+            load_training_cohort(self.child, "p", {**self.SETTINGS, "seed": 1235})
+        self.child.close()
+        self.child = duckdb.connect(str(self.path))
+        unselected = next(f"w/{i:05d}" for i in range(18001)
+                          if f"w/{i:05d}" not in set(expected["selected_window_ids"]))
+        original_labels = self.child.execute(
+            "SELECT labels FROM window_directional_labels WHERE window_id=?", [unselected]
+        ).fetchone()[0]
+        self.child.execute("UPDATE window_directional_labels SET labels=[1,1] WHERE window_id=?", [unselected])
+        with self.assertRaisesRegex(RuntimeError, "conflicts"):
+            load_training_cohort(self.child, "p", self.SETTINGS)
+        self.child.execute("UPDATE window_directional_labels SET labels=? WHERE window_id=?", [original_labels, unselected])
+        damaged = {**expected, "selected_window_ids": list(reversed(expected["selected_window_ids"]))}
+        self.child.execute("UPDATE training_cohorts SET metadata=?", [json.dumps(damaged)])
+        with self.assertRaisesRegex(RuntimeError, "conflicts"):
+            TrainingCohort(self.child, "p", self.SETTINGS).persist()
+        self.assertEqual(json.loads(self.child.execute("SELECT metadata FROM training_cohorts").fetchone()[0]), damaged)
+
+    def test_noop_missing_setting_missing_cohort_and_population_binding(self) -> None:
+        self.populate(5)
+        self.assertIsNone(load_training_cohort(self.child, "p", None))
+        with self.assertRaisesRegex(RuntimeError, "not created"):
+            load_training_cohort(self.child, "p", self.SETTINGS)
+        expected = TrainingCohort(self.child, "p", self.SETTINGS).persist()
+        self.assertEqual(expected["selected_window_ids"], [f"w/{i:05d}" for i in range(5)])
+        self.assertIn("rng_kind", expected)
+        self.assertIn("r_version", expected)
+        self.child.execute("UPDATE window_directional_labels SET labels=[1,1] WHERE window_id='w/00000'")
+        with self.assertRaisesRegex(RuntimeError, "conflicts"):
+            load_training_cohort(self.child, "p", self.SETTINGS)
+
+
 class WindowPersistenceTests(unittest.TestCase):
     """Exercise normalized parent/child writes, retrieval, and duplicate-free resume."""
 
@@ -506,6 +596,31 @@ class WindowPersistenceTests(unittest.TestCase):
         """Delete all fixture-owned files."""
         self.temporary.cleanup()
 
+    def test_shared_cohort_is_created_at_completion_and_validated_on_resume(self) -> None:
+        # Pragmatic fixture exception: parser version 13 is the parent's separate increment.
+        # Use the resolved v12 configuration with equivalent approved cohort settings.
+        document = json.loads((ROOT / "config/experiments/poc2_m4_daily_100_paper_tables.json").read_text())
+        document["execution"]["default"]["batch_sizes"]["window_preparation"] = 16
+        path = self.parent.with_name("v12.json")
+        path.write_text(json.dumps(document))
+        parent = self.parent.with_name("v12.duckdb")
+        initialize_experiment_database(parent, path)
+        with duckdb.connect(str(parent)) as connection:
+            connection.execute(f"ATTACH '{self.parent}' AS fixture (READ_ONLY)")
+            for table in ("datasets", "series", "evaluation_windows"):
+                connection.execute(f"INSERT INTO {table} SELECT * FROM fixture.{table}")
+            connection.execute("DETACH fixture")
+            connection.execute("UPDATE experiment_processes SET status='completed' WHERE process_id=1")
+        settings = TrainingCohortTests.SETTINGS
+        with WindowPreparationCoordinator(parent, self.child) as coordinator:
+            coordinator.definition["training_cohort"] = dict(settings)
+            first = coordinator.run(local_limits=LOCAL_TEST_LIMITS)
+            self.assertEqual(first["training_cohort"]["selected_count"], first["windows_by_partition"]["train"])
+            second = coordinator.run(local_limits=LOCAL_TEST_LIMITS)
+            self.assertEqual(first["training_cohort"], second["training_cohort"])
+        with duckdb.connect(str(self.child), read_only=True) as child:
+            self.assertEqual(first["training_cohort"], load_training_cohort(child, first["preparation_id"], settings))
+
     def test_configuration_without_rolling_capability_is_rejected_and_closed(self) -> None:
         """A centrally valid non-rolling configuration fails without leaking its writer."""
         parent = self.parent.with_name("standardisation-only.duckdb")
@@ -518,7 +633,7 @@ class WindowPersistenceTests(unittest.TestCase):
         with duckdb.connect(str(parent)) as connection:
             self.assertEqual(
                 connection.execute("SELECT max(version) FROM schema_versions").fetchone(),
-                (12,),
+                (SCHEMA_VERSION,),
             )
 
     def test_version_11_executes_real_process_03_window_preparation(self) -> None:

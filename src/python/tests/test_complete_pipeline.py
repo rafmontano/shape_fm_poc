@@ -16,6 +16,35 @@ from util.shared_process_storage import ProcessStorage
 class CompletePipelineTests(unittest.TestCase):
     """Exercise the existing coordinator, with external compute boundaries mocked."""
 
+    def test_v13_full_scope_plan_preserves_all_candidates(self):
+        root = Path(__file__).resolve().parents[3]
+        fixture = json.loads((root / "config/experiments/poc2_m4_daily_full_capped_fixed_dtw.json").read_text())
+        fixture["data"]["selection"] = {"method": "first_official", "count": 100}
+        with tempfile.TemporaryDirectory() as directory:
+            configuration = Path(directory) / "configuration.json"
+            configuration.write_text(json.dumps(fixture))
+            database = Path(directory) / "experiment.duckdb"
+            initialize_experiment_database(database, configuration)
+            with ExperimentCoordinator(database) as coordinator:
+                coordinator.connection.execute("""INSERT INTO datasets
+                    (dataset_id,dataset_name,source_system,source_revision,source_file_hashes,
+                     import_configuration,import_configuration_hash,frequency)
+                    VALUES ('dataset','m4_daily','test','revision','{}','{}','configuration','D')""")
+                with patch.object(coordinator, "_gift_bridge", side_effect=lambda *args:
+                    fixtures.ConfiguredPlanningTests._description(int(args[args.index('--limit') + 1]))):
+                    dry = coordinator.plan(dry_run=True)
+                    plan = coordinator.plan()
+                self.assertEqual(dry["official_evaluation_rows"], 17)
+                self.assertEqual(plan.task_counts, {2: 100, 3: 100, 4: 2830, 5: 1500, 6: 46})
+                counts = dict(coordinator.connection.execute(
+                    "SELECT candidate,count(*) FROM experiment_tasks WHERE stage=4 GROUP BY candidate"
+                ).fetchall())
+                self.assertEqual(counts["directional_dtw:train"], 1)
+                self.assertFalse(any("calibration" in candidate for candidate in counts))
+                for horizon in range(1, 15):
+                    self.assertEqual(counts[f"directional_dtw:predict:h{horizon:02d}"], 100)
+                    self.assertEqual(counts[f"directional_mantis_rf:predict:h{horizon:02d}"], 1)
+
     def test_complete_plan_contains_every_ordinary_and_combination_candidate(self):
         root = Path(__file__).resolve().parents[3]
         with tempfile.TemporaryDirectory() as directory:

@@ -43,7 +43,7 @@ class ExperimentConfigurationError(ValueError):
 # v10 activates the approved directional DTW baseline without forecast rows;
 # v11 adds the same-input Mantis/Random-Forest comparison without changing v10.
 # v12 combines those providers with stored point means and ex-post paper tables.
-SUPPORTED_CONFIGURATION_VERSIONS = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}
+SUPPORTED_CONFIGURATION_VERSIONS = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13}
 # Stable production IDs map to the native, allowlisted FFORMA method registry.
 R_MODEL_METHODS = {
     name: f"{name}_forec" for name in
@@ -156,7 +156,7 @@ class ExperimentConfiguration:
         if self.version >= 11:
             scientific["representations"] = self.resolved["representations"]
             scientific["classifiers"] = self.resolved["classifiers"]
-        if self.version == 12:
+        if self.version in {12, 13}:
             scientific["evaluation"]["table_reproduction"] = self.table_reproduction
         return scientific
 
@@ -236,8 +236,8 @@ class ExperimentConfiguration:
         Outputs: Independent evaluator-options mapping.
         """
         options = deepcopy(self.resolved["evaluation"][
-            "gift_eval_options" if self.version == 12 else "options"])
-        if self.version < 10 or self.version == 12:
+            "gift_eval_options" if self.version in {12, 13} else "options"])
+        if self.version < 10 or self.version in {12, 13}:
             options["batch_size"] = int(self.execution["batch_sizes"]["gift_eval"])
         return options
 
@@ -340,7 +340,7 @@ class ExperimentConfiguration:
         if self.version >= 11:
             workflow["representations"] = deepcopy(self.resolved["representations"])
             workflow["classifiers"] = deepcopy(self.resolved["classifiers"])
-        if self.version == 12:
+        if self.version in {12, 13}:
             workflow["table_reproduction"] = self.table_reproduction
         if self.version >= 4:
             # Version 4 retains its legacy single-context capability. Version 5
@@ -370,6 +370,9 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
     Outputs: ``None`` when every nested field and fixed protocol value is valid;
     otherwise raises ``ExperimentConfigurationError`` with field-level context.
     """
+    if value.get("configuration_version") == 13:
+        _validate_capped_fixed_configuration(value)
+        return
     if value.get("configuration_version") == 12:
         _validate_table_configuration(value)
         return
@@ -1176,6 +1179,56 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
         raise ExperimentConfigurationError("unsupported restart policy")
 
 
+def _validate_capped_fixed_configuration(value: dict[str, Any]) -> None:
+    """Validate v13 policy; project only for unchanged v12 backbone validation.
+
+    Inputs: Actual experiment document. Outputs: None or a contract error.
+    The private deep copy is never returned, stored, or executed.
+    """
+    pipeline = _require_mapping(value.get("pipeline"), "pipeline")
+    windows = _require_mapping(pipeline.get("window_preparation"), "window_preparation")
+    cohort = _require_mapping(windows.get("training_cohort"), "training_cohort")
+    if (cohort != {"cap": 10000, "seed": 1234,
+                   "method": "historical_first_horizon_stratified_v1"}
+            or type(cohort.get("cap")) is not int
+            or type(cohort.get("seed")) is not int):
+        raise ExperimentConfigurationError("v13 training_cohort requires cap 10000 and seed 1234 with historical stratification")
+    models = _require_mapping(value.get("models"), "models")
+    for name in ("directional_dtw", "directional_mantis_rf"):
+        model = _require_mapping(models.get(name), f"models.{name}")
+        reference = _require_mapping(model.get("reference"), f"models.{name}.reference")
+        if (reference != {"membership": "S1", "partition": "train", "cap": 10000,
+                          "sampling": "historical_first_horizon_stratified_v1"}
+                or type(reference.get("cap")) is not int):
+            raise ExperimentConfigurationError("v13 directional references must use the shared capped cohort")
+    dtw = models["directional_dtw"]
+    constraint = _require_mapping(dtw.get("constraint"), "directional_dtw.constraint")
+    if (constraint != {"name": "sakoe_chiba", "proportion": 0.10, "effective_width": 6}
+            or type(constraint.get("proportion")) not in (int, float)
+            or type(constraint.get("effective_width")) is not int
+            or dtw.get("width_selection") != "fixed_configuration"
+            or "calibration_tie_rule" in dtw):
+        raise ExperimentConfigurationError("v13 DTW requires fixed Sakoe-Chiba proportion 0.10, width 6, without calibration")
+    execution = _require_mapping(value.get("execution"), "execution")
+    defaults = _require_mapping(execution.get("default"), "execution.default")
+    batches = _require_mapping(defaults.get("batch_sizes"), "execution.default.batch_sizes")
+    if "directional_calibration" in batches:
+        raise ExperimentConfigurationError("v13 does not configure directional_calibration batches")
+    projected = deepcopy(value)
+    projected["configuration_version"] = 12
+    projected["pipeline"]["window_preparation"].pop("training_cohort")
+    for name in ("directional_dtw", "directional_mantis_rf"):
+        projected["models"][name]["reference"].update(cap=None, sampling="none")
+    projected_dtw = projected["models"]["directional_dtw"]
+    projected_dtw.update(
+        constraint={"name": "sakoe_chiba",
+                    "candidate_proportions": [index / 100 for index in range(100)],
+                    "effective_width": "int(window * 64)"},
+        width_selection="one_per_horizon", calibration_tie_rule="smallest_effective_width")
+    projected["execution"]["default"]["batch_sizes"]["directional_calibration"] = 32
+    _validate_table_configuration(projected)
+
+
 def _validate_table_configuration(value: dict[str, Any]) -> None:
     """Validate v12 mixed science while reusing the unchanged v11 provider contract.
 
@@ -1350,7 +1403,7 @@ def resolve_experiment_configuration(value: dict[str, Any]) -> ExperimentConfigu
     validate_experiment_configuration(value)
     original = deepcopy(value)
     resolved = deepcopy(value)
-    if resolved["configuration_version"] in {5, 6, 7, 8, 9, 10, 11, 12}:
+    if resolved["configuration_version"] in {5, 6, 7, 8, 9, 10, 11, 12, 13}:
         frequencies = resolved["pipeline"]["window_preparation"]["frequencies"]
         for settings in frequencies.values():
             settings["stride"] = settings["input_length"] + settings["future_horizon"]
@@ -1397,7 +1450,7 @@ def resolve_experiment_configuration(value: dict[str, Any]) -> ExperimentConfigu
             14 * directional_models if directional else variant_count * candidate_count
         ),
     }
-    if resolved["configuration_version"] == 12:
+    if resolved["configuration_version"] in {12, 13}:
         ordinary_model_count = len(set(resolved["models"]) & (set(R_FORECAST_METHODS) | {"chronos_2"}))
         ordinary_candidate_count = ordinary_model_count + 1
         gift_candidate_count = ordinary_candidate_count + len(resolved["archived_forecasts"]["enabled"])

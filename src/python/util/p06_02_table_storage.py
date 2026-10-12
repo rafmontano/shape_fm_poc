@@ -238,7 +238,7 @@ class TableStorage:
         from .shared_database import load_database_configuration
         from .shared_process_storage import ProcessStorage
         configuration = load_database_configuration(database_path, self.connection)
-        if configuration.version != 12:
+        if configuration.version not in {12, 13}:
             raise RuntimeError("export requires the integrated paper-table configuration")
         experiments = self.connection.execute(
             "SELECT experiment_id,name,description FROM experiments").fetchall()

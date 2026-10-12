@@ -44,6 +44,15 @@ and execution boundary. ID 021 was closed and approved for publication on
 directional-label contracts. Its accepted two-machine result is recorded in
 `docs/poc2-id021-dtw-execution-evidence.md`. ID 022 was not started.
 
+On 12 October 2026 the researcher approved a new full-Daily increment under
+`docs/poc2-capped-fixed-dtw-implementation.md` and configuration version 13:
+normal uncapped S1 split, then a shared DTW/Mantis training cap of 10,000 with
+seed 1234 and historical first-horizon stratification. Test and official inputs
+remain uncapped. Direct aeon DTW uses fixed proportion 0.10/effective width 6,
+one neighbour per input across all fourteen horizons and no width calibration.
+Historical tuned experiments and closures remain unchanged. Persist and verify
+the exact capped cohort; checkpoint bounded predictions as they complete.
+
 POC2 ID 026 fitted-model storage requirements and architecture were approved on
 6 October 2026. Follow `docs/poc2-id026-fitted-model-storage-requirements.md`
 and `docs/poc2-id026-fitted-model-storage.md`. IDs 026, 027 and 028 were closed

@@ -40,6 +40,95 @@ class DirectionalPipelineTests(unittest.TestCase):
             {2: 100, 3: 100, 4: 1401, 5: 1, 6: 14},
         )
 
+    def test_fixed_dtw_checkpoints_success_before_failure_and_resumes_missing_only(self):
+        """Real task transactions survive a later failed external prediction block."""
+        from tests.test_experiment_execution import ConfiguredPlanningTests
+
+        fixture = json.loads((ROOT / "config/experiments/poc2_m4_daily_full_capped_fixed_dtw.json").read_text())
+        fixture["data"]["selection"] = {"method": "first_official", "count": 100}
+        fixture["execution"]["default"]["batch_sizes"]["directional_prediction"] = 1
+        path = Path(self.directory.name) / "fixed.json"
+        path.write_text(json.dumps(fixture))
+        database = Path(self.directory.name) / "fixed.duckdb"
+        initialize_experiment_database(database, path)
+        runtime = {"aeon": "1.6.0", "numpy": "2.0.2", "numba": "0.61.2",
+                   "scikit-learn": "1.7.2", "numeric_dtype": "float64", "numba_threads": 1}
+        profile = MagicMock(autoarima_workers=1, dask_swap_growth_limit_gib=0.25)
+        profile.coordinator_memory_floor.return_value = 0
+        profile.accelerator_host_memory_floor.return_value = 0
+        profile.memory_floors_by_hostname.return_value = {}
+        submitted = []
+
+        def compute(*, batches, **kwargs):
+            identities = {query["identity"] for batch in batches for query in batch[0]["queries"]}
+            submitted.append(identities)
+            for index, batch in enumerate(batches):
+                if len(submitted) == 1 and index == 1:
+                    yield {"batch": batch, "error": "bounded prediction failure"}
+                    continue
+                predictions = [{"evaluation_input_identity": query["identity"],
+                    "horizon": horizon, "prediction": 1, "nearest_distance": 0.5,
+                    "nearest_reference_identity": "reference/a", "effective_width": 6}
+                    for query in batch[0]["queries"] for horizon in batch[0]["horizons"]]
+                yield {"batch": batch, "response": {"runtime": runtime,
+                    "runtime_seconds": 1, "worker": {"hostname": "fixture"},
+                    "resource_usage": {}, "results": [{"predictions": predictions}]}}
+
+        with ExperimentCoordinator(database) as coordinator:
+            coordinator.connection.execute("""INSERT INTO datasets
+                (dataset_id,dataset_name,source_system,source_revision,source_file_hashes,
+                 import_configuration,import_configuration_hash,frequency)
+                VALUES ('dataset','m4_daily','test','revision','{}','{}','configuration','D')""")
+            with patch.object(coordinator, "_gift_bridge", side_effect=lambda *args:
+                ConfiguredPlanningTests._description(int(args[args.index('--limit') + 1]))):
+                plan = coordinator.plan()
+            rows = coordinator.connection.execute("""SELECT task_id,forecast_instance_id,
+                variant_id,candidate FROM experiment_tasks WHERE stage=4
+                AND candidate='directional_dtw:predict:h01' ORDER BY task_id LIMIT 2""").fetchall()
+            training = coordinator.connection.execute("""SELECT task_id,forecast_instance_id,
+                variant_id,candidate FROM experiment_tasks WHERE candidate='directional_dtw:train'""").fetchone()
+            coordinator.connection.execute("UPDATE experiment_tasks SET status='completed'")
+            for index, row in enumerate(rows):
+                coordinator.connection.execute("""INSERT INTO directional_evaluation_inputs
+                    (evaluation_input_id,experiment_id,variant_id,forecast_instance_id,
+                     preparation_id,preparation_fingerprint,raw_input_hash,cleaned_input_hash,
+                     transformed_input_hash,transformed_input,label_reference,
+                     preprocessing_provenance,package_versions,content_hash)
+                    VALUES (?,?,?,?, 'p','p','r','c','t',?,0,'{}','{}','h')""",
+                    [f"input/{index}", plan.experiment_id, row[2], row[1], [0.0] * 64])
+            for row in [training, *rows]:
+                coordinator.connection.execute("UPDATE experiment_tasks SET status='pending' WHERE task_id=?", [row[0]])
+            implementation = {key: "fixture" for key in (
+                "implementation_fingerprint", "repository_revision", "scientific_source_fingerprint",
+                "worker_file_fingerprint", "classifier_lock_fingerprint", "preparation_fingerprint")}
+            implementation["runtime_versions"] = runtime
+            with patch.object(coordinator, "_directional_reference_library", return_value=(
+                {"references": [{"identity": "reference/a"}]}, "reference", {"training_cohort": {"selected_count": 1}})), patch.object(
+                coordinator, "_directional_implementation", return_value=implementation), patch.object(
+                coordinator, "_publish_directional_dtw_model", return_value={"fixture": True}), patch(
+                "util.shared_distributed_execution.install_immutable_reference_cache", return_value={"fingerprint": "reference"}), patch(
+                "util.shared_workflow_orchestration.run_gate_compute_flow", side_effect=compute), patch(
+                "util.shared_model_storage.ModelStorage.exists", return_value=True):
+                attempts = coordinator._start_tasks([training, *rows], "fixture/first")
+                with self.assertRaisesRegex(RuntimeError, "bounded prediction failure"):
+                    coordinator._run_04_directional_dtw(plan.experiment_id, [training, *rows], attempts, profile, None, None)
+                first = coordinator.connection.execute("SELECT * FROM directional_predictions").fetchall()
+                self.assertEqual(len(first), 1)
+                pending = coordinator._pending(plan.experiment_id, 4)
+                self.assertEqual([row[0] for row in pending], [rows[1][0]])
+                attempts = coordinator._start_tasks(pending, "fixture/restart")
+                coordinator._run_04_directional_dtw(plan.experiment_id, pending, attempts, profile, None, None)
+                self.assertEqual(coordinator._pending(plan.experiment_id, 4), [])
+            stored = coordinator.connection.execute("SELECT * FROM directional_predictions").fetchall()
+            self.assertEqual(len(stored), 2)
+            self.assertIn(first[0], stored)
+            self.assertEqual(submitted, [{"input/0", "input/1"}, {"input/1"}])
+            self.assertEqual(coordinator.connection.execute("SELECT count(*) FROM directional_calibration_scores").fetchone()[0], 0)
+            widths = coordinator.connection.execute("""SELECT horizon,effective_width,
+                representative_proportion,calibration_accuracy,tie_rule
+                FROM directional_selected_widths ORDER BY horizon""").fetchall()
+            self.assertEqual(widths, [(h, 6, 0.10, None, "fixed_configuration") for h in range(1, 15)])
+
     def test_reference_cache_verifies_values_sources_and_labels(self):
         payload = {
             "references": [
@@ -192,7 +281,8 @@ class DirectionalPipelineTests(unittest.TestCase):
 
     def test_fresh_database_process_03_completes_without_ambiguous_columns(self):
         """The real fresh parent/child path completes bounded directional preparation."""
-        fixture = json.loads(CONFIG.read_text(encoding="utf-8"))
+        fixture = json.loads((ROOT / "config/experiments/poc2_m4_daily_full_capped_fixed_dtw.json").read_text(encoding="utf-8"))
+        fixture["data"]["selection"] = {"method": "first_official", "count": 100}
         fixture["execution"]["default"]["batch_sizes"]["preprocess"] = 100
         fixture["execution"]["default"]["batch_sizes"]["window_preparation"] = 16
         fixture_path = Path(self.directory.name) / "fixture.json"
@@ -318,6 +408,17 @@ class DirectionalPipelineTests(unittest.TestCase):
                                 for item in common_inputs))
             self.assertTrue(all(item.preparation_definition_id == definition_hash
                                 for item in training_inputs))
+            library, _, preparation = coordinator._directional_reference_library()
+            self.assertEqual(
+                {item.input_id: (item.values, item.labels) for item in training_inputs},
+                {item["identity"]: (tuple(item["values"]), tuple(item["labels"]))
+                 for item in library["references"]},
+            )
+            self.assertEqual(json_fingerprint({
+                "split": preparation["membership_fingerprint"],
+                "training_cohort": preparation["training_cohort"]["cohort_fingerprint"],
+            }), membership_hash)
+            self.assertEqual(preparation["training_cohort"]["selected_count"], len(training_inputs))
             self.assertEqual(
                 {
                     item.input_id: (item.values, item.input_fingerprint)

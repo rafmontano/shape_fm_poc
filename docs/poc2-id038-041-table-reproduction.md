@@ -2,6 +2,24 @@
 
 ## Status
 
+On 12 October 2026 the researcher approved a fresh configuration-version-13
+full Daily experiment named `poc2_m4_daily_full_capped_fixed_dtw_20261012`, from
+`config/experiments/poc2_m4_daily_full_capped_fixed_dtw.json`. It includes all
+4,227 official series, uncapped official evaluation inputs and test membership,
+one shared post-S1 capped training cohort for DTW and Mantis, and fixed direct
+aeon DTW `window=0.10` (width 6), with no DTW calibration. The
+[current implementation contract](poc2-capped-fixed-dtw-implementation.md)
+defines its exact sampling, durable boundaries, topology and entry command.
+
+This new design does not claim numerical reproduction of the old closed tuned
+DTW baseline or bakeoff. Those results, databases and closure remain historical
+and untouched. The Process 06 lambda grid, table metrics and selection rules
+below are unchanged; their ex-post lambda search is not DTW calibration.
+Table reconciliation and comparative evidence must identify the new cohort and
+fixed-DTW configuration explicitly. Focused local validation is recorded in the
+current contract; the full run is pending: approval is not full-run completion,
+numerical reproduction acceptance or POC2 closure.
+
 The researcher approved this architecture and its parallel-execution,
 POC3-transition and roadmap amendments on 7 October 2026. Implementation,
 execution evidence and researcher acceptance remain open. The POC3 and POC4
