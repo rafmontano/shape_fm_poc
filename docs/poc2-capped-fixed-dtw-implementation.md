@@ -1,10 +1,12 @@
 # POC2 capped training cohort and fixed DTW: 12 October 2026
 
-Status: researcher-approved new increment, implemented and locally validated.
-This is an implementation contract, not full-experiment execution evidence.
-Full-run validation remains pending; no full run is claimed complete. Historical ID 021
-and IDs 026–028 closure, accepted data and the tuned bakeoff remain untouched.
-The new design is not a numerical reproduction claim for those results.
+Status: **Part B accepted and closed by the researcher on 14 October 2026**;
+scientific results are sufficiently similar for the POC2 objective. This document
+owns the implementation contract; the [authoritative completion record](poc2-id038-041-implementation-evidence.md#authoritative-part-b-acceptance-and-closure-14-october-2026)
+owns acceptance, execution/restart evidence and open closure findings. **POC2
+remains open**, including exact visual reproduction under POC2-X08. Historical
+ID 021 and IDs 026–028 closure, accepted data and the tuned bakeoff remain
+untouched. The new design is not a numerical reproduction claim for those results.
 
 ## New experiment and shared cohort
 
@@ -87,14 +89,14 @@ operational correction stages the unchanged fingerprint-verified classification
 dataset one worker at a time, without changing computation concurrency, worker
 counts, models or membership. The interruption databases and logs are preserved
 under the experiment's `evidence/interruption-01/`. Supported restart must reuse
-completed scientific work; completion and final evidence remain pending. The
+completed scientific work; the later restart completed as recorded below. The
 49 comparison-pipeline, experiment-execution and Mantis-component regressions
 passed. A disposable real two-worker Dask fixture exercised the production
 staging block twice, verifying bounded transfer, unchanged payload fingerprint
 and existing-cache reuse. No dependency, model or configuration changed.
 
-The existing entry point remains authoritative. After source synchronization,
-machine availability and parent execution approval, create the fresh run with:
+The existing entry point remains authoritative. The following is the historical
+fresh-run command, not an instruction to recreate the now-accepted experiment:
 
 ```sh
 .tools/uv/uv run --locked --no-sync python src/python/00_main.py run \
@@ -104,8 +106,8 @@ machine availability and parent execution approval, create the fresh run with:
 ```
 
 For an existing database, omit `--configuration` on restart. This documented
-command is not evidence that execution or publication has been authorised or
-performed by this documentation update.
+command records the original invocation; no scientific rerun is authorised by
+the Part B documentation closure.
 
 ## Implementation validation
 
@@ -132,9 +134,85 @@ small `TrainingCohort` persistence object. The stateless R sampling kernel and
 small fixture functions are bounded OOP exceptions; no new runner or scheduler
 was introduced. Previous failed experiments were not opened for writes.
 
-Full-run evidence must account for all 4,227 official inputs and 59,178
+The accepted full-run evidence accounts for all 4,227 official inputs and 59,178
 predictions per directional model, fourteen widths with no calibration scores,
 unchanged scientific hashes on restart, model artifacts, host/resource
-contribution and Process 06 outputs. Accuracy and table reproduction are research
-evidence requiring review, not assumptions or completion claims. Publication,
-execution acceptance and POC2 closure remain separate decisions.
+contribution and Process 06 outputs. Researcher acceptance applies to the Part B
+scientific objective, not exact visual reproduction or final POC2 closure.
+
+## Mac-only Process 06 recovery and X18 QA follow-up
+
+On 13 October the researcher authorised correction of the `sequential_safe`
+entry-point routing, then one Process 06-only recovery of the existing database.
+`ProcessAction._execution()` previously treated every explicit profile without
+a local-heavy exception as distributed: `sequential_safe` supplied zero Dask
+workers, so `ExecutionSettings.dask_expected_workers` failed before cluster
+startup, candidate scheduling or database writes. The GPU count was zero, not
+negative; the combined validation message obscured the actual failing field.
+
+The profile's existing name is the explicit local sequential routing rule (no
+configuration schema change). It now returns sequential settings with one local
+calculation in flight, zero retries and no cluster. Process 06 uses the existing
+Prefect local CPU/R kernel and unchanged scientific identities. Distributed
+profiles retain their topology, positive-worker validation and managed lifecycle;
+heavy Process 04 approval checks remain intact. No GPU is enabled by this route.
+
+Seven focused tests passed, including CLI Process 06 selection, local routing,
+invalid distributed topology rejection, existing distributed propagation and
+the real synthetic sequential/local-Dask 1,057-candidate kernel/identity parity.
+The Dask fixture was local CPU-only, not the production recovery. Isolated
+pre-execution routing left the authoritative database byte-identical and returned
+no cluster, no accelerator and one in-flight calculation.
+
+For later **POC2-X18 pipeline/usability QA**, review sequential versus distributed
+routing, profile-to-execution consistency, field-specific validation messages,
+and whether researcher-facing status makes the selected mode explicit. This is
+a recorded follow-up, not authorisation to begin the broader X18 refactor.
+The recovery console does not announce the selected execution mode; the execution
+record does. All 46 scientific tasks can be completed while Process 06 still
+shows `running` during integrity validation. That validation rebuilds all 1,057
+candidate input identities without candidate-level console progress. Distinguish
+calculation, persistence and validation in the later usability review; do not
+remove integrity checks to make the status appear faster.
+
+The single recovery completed all Process 06 substeps in 11,072 seconds:
+278 stored candidates were preserved, 779 missing candidates were calculated,
+and all 1,057 candidates and 46 tasks completed without failure. Stored outputs
+include nine selections, 12,681 diagnostic means, 126 paper directional rows,
+28 DTW/Mantis evaluations and 17 official evaluations. Table 1 has seven rows;
+Daily Table 2 panels A/B/C have 8/7/7 rows. Processes 01–05 were not rerun.
+They had completed through the approved distributed Mac/Ubuntu execution.
+Before recovery, Process 06 stored 278 candidates and then stopped when an
+Ubuntu R subprocess suffered a native memory-access failure during `jsonlite`
+worker-request decoding. That crash was neither diagnosed nor fixed.
+Production recovery used local sequential CPU/R execution, no Dask or GPU,
+and no Ubuntu contact. Sampled available memory stayed above 3.06 GiB, peak
+swap was 1.99 GiB and no below-2-GiB warning samples occurred.
+
+Declared CSV/PDF/PNG outputs and the manifest were exported beneath the existing
+experiment results directory. Export left the database byte-identical. One
+Mac-only restart returned `skipped_completed`; scientific counts/fingerprints,
+task attempts, fitted artifacts, cohort/windows checksum and exports were
+unchanged. Detailed generated evidence remains untracked in that experiment's
+`evidence/`, including `mac-sequential-final-verification.json`. The two named
+standalone CD exports are byte-identical: the current renderer calls the same
+plot for both names. Record distinct presentation and Daily/axis labeling as
+X08 follow-up, not a renderer change within this recovery.
+
+The read-only stored-forecast alternative-source comparison completed without
+refitting or reselection. GIFT-Eval remains authoritative and its accepted
+informational reconciliation is unchanged. SMAPE/MASE/OWA differences were below
+3.4e-8, with unchanged model ordering. A material reporting caveat remains:
+Naive2 horizon-14 directional accuracy changes from 32.1031% to 45.7298% under
+M4comp2018 observations because tiny origin differences cross frozen-forecast
+direction boundaries; 4,117 of 4,227 stored Naive2 paths equal their GIFT origin
+at every horizon. DTW/Mantis correct counts and tie-aware CD ranks are unchanged.
+This sensitivity remains a disclosed interpretation caveat, not replacement of
+authoritative data or a failed-recovery classification. Generated comparison
+evidence is retained under `evidence/alternative-source-*`. Researcher acceptance
+on 14 October closes Part B only; it does not establish exact historical accuracy
+or visual reproduction, repair of the Ubuntu path or POC2 closure. The Ubuntu
+native-crash cause remains unconfirmed. POC2-X19 (bounded work-item retry/failure
+containment) and POC2-X20 (bounded Ubuntu R-worker qualification) remain open in
+the authoritative record; X18 retains visibility/usability. No backlog
+implementation, crash diagnosis, scientific rerun or cleanup accompanies closure.

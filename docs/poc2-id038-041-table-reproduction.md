@@ -17,12 +17,19 @@ and untouched. The Process 06 lambda grid, table metrics and selection rules
 below are unchanged; their ex-post lambda search is not DTW calibration.
 Table reconciliation and comparative evidence must identify the new cohort and
 fixed-DTW configuration explicitly. Focused local validation is recorded in the
-current contract; the full run is pending: approval is not full-run completion,
-numerical reproduction acceptance or POC2 closure.
+current contract. **Part B was accepted and closed by the researcher on
+14 October 2026**, with scientific results sufficiently similar for the POC2
+objective. The [authoritative completion record](poc2-id038-041-implementation-evidence.md#authoritative-part-b-acceptance-and-closure-14-october-2026)
+records distributed Processes 01–05, the Ubuntu native failure after 278 Process
+06 candidates, Mac-only recovery of the missing 779, complete tables/exports and
+the passed no-new-work restart. The Ubuntu R-worker path was not diagnosed or
+fixed. Exact visual reproduction remains open under POC2-X08; **POC2 remains
+open**. The historical tuned baseline is not reaccepted by this result.
 
 The researcher approved this architecture and its parallel-execution,
-POC3-transition and roadmap amendments on 7 October 2026. Implementation,
-execution evidence and researcher acceptance remain open. The POC3 and POC4
+POC3-transition and roadmap amendments on 7 October 2026. Part B implementation,
+execution evidence and researcher acceptance are now complete within the scope
+above; POC2 closure items remain open. The POC3 and POC4
 roadmap remains planning direction rather than authority to begin either POC.
 
 This decision combines the historical ID 038 lambda-sensitivity calculation
@@ -289,8 +296,9 @@ The increment is technically ready for final POC2 acceptance when:
    identical scientific results, while all 1,050 candidates complete exactly
    once and restart schedules none of them again.
 
-This decision approves implementation. Numerical reproduction and POC2 closure
-still require Chief Architect review and researcher acceptance of the evidence.
+These original implementation exit criteria are historical. The researcher has
+accepted the scientific Part B result within the scope stated above; exact visual
+reproduction and the remaining POC2 closure items are not waived by acceptance.
 
 ## Integrated selective reporting checkpoint: IDs 058/062
 
@@ -317,9 +325,10 @@ model execution, RDS discovery, orchestration or ID 061 selection. POC3 can reus
 the same frequency-neutral stored-result and renderer contract later.
 
 The [existing checkpoint evidence](poc2-id038-041-implementation-evidence.md)
-records local tests and inspected synthetic renderings, not historical Figure 2
-numerical reproduction. Review precedes the single consolidated Mac/Ubuntu
-100-series acceptance; all earlier scientific closure conditions remain open.
+records the accepted Part A and Part B outcomes ahead of historical local tests
+and synthetic renderings. Those older provisional statements are not current
+status; neither synthetic renderings nor Part B acceptance establish exact
+historical Figure 2 visual reproduction or final POC2 closure.
 The researcher clarified before acceptance that no plot or CSV may be written
 outside `results/`, and default R output such as root-level `Rplots.pdf` must be
 prevented rather than ignored.

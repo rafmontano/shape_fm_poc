@@ -1,6 +1,90 @@
 # IDs 038/041 integrated implementation checkpoint
 
-## Day-end failed-run technical checkpoint, 12 October 2026
+## Authoritative Part B acceptance and closure, 14 October 2026
+
+The researcher accepted and closed **POC2 Part B on 14 October 2026**. The
+scientific results are sufficiently similar for the POC2 objective. **POC2 itself
+remains open**: acceptance is not exact historical accuracy or visual reproduction.
+Exact fonts, colours, dimensions, labels and layouts remain open under **POC2-X08**.
+Part A remains accepted, published and closed. This section supersedes pending
+Part B/full-run status statements in the dated historical records below.
+
+The authoritative experiment is `poc2_m4_daily_full_capped_fixed_dtw_20261012`,
+using all 4,227 official Daily series, configuration version 13, the shared
+10,000-window DTW/Mantis training cap and fixed direct-aeon DTW proportion 0.10
+(effective width 6). Test and official-evaluation populations remain uncapped.
+The [capped-DTW implementation contract](poc2-capped-fixed-dtw-implementation.md)
+and [Table 1/Table 2 contract](poc2-id038-041-table-reproduction.md) retain the
+approved scientific definitions; no formula, observation, model or lock changed
+during the Mac recovery or this closure.
+
+Processes 01–05 completed through approved distributed Mac/Ubuntu execution.
+Process 06 initially stored 278 candidates before an Ubuntu R subprocess
+terminated with a native memory-access failure while `jsonlite` decoded a worker
+request (`parse_string` / `fromJSON`, `memory not mapped`). **That Ubuntu crash
+was not diagnosed or fixed.** The subsequent Mac-only sequential recovery reused
+the 278 stored candidates unchanged and calculated only the 779 missing ones,
+reaching all 1,057. All remaining Process 06 calculations, lambda selections,
+retained diagnostics, evaluations, tables and exports completed. Completing on
+the Mac does not establish that the Ubuntu R-worker path is repaired.
+
+The recovery completed all substeps 6.1–6.8 and all 46 Process 06 tasks in
+11,072.05 seconds. Stored results include nine selections, 12,681 diagnostic
+means, 126 paper directional rows, 28 DTW/Mantis evaluations and 17 official
+evaluations. Table 1 has seven rows; Daily Table 2 panels A/B/C have 8/7/7 rows.
+CSV tables, the horizon figure, the two standalone named CD exports, PDF/PNG
+files and the manifest are under `results/<experiment>/`. The two CD versions
+currently render identically; distinct visual presentation belongs to X08.
+
+The final Mac-only no-new-work restart passed with `skipped_completed`.
+Scientific counts/fingerprints, original candidates, task attempts, fitted
+artifacts, cohort/windows checksum and exports remained unchanged. Export itself
+left the database byte-identical. Generated evidence is preserved locally under
+the experiment's `evidence/`, notably `mac-sequential-recovery.status.json` and
+`mac-sequential-final-verification.json`; failed-run databases, logs and prior
+evidence remain untouched and are not Git deliverables.
+
+Source-provider reconciliation remains accepted as informational: all 4,227
+series and 10,023,836 observations, maximum normalized difference 0.0000587361%,
+zero flagged series and zero actual-direction changes; GIFT-Eval is authoritative.
+The frozen-forecast alternative-source comparison leaves point-error ordering
+and DTW/Mantis correct counts/tie-aware CD ranks unchanged. Its Naive2
+direction-boundary caveat (horizon-14 DA 32.1031% versus 45.7298%) remains disclosed
+in the local comparison evidence and capped-DTW document. Part B acceptance
+does not assert source identity or remove this limitation.
+
+### Open POC2 closure findings — record only
+
+- **POC2-X08:** exact visual reproduction of fonts, colours, dimensions, labels
+  and layouts, including the currently identical named CD exports.
+- **POC2-X18:** process/substep/batch visibility and researcher usability,
+  including selected execution mode, profile consistency, misleading combined
+  validation messages and silent post-calculation integrity validation.
+- **POC2-X19:** bounded work-item retry and failure containment. The managed
+  route currently supplies zero task retries; the paper-result consumer raises
+  on a terminal batch error rather than retaining all other in-flight outcomes.
+  Preserve completed work, distinguish batch failure from process-level failure,
+  and qualify bounded recovery before changing policy. No implementation here.
+- **POC2-X20:** bounded Ubuntu R-worker qualification. Reproduce and diagnose
+  the native request-decoding failure separately; Mac completion is not proof
+  of Ubuntu repair. No crash reproduction or diagnosis in this closure.
+- **POC2-X00:** recovery point and protected artifact backup is the next
+  separately authorised backlog item; it has not been started here.
+
+The Part B closure publishes the narrow `sequential_safe` correction and this
+documentation only. It does not authorise backlog implementation, generated-file
+cleanup, dependency changes, another scientific run or POC2 closure.
+
+Closure validation used the existing locked environment: both changed Python
+files compiled, all four `ActionContractTests` passed (including sequential
+routing without cluster construction and rejection of invalid distributed
+topology), and the established 65-test fast execution/experiment/paper-table
+suite passed once. Its bounded synthetic fixtures are not a scientific rerun.
+All 13 relative documentation links/anchors, current-status reconciliation,
+trailing whitespace and `git diff --check` checks passed. Dependencies and
+model locks are unchanged; generated test/research evidence is not committed.
+
+## Historical day-end failed-run technical checkpoint, 12 October 2026
 
 The researcher authorised publication and two-host synchronisation of the existing
 implementation commits plus this separate documentation-only record, followed by
@@ -434,7 +518,7 @@ two batches reuse a real protocol child with load count one, preserve monitoring
 and close on unsafe/configuration/shutdown boundaries; real GPU validation follows
 source synchronization and is not yet claimed by these local tests.
 
-## Current Part A / Part B implementation status
+## Historical Part A / Part B implementation status before acceptance
 
 The researcher subsequently authorised the complete Part A/Part B sequence.
 The checkpoint-only restrictions and reduced-pool counts below describe the
