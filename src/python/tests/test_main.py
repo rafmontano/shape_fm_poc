@@ -6,7 +6,7 @@ import json
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
-from dataclasses import make_dataclass
+from dataclasses import make_dataclass, replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -77,6 +77,42 @@ class ResearcherCLITests(unittest.TestCase):
 
 
 class ActionContractTests(unittest.TestCase):
+    def test_process_six_sequential_profile_stays_local(self):
+        """CLI selection reaches one local calculation, with no cluster or GPU."""
+        request = ResearcherCLI().request([
+            "run", "--database", "results/existing.duckdb", "--processes", "6",
+            "--execution-profile", "sequential_safe",
+        ])
+        self.assertEqual(request.value("processes"), (6,))
+        configuration = SimpleNamespace(
+            seasonal_period_tuning=None, execution={"dask_timeout_seconds": 60},
+        )
+        with patch("util.shared_distributed_cluster.ManagedTuningCluster",
+                   side_effect=AssertionError("sequential route started a cluster")):
+            execution, settings, cluster, evidence = ProcessAction()._execution(
+                configuration, request.value("processes"),
+                request.value("execution_profile"), None, requires_gpu=False,
+            )
+        self.assertEqual(settings.mode, "sequential")
+        self.assertEqual(settings.dask_max_in_flight, 1)
+        self.assertEqual(settings.dask_retries, 0)
+        self.assertIsNone(settings.dask_scheduler_address)
+        self.assertIsNone(execution[0].required_accelerator)
+        self.assertIsNone(cluster)
+        self.assertIsNone(evidence)
+
+    def test_invalid_distributed_topology_still_fails_before_startup(self):
+        """The local correction never weakens distributed worker validation."""
+        profile, overrides = action_module.resolve_execution_profile("poc2_seasonal_recovery")
+        invalid = replace(profile, machine_environment=None, dask_mac_cpu_workers=0,
+                          dask_ubuntu_cpu_workers=0)
+        configuration = SimpleNamespace(seasonal_period_tuning=None,
+                                        execution={"dask_timeout_seconds": 60})
+        with patch.object(action_module, "resolve_execution_profile", return_value=(invalid, overrides)):
+            with self.assertRaisesRegex(ValueError, "worker and in-flight limits"):
+                ProcessAction()._execution(configuration, (6,), profile.name, None,
+                                          requires_gpu=False)
+
     def test_partial_forecast_selector_fails_before_storage(self):
         request = ResearcherCLI().request([
             "results", "--database", "missing.duckdb", "--series-id", "one"

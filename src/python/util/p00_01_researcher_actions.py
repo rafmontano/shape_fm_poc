@@ -226,6 +226,14 @@ class ProcessAction:
                          "execution_profile_fingerprint": profile.fingerprint})
             return execution, ExecutionSettings(mode="sequential", dask_max_in_flight=1,
                 dask_retries=0, dask_timeout_seconds=float(configuration.execution["dask_timeout_seconds"])), None, None
+        # The existing profile name is the local sequential contract; it has no
+        # distributed topology. Keep heavy Process 04 approval checks in the
+        # coordinator, and never construct a cluster for this operational route.
+        if profile.name == "sequential_safe":
+            execution = (profile, {**overrides, "operational_profile_override": profile_name,
+                                   "execution_profile_fingerprint": profile.fingerprint})
+            return execution, ExecutionSettings(mode="sequential", dask_max_in_flight=1,
+                dask_retries=0, dask_timeout_seconds=float(configuration.execution["dask_timeout_seconds"])), None, None
         from .shared_distributed_cluster import ManagedTuningCluster
         if requires_gpu is None:
             requires_gpu = "chronos_2" in configuration.resolved["models"]
