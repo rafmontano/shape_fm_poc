@@ -3,6 +3,8 @@
 Inputs are accepted prepared histories and canonical training/test boundaries.
 Outputs are parent membership/features/cohort references and child rolling plus
 official modelling inputs. Local window cleaning preserves future independence.
+Sample-SD fitting, strict direction labels and window boundaries follow
+docs/data-contract.md; feature definitions follow the FFORMA pool in R util/features.R.
 """
 
 from __future__ import annotations

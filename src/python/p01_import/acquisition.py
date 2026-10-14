@@ -1,17 +1,13 @@
-# ==============================================================================
-# acquisition.py — Process 01 source setup
-#
-# Purpose: Acquire and verify the immutable, revision-pinned GIFT-Eval source data.
-# Inputs: Dependency-lock metadata, acquisition scope, and a GIFT-Eval source directory.
-# Outputs: Verified source files; verification details returned without a sidecar.
-# Run from: `.venv/bin/python -m p01_import.acquisition <m4_daily|complete|verify>` with `PYTHONPATH=src/python`.
-# ==============================================================================
-
-"""Acquire and verify the immutable, revision-pinned GIFT-Eval source data."""
+"""Process 01 source setup: dependency lock, scope and destination directory to
+verified revision-pinned GIFT-Eval files and verification metadata, without sidecars.
+Acquisition is explicit setup, not ordinary import/restart (docs/data-contract.md).
+Run with ``python -m p01_import.acquisition <m4_daily|complete|verify>``.
+"""
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import shutil
 import subprocess
@@ -23,8 +19,18 @@ import pyarrow as pa
 import pyarrow.ipc as ipc
 from huggingface_hub import HfApi, snapshot_download
 
-from util.shared_configuration import ImportValidationError
-from util.shared_provenance import sha256_file
+
+class ImportValidationError(ValueError):
+    """Identify source-data or import-state contract violations."""
+
+
+def sha256_file(path: Path) -> str:
+    """Compute source provenance by streaming a readable file in 1 MiB blocks."""
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def repository_root() -> Path:
@@ -218,8 +224,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("scope", choices=("m4_daily", "complete", "verify"))
     parser.add_argument("--source-root", type=Path)
-    # Bootstrap/interface default: repository dependency-lock path used before
-    # source discovery; ``--dependency`` overrides it and it is not scientific identity.
     parser.add_argument(
         "--dependency",
         type=Path,

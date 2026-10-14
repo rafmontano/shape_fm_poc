@@ -1,14 +1,8 @@
 #!/usr/bin/env Rscript
-# ==============================================================================
-# 04_01_forecast_auto_arima.R
-#
-# Purpose: Serve the bounded R subprocess that produces AutoARIMA forecasts.
-# Inputs: JSON on stdin: action="forecast", authoritative AutoARIMA settings,
-#   and jobs with id, numeric context, seasonal frequency, and horizon.
-# Outputs: JSON on stdout with same-scale forecasts, fallback provenance, and package versions;
-#   invalid settings, actions, or series terminate the subprocess with an R error.
-# Run from: printf '%s' '{"action":"forecast","settings":{},"jobs":[]}' | Rscript src/r/04_01_forecast_auto_arima.R
-# ==============================================================================
+# Process 04 AutoARIMA provider (docs/forecast-black-box-contract.md).
+# Input: stdin JSON action="forecast", approved settings and past-only jobs
+# with context, period and horizon. Output: same-scale probabilistic forecasts
+# and package provenance on stdout; invalid inputs/fitting failures propagate.
 
 suppressPackageStartupMessages({
   library(forecast)
@@ -17,8 +11,6 @@ suppressPackageStartupMessages({
 
 source("src/r/util/forecast_methods.R")
 
-# Execution global: payload is the coordinator-authored request for this subprocess;
-# scientific and execution values remain authoritative from DuckDB and have no local override.
 payload <- jsonlite::fromJSON(file("stdin"), simplifyVector = FALSE)
 
 # Purpose: Fit AutoARIMA to one univariate context and forecast its horizon.
@@ -59,8 +51,6 @@ forecast_one <- function(job, settings) {
   )
 }
 
-# Execution global: results preserves coordinator job order for this invocation;
-# it is derived from stdin and has no independent override.
 if (identical(payload$action, "forecast")) {
   if (is.null(payload$settings)) {
     stop("AutoARIMA settings are required")
@@ -70,8 +60,7 @@ if (identical(payload$action, "forecast")) {
   stop("Unsupported POC 1 worker action")
 }
 
-# Code constant: JSON encoding is the worker protocol—scalar unboxing, 17-digit
-# numeric precision, and JSON null spelling are fixed by this implementation.
+# Preserve forecast precision and the JSON protocol's scalar/null representation.
 cat(jsonlite::toJSON(
   list(
     results = results,

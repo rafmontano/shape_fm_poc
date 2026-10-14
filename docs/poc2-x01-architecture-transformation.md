@@ -324,3 +324,26 @@ sensitivity remain Process 06 diagnostics. The run took 8.608 seconds and the
 no-new-work restart 2.058 seconds. All prior atomic rows remained unchanged;
 restart preserved all accepted rows and timestamps. The focused public-flow
 combination/lineage/restart test passed. Process 06 had not run at this boundary.
+
+## Increment F — implementation paused before final delivery
+
+Process 06-only continuation completed the accepted 100-series experiment in
+231.647 seconds: 1,700 capability-aware forecast evaluations, 1,900 directional
+evaluations, all 1,057 diagnostic candidates and three selected-only diagnostic
+outputs. It assembled and published five CSVs and three PNG/PDF figure pairs.
+The 2.051-second no-new-work restart preserved every accepted row and timestamp.
+No Process 04, scientific comparison or calibration workload ran.
+
+Accepted scientific state and published outputs remain in the isolated review
+workspace `.amp/in/artifacts/increment-d-distributed-run/`. The horizon and CD
+PNG figures were inspected: labels, legends and dependent-horizon caveat are
+readable and unclipped. This does not constitute final researcher acceptance.
+
+Implementation is paused at the researcher's request before network disconnect.
+The local checkpoint preserves the new Process 06 implementation, legacy
+retirement and code-documentation work. Remaining delivery work includes the
+moved Process 02 period-provider call path, Process 06 JSON-helper ownership,
+standalone export wiring, stale worker configuration, focused final tests and
+MLflow checks, structural measurements, living-document reconciliation and
+the five-layer image update. Do not rerun accepted scientific items when
+resuming. Final commit/push and Ubuntu synchronization remain pending; X01 is open.

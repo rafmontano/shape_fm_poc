@@ -1,14 +1,8 @@
-# ==============================================================================
-# forecast_methods.R
-#
-# Purpose: Define the registered probabilistic R forecast pool and unregistered M4
-#   point methods with their shared native scientific calculations.
-# Inputs: Validated request lists for registered methods, or one finite stats::ts
-#   and positive horizon for unregistered M4 point methods.
-# Outputs: JSON-serialisable registered results or numeric point vectors; performs
-#   no file or database writes.
-# Run from: Imported; not run directly.
-# ==============================================================================
+# Process 04 native forecast pool under docs/forecast-black-box-contract.md.
+# Input: past-only request lists, or finite stats::ts and horizon for M4 point
+# methods. Output: validated probabilistic results or point vectors; no writes.
+# M4 point definitions and the 90% seasonality rule follow the official M4
+# benchmarks; FFORMA settings and the sole STL-AR fallback follow that contract.
 
 # Code constant: the approved initial FFORMA-derived method identifiers and order.
 .M4_FORECAST_METHODS <- c(
@@ -151,7 +145,7 @@ M4_forec_methods <- function() {
 
 #' Validate and normalise one forecast-method request.
 #'
-#' Purpose: Enforce the common Gate 4 input contract before model execution.
+#' Purpose: Enforce the common Process 04 input contract before model execution.
 #' Inputs: Request list with dataset_id, series_id, finite numeric context,
 #'   positive horizon and frequency/seasonality, registered method_id, settings,
 #'   ordered unique quantile_levels, and optional task_id/run_id.
@@ -302,7 +296,7 @@ validate_forecast_request <- function(request, expected_method_id = NULL) {
 
 #' Validate one successful common forecast result.
 #'
-#' Purpose: Prevent malformed or scientifically invalid output from leaving Gate 4.
+#' Purpose: Prevent malformed or scientifically invalid output leaving the provider.
 #' Inputs: Result list containing identities, method/fallback fields, horizon vectors,
 #'   ordered quantile levels, quantile matrix, status, and provenance.
 #' Outputs: Result unchanged; invalid dimensions, non-finite values, crossing
@@ -724,7 +718,7 @@ nnetar_forec <- function(request) {
 #' Inputs: One common forecast request whose method_id is tbats_forec.
 #' Outputs: Common result using central intervals from the same fitted model. TBATS
 #'   retains its original automatic internal component selection, including Box-Cox;
-#'   this is part of the model and is distinct from Gate 3 transformations.
+#'   this is part of the model and is distinct from Process 03 transformations.
 tbats_forec <- function(request) {
   .run_interval_adapter(
     request,
@@ -940,7 +934,7 @@ forecast_method_registry <- function() {
 
 #' Execute one registered forecast method without pool-wide model substitution.
 #'
-#' Purpose: Provide generic allowlisted Gate 4 dispatch and validate every result.
+#' Purpose: Provide allowlisted Process 04 dispatch and validate every result.
 #' Inputs: Common request and, for controlled tests, a complete approved registry.
 #' Outputs: One validated result. Model and output-validation failures propagate;
 #'   STL-AR owns its sole approved fitting fallback inside its method adapter.
@@ -991,7 +985,7 @@ forecast_result_to_json <- function(result) {
   )
 }
 
-# Gate boundary: Gate 3 supplies an already prepared numeric context and retains
-# fitted transformation state. This Gate 4 library neither interprets transformation
-# expressions nor inverts forecasts; the caller restores every output to the approved
-# scale before persistence. Gate 5, not this library, selects or combines forecasts.
+# Process 03 supplies prepared contexts and fitted transformation state. This
+# provider never interprets transformation expressions or inverts forecasts;
+# the coordinator restores supplied fields before persistence. Process 05 owns
+# combinations from those stored individual forecasts.

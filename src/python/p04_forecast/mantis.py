@@ -3,6 +3,7 @@
 Label-free finite length-64 inputs are linearly resized to 512 and encoded as
 float32×256 final-layer CLS vectors. The native session owns transport; this
 provider owns the pinned offline network and scientific/runtime description.
+Resize, frozen representation and float32 semantics follow docs/directional-models.md.
 """
 
 from __future__ import annotations

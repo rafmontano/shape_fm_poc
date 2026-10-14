@@ -1,13 +1,5 @@
-# ==============================================================================
-# shared_chronos_checkpoint.py
-# Purpose: Resolve and validate a pinned local checkpoint at both native boundaries.
-# Inputs: Repository/revision and existing Hugging Face cache environment paths.
-# Outputs: Verified local snapshot path; no downloads or network I/O.
-# Run from: Imported by preflight and the native Chronos worker.
-# ==============================================================================
-"""Resolve the exact pinned Chronos snapshot without Hugging Face or network I/O.
-
-Bounded functional exception: stateless filesystem validation needs no object.
+"""Process 04: resolve repository/revision and cache paths to a verified local
+Chronos snapshot. Exact pinned assets only; no downloads or network I/O.
 """
 
 from __future__ import annotations

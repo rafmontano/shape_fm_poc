@@ -3,6 +3,8 @@
 Accepted Process 03 inputs/settings produce parent forecasts, embeddings, model
 references and predictions. Workers calculate; this application alone accepts
 returned artifacts/results on the coordinator. No calibration or combination.
+Scientific definitions: docs/forecast-black-box-contract.md (native forecasts
+and affine inversion) and docs/directional-models.md (representations/classifiers).
 """
 
 from __future__ import annotations

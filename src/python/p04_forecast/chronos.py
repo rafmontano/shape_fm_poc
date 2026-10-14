@@ -12,7 +12,6 @@ import importlib.metadata
 import json
 import os
 import platform
-import resource
 import subprocess
 import sys
 import time
@@ -28,7 +27,7 @@ os.environ["TRANSFORMERS_OFFLINE"] = "1"
 from chronos import BaseChronosPipeline, Chronos2Pipeline
 
 from p04_forecast.contract import ForecastContract
-from util.shared_chronos_checkpoint import local_chronos_snapshot
+from p04_forecast.checkpoint import local_chronos_snapshot
 
 
 def _apple_device_name() -> str:
@@ -46,11 +45,7 @@ def _apple_device_name() -> str:
 
 
 def select_device(requested: str) -> str:
-    """Purpose: Resolve the configured accelerator against the current Torch environment.
-
-    Inputs: ``auto``, ``cpu``, ``cuda``, or ``mps`` from worker CLI/configuration.
-    Outputs: The selected Torch device string, or an exception when explicit hardware is unavailable.
-    """
+    """Require the explicitly assigned cpu/cuda/mps backend; never fall back."""
     if requested == "cuda":
         if not torch.cuda.is_available():
             raise RuntimeError("CUDA profile requested but torch.cuda.is_available() is false")
@@ -61,50 +56,11 @@ def select_device(requested: str) -> str:
         return "mps"
     if requested == "cpu":
         return "cpu"
-    if requested != "auto":
-        raise ValueError(f"unsupported accelerator backend: {requested}")
-    if torch.cuda.is_available():
-        return "cuda"
-    if torch.backends.mps.is_available():
-        return "mps"
-    return "cpu"
-
-
-def accelerator_memory(device: str) -> dict[str, int | None]:
-    """Report CUDA or MPS memory counters in bytes, using null counters for CPU execution."""
-    if device == "cuda":
-        free, total = torch.cuda.mem_get_info()
-        return {
-            "total_bytes": total,
-            "available_bytes": free,
-            "allocated_bytes": torch.cuda.memory_allocated(),
-            "reserved_bytes": torch.cuda.memory_reserved(),
-        }
-    if device == "mps":
-        allocated = int(torch.mps.current_allocated_memory())
-        driver = int(torch.mps.driver_allocated_memory())
-        recommended = int(torch.mps.recommended_max_memory())
-        return {
-            "total_bytes": recommended,
-            "available_bytes": max(0, recommended - driver),
-            "allocated_bytes": allocated,
-            "reserved_bytes": driver,
-        }
-    return {
-        "total_bytes": None,
-        "available_bytes": None,
-        "allocated_bytes": None,
-        "reserved_bytes": None,
-    }
+    raise ValueError(f"unsupported accelerator backend: {requested}")
 
 
 def hardware(device: str) -> dict[str, Any]:
-    """Purpose: Describe the worker hardware and runtime for provenance validation.
-
-    Inputs: A configured device selector resolved against local Torch/backend state.
-    Outputs: A JSON-ready identity with accelerator memory and Python/Torch/Chronos versions.
-    Side effects: Queries accelerator state and package metadata.
-    """
+    """Return device/backend, host and package provenance, not qualification."""
     selected = select_device(device)
     if selected == "cuda":
         device_name = torch.cuda.get_device_name(0)
@@ -115,23 +71,13 @@ def hardware(device: str) -> dict[str, Any]:
     return {
         "accelerator_backend": selected,
         "accelerator_device_name": device_name,
-        "accelerator_memory": accelerator_memory(selected),
         "torch_version": torch.__version__,
         "chronos_forecasting_version": importlib.metadata.version("chronos-forecasting"),
         "cuda_version": torch.version.cuda,
-        "mps_available": torch.backends.mps.is_available(),
-        "mps_backend_version": torch.__version__
-        if torch.backends.mps.is_available()
-        else None,
         "python_version": platform.python_version(),
         "operating_system": platform.system(),
         "architecture": platform.machine(),
     }
-
-
-def is_out_of_memory(error: BaseException) -> bool:
-    """Classify Torch OOM exceptions and backend errors whose message reports out-of-memory."""
-    return isinstance(error, torch.OutOfMemoryError) or "out of memory" in str(error).lower()
 
 
 def emit(value: dict[str, Any]) -> None:
@@ -142,14 +88,10 @@ def emit(value: dict[str, Any]) -> None:
 def predict(
     pipeline: Chronos2Pipeline,
     request: dict[str, Any],
-    device: str,
 ) -> dict[str, Any]:
-    """Purpose: Execute one prediction request against an already-loaded Chronos-2 model.
-
-    Inputs: Stateful pipeline, request jobs containing float contexts/IDs, one shared horizon, batch size,
-        configured quantile levels, and the selected device.
-    Outputs: A protocol result containing per-job mean/median/quantile arrays shaped by horizon, plus timing and memory.
-    Side effects: Advances model/backend state and may allocate accelerator and process memory.
+    """Infer past-only jobs with the loaded model under the forecast black-box
+    contract (docs/forecast-black-box-contract.md). Return same-scale mean,
+    median and ordered quantiles; the coordinator owns durable acceptance.
     """
     started = time.monotonic()
     jobs = request["jobs"]
@@ -208,26 +150,19 @@ def predict(
                 },
             }
         )
-    maximum_rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    if platform.system() != "Darwin":
-        maximum_rss *= 1024
     return {
         "type": "result",
         "batch_id": request["batch_id"],
         "results": results,
         "inference_seconds": runtime,
         "effective_batch_size": len(jobs),
-        "peak_process_memory_bytes": maximum_rss,
-        "accelerator_memory": accelerator_memory(device),
     }
 
 
 def serve(args: argparse.Namespace) -> None:
-    """Purpose: Run the persistent JSON-lines Chronos worker protocol around one model instance.
-
-    Inputs: Parsed model/revision/device/dtype/thread configuration and predict/shutdown JSON lines on stdin.
-    Outputs: Ready, result, error, and shutdown JSON lines on stdout; returns at stdin EOF or shutdown.
-    Side effects: Sets thread environment defaults, loads model/cache state once, and retains accelerator state across requests.
+    """Load one pinned offline model from explicit settings and serve stdin
+    predict/shutdown requests as stdout JSON results/errors. No retry or durable
+    state: accepted atomic forecast keys on the coordinator own restart.
     """
     # Bound native threading; the owning worker supplies its execution limits.
     os.environ.setdefault("OMP_NUM_THREADS", "1")
@@ -270,37 +205,28 @@ def serve(args: argparse.Namespace) -> None:
                 return
             if request.get("command") != "predict":
                 raise ValueError("unsupported Chronos worker command")
-            emit(predict(pipeline, request, device))
-        except BaseException as error:
+            emit(predict(pipeline, request))
+        except Exception as error:
             emit(
                 {
                     "type": "error",
                     "batch_id": request.get("batch_id") if "request" in locals() else None,
-                    "error_kind": "out_of_memory" if is_out_of_memory(error) else "worker_error",
+                    "error_kind": "worker_error",
                     "error": f"{type(error).__name__}: {error}",
-                    "accelerator_memory": accelerator_memory(device),
                 }
             )
 
 
 def main() -> None:
-    """Purpose: Parse and dispatch the internal worker command line.
-
-    Inputs: ``hardware`` or ``serve`` arguments from the launching subprocess.
-    Outputs: Compact JSON on stdout, either one hardware record or the persistent stdin/stdout protocol.
-    """
+    """Dispatch explicit-device CLI settings to provenance JSON or model serving."""
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", required=True)
     hardware_parser = subparsers.add_parser("hardware")
-    # Bootstrap/interface default: auto-detect hardware when the internal caller
-    # supplies no device; configured worker launches override this value.
-    hardware_parser.add_argument("--device", default="auto")
+    hardware_parser.add_argument("--device", choices=("cpu", "mps", "cuda"), required=True)
     serve_parser = subparsers.add_parser("serve")
     serve_parser.add_argument("--model", required=True)
     serve_parser.add_argument("--revision", required=True)
-    # Bootstrap/interface default: auto-detect hardware only for direct internal
-    # launches; the coordinator normally supplies the execution-profile device.
-    serve_parser.add_argument("--device", default="auto")
+    serve_parser.add_argument("--device", choices=("cpu", "mps", "cuda"), required=True)
     serve_parser.add_argument("--dtype", required=True)
     serve_parser.add_argument("--internal-cpu-threads", type=int, required=True)
     args = parser.parse_args()

@@ -1,11 +1,8 @@
-# ==============================================================================
-# p06_03_table_reports.py
-# Purpose: Select historical diagnostics and expose tables and directional profiles.
-# Inputs: Validated aggregate candidates and common frequency/model/horizon rows.
-# Outputs: Deterministic in-memory tables, descriptive ranks and fingerprints.
-# Run from: Imported; not run directly.
-# ==============================================================================
-"""Process 06 reporting; no model execution, scheduling or persistence."""
+"""Process 06 deterministic selection, tables and descriptive directional ranks.
+
+Stored aggregate candidates and common horizon counts produce the approved
+table/figure data under docs/evaluation.md; no fitting or scientific execution.
+"""
 
 from __future__ import annotations
 
@@ -13,7 +10,7 @@ import math
 from collections import defaultdict
 from typing import Any
 
-from .shared_configuration import json_fingerprint
+from util.shared_configuration import json_fingerprint
 
 # Code constants: historical point-row order and complete M4 aggregation boundary.
 POINT_MODELS = ("naive2", "chronos_2", "m4_fforma", "m4_smyl",
