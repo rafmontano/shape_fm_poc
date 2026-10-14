@@ -37,8 +37,9 @@ from util.window_preparation import (
 
 
 ROOT = Path(__file__).resolve().parents[3]
+from tests.configuration_fixtures import configuration_path
 CONFIGURATION = (
-    ROOT / "config/experiments/poc2_m4_daily_100_rolling_windows_corrected.json"
+    configuration_path(version=6)
 )
 LOCAL_WINDOW_LIMITS = {"max_series": 100, "max_windows": 2}
 

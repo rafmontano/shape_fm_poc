@@ -1,518 +1,94 @@
-# Experiment configuration reference
+# Experiment configuration and storage
 
-## Authority and lifecycle
+## Active configuration
 
-`config/experiments/poc2_m4_daily_100.json` preserves the complete historical
-version-1, period-7 experiment. New default runs use
-`config/experiments/poc2_m4_daily_100_resolved_period.json`, the version-2
-contract whose R period is resolved in the pinned GIFT-Eval environment. A new
-database requires one complete configuration file.
-The optional 100-series AutoARIMA/ETS tuning experiment is
-`config/experiments/poc2_m4_daily_100_period_tuning.json` and uses version 3.
-The gate-local standardisation experiment is
-`config/experiments/poc2_m4_daily_100_standardised.json` and uses version 4.
-The opt-in rolling-window/S1 experiment is
-`config/experiments/poc2_m4_daily_100_rolling_windows.json` and uses version 5.
-The corrected fresh rolling-window experiment is
-`config/experiments/poc2_m4_daily_100_rolling_windows_corrected.json` and uses
-version 6; it does not reinterpret stored version-5 experiments.
-ShapeFM validates the entire document before writing, creates a temporary
-DuckDB, stores the original and resolved documents, creates six process-state
-rows, commits, and atomically renames the file. Invalid input leaves no database.
-
-After creation, the database is authoritative. Resume does not read the JSON
-and rejects a supplied `--configuration`. `experiment_configuration` stores the
-contract version, name, date, description, seed, original JSON, resolved JSON,
-scientific fingerprint, and configuration-integrity fingerprint.
-`experiment_processes` stores ordered process state.
-`execution_events` appends each request and its effective operational settings,
-host/code provenance, result, or failure.
-
-The [execution policy](execution-policy.md) now governs heavy-run profile
-selection and host availability. Recovery implemented an explicit operational
-profile override without changing stored experiment identity. The
-[safeguard follow-up](amp-poc2-execution-safeguards-instructions.md) now rejects
-ordinary heavy tuning when the profile is omitted, removes hidden routing/limit
-constants, monitors active owned R processes and implements eight Mac CPU
-workers. Preserve stored creation documents and integrity hashes; do not reload
-or rewrite scientific configuration.
-
-The approved Stage 1 closure implements `poc2_seasonal_recovery` runtime v3
-as an explicit `--execution-profile` override. Its profile fingerprint and
-resolved workload topology are recorded with execution history; the experiment's
-scientific and configuration-integrity hashes do not change. CPU-only work
-resolves 23 workers with zero GPU workers, and CPU/GPU work resolves 38 total.
-Historical `final_acceptance` documents describe past evidence, not a mandatory
-GPU hardware field: ordinary preflight consumes the effective profile and still
-requires CUDA on GPU workers when that historical field is absent.
-
-## Version 12: approved Daily paper-table integration candidate
-
-`config/experiments/poc2_m4_daily_100_paper_tables.json` is a fresh immutable
-version-12 document for the IDs 038/041 implementation checkpoint. Versions
-1–11 and accepted databases are unchanged. This 100-series configuration is
-not numerical reproduction evidence and does not authorise an experiment run.
-The `first_official` count accepts positive counts for later complete Daily
-execution; planning checks source availability. The current frequency remains
-Daily only. POC3 frequencies need a later
-configuration version, not a second calculation/report implementation.
-
-Processes 02/03 retain the accepted robust preprocessing, same-input S1
-directional preparation and bounded 64-value directional inputs. Process 03
-also persists the existing full-history sample-standardised point-model
-transformation. The one Process 03 task per instance completes only after
-both outputs exist. Provider-specific Mantis conversion is unchanged.
-Process 04 retains DTW/Mantis training and prediction identities and adds
-Chronos-2 and native Naive2 tasks through the ordinary forecast contract;
-their stored means are inverse-transformed to original scale. Process 05
-passes these two base forecasts through; `none` creates no combination or
-directional no-work task. SMYL/FFORMA remain official-reference archive means.
-
-Expected Process 01–06 tasks are **100/100/100/1,630/200/29**: Process 06
-has the 28 existing directional evaluation identities plus one `paper_tables`
-identity. The 1,050 aggregate candidates are result rows, not durable tasks.
-`evaluation.table_reproduction` centrally stores the Daily scope, versioned
-inclusive up/down grid, adjustment, participating base/direction/reference
-models, historical metric profile, Table1/Table2_Daily/Figure2 outputs and
-applicable horizon/rank model IDs. Every such field enters the scientific hash.
-These are ex-post diagnostics; ordinary GIFT-Eval evaluation is unchanged.
-
-### Selective Figure 2 and read-only export (IDs 058/062)
-
-The unpublished v12 candidate now also stores
-`evaluation.table_reproduction.figure_2`. This completes the same integrated
-checkpoint; no accepted v1–v11 configuration or database is reinterpreted.
-`horizon_models` explicitly selects Mantis, Chronos-2, 1-NN DTW and SMYL, in
-that order. One authoritative `cd_models` set selects Mantis, 1-NN DTW,
-FFORMA, Chronos-2 and SMYL. Figure models must be approved applicable
-models present in `directional_report_models`; Naive2, adjusted forecasts,
-SMYL-Oracle and the excluded historical classifiers cannot be silently added.
-The model subsets and historical `cd_settings` (`alpha=.05`, `reverse=true`,
-`cex=.75`, `useDingbats=false`) enter the scientific fingerprint.
-Process 06 stores their matrix fingerprints and tied mean ranks using the
-existing common rank calculation. Export reads that evidence; it does not
-execute sensitivity or calculate new accuracy metrics.
-
-The CD matrix is rendered as two **separate** presentation versions, never as
-panels in one device. For POC2 both versions use the same `cd_models` matrix and
-mean ranks. The second file is reserved for a later, separately approved
-paper-specific presentation filter; it does not currently change scientific
-content or calculate a second rank result.
-
-After Process 06 completes, the single researcher entry point supports:
-
-```sh
-.venv/bin/python src/python/00_main.py export --database results/<experiment>.duckdb
-# Optional destination must remain below the repository results directory:
-.venv/bin/python src/python/00_main.py export --database results/<experiment>.duckdb --output results/<experiment>
-```
-
-### Active experiment storage
-
-Approved X01 Increment 2, 14 October 2026: one active experiment uses fixed paths:
+The repository has one active bootstrap:
 
 ```text
-config/experiment.json
-results/experiment.duckdb
-results/windows.duckdb
-results/tables/
-results/figures/
-models/<model>/<frequency>/<horizon>/...
+config/
+├── dependencies/
+│   ├── gift_eval.json
+│   └── models.json
+├── execution_profiles.json
+├── experiment.json
+└── machines.json
 ```
 
-The parent `experiment.duckdb` owns configuration, canonical series, process/task
-state, forecasts, combinations, evaluations and researcher results. The child
-`windows.duckdb` owns high-volume prepared rolling windows, split membership,
-transformed inputs, labels/features and restartable window-preparation work.
-Both belong to one experiment. Do not merge them or create a third database.
-The child links to the parent by stable configuration, scientific and source
-fingerprints, not a second experiment identity.
+- `experiment.json` defines the research data, processes, models, metrics and
+  seed for the experiment being created.
+- `machines.json` defines stable host names, project roots, capabilities and
+  service ports.
+- `execution_profiles.json` selects the coordinator, workers and operational
+  capacities.
+- dependency files and lockfiles pin external data/model/software assets.
 
-Process 01 correctly creates only the parent. Process 03 must create/resume the
-fixed child; it is required for the present directional workflow from that
-creation point onward. Before Process 03, child state is `not created (Process 03
-pending)`. After its owning substep completes, missing/incompatible child state
-is an explicit recovery error. Status reports both roles without scientific
-validation. Increment 2 centralises the paths; production Process 03 wiring is
-deferred to its own fresh 100-series validation through Process 03.
+Do not create experiment-named JSON files. Tests derive variants in temporary
+directories. Git history and completed DuckDB files preserve older definitions.
 
-Ordinary commands take no database/name/output paths. Bootstrap reads the fixed
-JSON once and stores original/resolved documents; resume uses only the parent.
-Tests may override both database paths only under isolated temporary directories.
-Experiment identity/history lives inside DuckDB, never experiment/date/run/correction
-suffixes in filenames. No experiment-named results folder or researcher-facing
-evidence directory is permitted. Tables and figures use their fixed directories.
-Starting a new experiment explicitly clears both databases and generated artifacts
-as one package only after all writers have stopped and closed their WALs; `run`
-never silently overwrites an existing active experiment. Environments, downloaded
-model caches and source data are not experiment artifacts.
+## Bootstrap and authority
 
-### Historical experiment-results location (superseded by X01)
+Before creation, edit `config/experiment.json`. Process 01 resolves and stores
+the complete configuration in `results/experiment.duckdb`. From that point the
+database—not the JSON filename—is the experiment authority and restart source.
+Deleting or changing the JSON does not redefine an existing database.
 
-Every persistent experiment database and researcher-facing CSV, PDF, PNG,
-manifest or evidence file belongs below the repository's top-level `results/`
-directory. For `<experiment>`, the database and derived presentation have this
-fixed structure:
+Scientific configuration and operational execution are separate. Data,
+preprocessing, transformations, methods, model parameters, horizon, seed,
+metric profile and cohort membership affect scientific identity. Host, worker
+count, addresses, batch size, completion order and elapsed time do not.
+
+## Fixed generated layout
 
 ```text
 results/
-├── <experiment>.duckdb
-└── <experiment>/
-    ├── manifest.json
-    ├── tables/
-    │   ├── table_1.csv
-    │   ├── table_2_daily.csv
-    │   ├── directional_accuracy_by_horizon.csv
-    │   ├── cd_input_daily.csv
-    │   └── cd_mean_ranks_daily.csv
-    ├── figures/
-    │   ├── figure_2_accuracy_by_horizon.pdf
-    │   ├── figure_2_accuracy_by_horizon.png
-    │   ├── figure_2_cd_daily.pdf
-    │   ├── figure_2_cd_daily.png
-    │   ├── figure_2_cd_daily_paper.pdf
-    │   └── figure_2_cd_daily_paper.png
-    └── evidence/
-        └── execution-summary.json
+├── experiment.duckdb
+├── windows.duckdb              created by Process 03
+├── tables/
+└── figures/
+
+models/
+└── <model>/<frequency>/<horizon-or-model-scope>/...
 ```
 
-The default export root is `results/<database-stem>/`. An explicit `--output`
-may select another directory only when its resolved path remains below the
-top-level `results/` directory. Absolute or relative traversal outside that
-root, including a symlink escape, must fail before any path is created. Tests
-may use automatically removed temporary directories; they are not persistent
-research outputs.
+There is no experiment name, date or retry number in generated filenames. Those
+details live inside DuckDB. No third research database or sibling evidence tree
+is authorised. Logs/caches are runtime material and remain untracked.
 
-No production or review command may leave a CSV, PDF, PNG, manifest or evidence
-file in the repository root. In particular, R rendering must open and close an
-explicit device under the declared `figures/` directory and must never create
-the default `Rplots.pdf`. This is prevented and tested rather than hidden by an
-ignore rule.
+The parent owns resolved configuration, canonical series, process/item state,
+forecasts, combinations and evaluations. The child owns high-volume preparation
+data. Before Process 03 it is legitimately absent; after Process 03 a missing or
+incompatible child is a recovery error.
 
-Table 1 is flattened without rounding stored metrics/improvements; Table 2
-is long-form `panel,frequency,model,value`. The directional table preserves all
-stored horizon counts, accuracies and fingerprints. The CD input CSV has ordered
-`Daily_1`–`Daily_14` rows and applicable-model ID columns; the rank CSV contains
-the one authoritative applicable-model rank result. The two standalone CD files
-currently render this same input independently; neither is the original
-ten-model diagram.
-The horizon figure uses the historical focused labels, colours and line types.
+## Experiment lifecycle
 
-DuckDB is opened read-only and remains authoritative. Missing, duplicate,
-incomplete or fingerprint-invalid evidence aborts before final publication.
-Rendering uses installed packages verified against the existing `renv.lock`,
-not installation or restoration. Derived files are staged then replaced;
-unrelated user files are never removed. The manifest lists all declared paths
-relative to `results/<experiment>/`, SHA-256 hashes for every payload file (not
-its own self-referential hash), source database filename,
-experiment/configuration identity, stored
-report/matrix fingerprints, included/excluded models and runtime versions.
-Only its operational export timestamp changes on regeneration with the same
-inputs/runtime; absolute machine paths never enter scientific identity.
+- **New:** both databases and derived outputs are absent; Process 01 reads the
+  bootstrap.
+- **Running/resuming:** use stored configuration and submit only uncommitted
+  work for the requested process range.
+- **Extending:** unchanged completed model/results remain; newly approved models
+  or work calculate only their delta.
+- **Replacing:** stop writers, then explicitly clear both databases, generated
+  tables/figures and experiment-owned fitted models as one experiment package.
+  There is no implicit reset in `run`.
+- **Archiving:** optional NAS copies are point-in-time researcher evidence;
+  code/configuration remain recoverable from Git.
 
-The CD bars/grouping are benchmark-replication and descriptive evidence only:
-Daily horizons share the same series, not independent samples. POC3 reuses the
-same explicit frequency/model/horizon matrix and stateless renderer for Figure 5;
-this checkpoint does not authorise POC3 execution or ID 061 selection.
+## Fitted models
 
-The Part A configuration `poc2_m4_daily_100_paper_tables.json` includes the
-complete approved ordinary forecast pool, M4 Comb and both directional models.
-`evaluation.gift_eval_options` preserves the official scoring contract separately
-from the historical paper profile. Its full Part B counterpart,
-`poc2_m4_daily_full_paper_tables.json`, selects all 4,227 official Daily series
-with seed 1234 and an `expected_source_total` guard; neither import nor official
-planning may silently truncate an unexpected source. Both validate against v12.
-The full configuration is not executable under the acceptance authorisation
-until Part A, publication and the approved cleanup succeed.
+Only expensive reusable meta-learner state is stored outside DuckDB: currently
+DTW fitted reference state and one Mantis/Random-Forest classifier per horizon.
+Ordinary forecast-pool fits are disposable. Provider environments serialize and
+load their own objects; the coordinator stores/verifies path, size, checksum and
+lineage without deserializing them.
 
-`evidence/execution-summary.json` is derived from stored process and execution
-history, counts, worker contribution and restart evidence. It records failures
-honestly; export cannot manufacture successful execution or restart evidence.
-Its hash is included with the CSV and figure payloads in the manifest.
+Default behaviour is reuse: an existing valid artifact is not trained again.
+Missing artifacts must be created by the preceding training substep. Explicit
+overwrite replaces only the selected scope after the new artifact is valid.
 
-Operational sensitivity batch size defaults to
-`execution.default.batch_sizes.table_sensitivity = 25`. The optional execution
-profile field `table_sensitivity_batch_size` overrides it; the effective value
-is exposed as `coordinator.table_sensitivity_batch_size`. Maximum in-flight
-work uses the existing effective `ExecutionSettings.dask_max_in_flight` (stored
-default 23, profile-owned when overridden). Neither affects scientific identity.
-Process 06 borrows `coordinator._active_dask_client` created by `run_process`;
-that method owns closure. A helper must not create a second cluster and must
-route sensitivity to eligible CPU workers only.
+## Researcher status
 
-The Process 06 handoff is `run_table_evaluation(coordinator, experiment_id,
-rows, attempts, workers, settings)` from `p06_01_table_flow`. That owner commits
-all supplied durable tasks through `_commit_task`. Process validation delegates
-to `TableStorage(connection).validate(experiment_id)`, and `status`/`results`
-expose `TableStorage(connection).summary(experiment_id)` under `paper_tables`.
-The helper/schema owners must complete those interfaces before real execution;
-selected diagnostic retrieval is not the ordinary deployable `get_forecast`
-selector contract. No new public command is required for the summary/report.
-
-## Version 9 adds the common forecast contract and M4 Comb
-
-`config/experiments/poc2_m4_daily_100_forecast_contract_m4_comb.json` preserves
-version 8's first 100 M4 Daily series, seed, robust/sample-standardised variant,
-and execution profile. It plans fourteen Process 04 base candidates: the nine
-registered R probabilistic methods, Chronos-2, and mean-only Naive2, SES, Holt,
-and Damped. All providers use the exact `forecast-v1` request and result field
-sets. The probabilistic profile is q0.025, q0.1 through q0.9, and q0.975.
-
-Process 05 uses `m4_comb` instead of v8's ten-way equal-weight candidate. It
-depends only on stored SES, Holt, and Damped rows at one-third each and records
-their three lineage links. The derived task counts are
-100/100/100/1,400/1,500/15 for Processes 01–06; expected result counts are 1,500
-forecasts and 300 M4 component links. Process 06 evaluates ten probabilistic and
-five mean-only candidates with capability-appropriate profiles. Version 9 does
-not reinterpret version 8 or its accepted evidence.
-
-The [version-9 execution evidence](poc2-forecast-contract-m4-combination-execution-evidence.md)
-records the completed cardinalities, two-host routing, exact M4 lineage,
-resource telemetry and unchanged scientific fingerprints after normal restart.
-
-## Version 8 defines the bounded all-model acceptance
-
-`config/experiments/poc2_m4_daily_100_all_models.json` selects the first 100 M4
-Daily series, one `robust` plus `standardise_sample_v1` preparation variant, the
-nine registered R methods, and Chronos-2. It uses the existing Process 05
-`equal_weight` calculation with weight 0.1 for each of the ten independently
-stored component forecasts; it adds no model or combination implementation.
-
-The derived task counts are 100/100/100/1,000/1,100/11 for Processes 01–06.
-Process 04 stores 1,000 base forecasts, Process 05 stores 100 combinations, and
-the final forecast count is exactly 1,100. The explicit
-`poc2_seasonal_recovery` profile resolves 8 Mac CPU, 15 Ubuntu CPU and 15 logical
-Ubuntu GPU workers. The Mac remains the sole database writer. Version 8 neither
-changes version 7 nor registers the ID 018 point methods or its future M4 Comb
-recipe.
-
-The [initial execution evidence](poc2-all-model-execution-evidence.md) completed
-and stored this graph. It also records that all period-1 STL-AR requests used
-the then-current seasonal-naïve substitution. The approved
-[FFORMA parity decision](poc2-fforma-method-parity.md) replaces that policy with
-STL-AR's supplied `auto.arima(d=0,D=0)` method-specific fallback and prohibits
-pool-wide model substitution. Version 8 remains immutable historical evidence,
-not acceptance evidence for the corrected method policy. A period-7 rerun is a
-distinct scientific experiment and is not implied by version 8.
-
-## Version 7 adds the approved R pool without rewriting history
-
-`config/experiments/poc2_m4_daily_100_r_pool.json` is an opt-in configuration,
-not a replacement default. It preserves the corrected window/S1 contract and
-selects exactly the nine registered R methods with their approved native FFORMA
-settings. AutoARIMA uses `stepwise=false`; ETS uses MAE; other methods use their
-documented native defaults. Versions 1–6 remain unchanged and readable.
-
-All nine forecasts remain individually addressable. The existing equal-weight
-combination applies one ninth to each configured component; it is not learned
-FFORMA weighting or a new meta-learner. `final_acceptance` identifies the R-pool
-workflow and runtime profile v3, not the historical window-only v2 profile.
-This field describes the intended execution contract, not proof of acceptance.
-Use the explicit `--execution-profile poc2_seasonal_recovery` operational override
-for two-host runs. The public override now reaches Gates 2/3/5/6 as well as Gate 4;
-Gate 6 still evaluates locally with the effective retry policy.
-
-## Versions 1–6
-
-Version 1 coupled `data.benchmark.seasonality = 7` to R preprocessing, R
-forecasting, and scoring. Stored v1 documents remain valid and keep that
-interpretation. They are not rewritten.
-
-Version 2 removes seasonality from `data.benchmark` and adds
-`pipeline.r_period_override`. `null` (the committed default) calls pinned
-GluonTS `get_seasonality()` using the stored frequency; the current Daily result
-is 1. A positive integer takes precedence for R preprocessing and R forecasting.
-Set it to 7 only for an explicit legacy-cleaning comparison. Evaluation remains
-on the pinned GluonTS benchmark convention and is not changed by this override.
-Both the resolved R period and evaluation seasonality are retained in existing
-benchmark metadata JSON; no schema column was added. The historical
-`official_seasonality` metadata/column names remain compatibility aliases for
-the R period.
-
-Version 3 preserves the version-2 resolver and adds opt-in Gate 4 period-policy
-tuning. It compares baseline against `forecast::findfrequency()` over three
-historical folds and records `tsfeatures` seasonal strength as diagnostics. The
-fixed Gate 2 period and independent Gate 6 seasonality do not change. The v3
-acceptance models are AutoARIMA and ETS. Approved heavy execution now uses both
-CPU hosts under the execution policy. The original one-Mac v3 snapshot remains
-readable; an explicit operational profile enabled recovery. It cannot silently
-authorise a new heavy local run; only an explicit recorded researcher-approved
-exception can do so. Chronos is intentionally outside this R-only acceptance.
-
-Version 4 preserves the version-2 period resolver and normal
-AutoARIMA/Chronos model route, registers `identity` plus
-`standardise_sample_v1`, and requires an explicit positive
-`pipeline.window_preparation.context_length`. The committed v4 document uses 64.
-That window setting is validated, stored and exposed through the central
-configuration interface, but current model adapters continue to consume full
-histories. A v4 configuration can optionally include the approved v3 tuning
-policy; absence of that policy is the normal v4 route.
-
-The committed v4 `execution.final_acceptance` is an evidence snapshot of the
-acceptance actually performed: sequential mode, Processes 1–3, and one Mac CPU
-worker. It is not a scheduler profile and does not authorise heavy local work.
-Any heavy execution continues to use the approved named profile with 8 Mac and
-15 Ubuntu CPU workers under the execution policy.
-
-`standardise_sample_v1` fits on history only using sample SD (n−1). Its exact
-portable state is `recipe`, `version`, `centre`, `scale`, `count`, and
-`constant`. Exact constants and singletons use scale 1, so apply and inverse
-remain positive affine maps for additional values. Configuration versions 1–3
-retain `minmax_then_standardize` exactly as stored and are never silently
-reinterpreted as the new recipe.
-
-Version 5 preserves version-4 transformation and period behavior and adds the
-combined ID 011/016 contract under `pipeline.window_preparation`. It defines all
-ten approved frequency W/H pairs, derives stride as W+H, selects frequencies
-explicitly, protects official training boundaries, and fixes preprocessing,
-transformation and S1 settings. The production document selects only Daily; the
-frequency table is a reusable resolver contract, not a claim that every
-GIFT-Eval dataset is production-ready. The exact S1 membership is generated and
-persisted once, then controls resume without rerunning random allocation.
-
-Version 6 preserves the approved defaults but restores the historical R
-binary64 split-count expression, yielding 81/19 series at N=100. It validates
-supported frequency keys and positive configured W/H values instead of
-hardcoding an exact second table, derives and persists stride, records
-`r_double_floor_v1`, and adds bounded window-chunk execution. Heavy preparation
-requires the approved named profile; local focused preparation requires explicit
-series and window limits. Version 5 retains its original Decimal semantics.
-
-## Configuration fields
-
-| Field | Meaning and current value | Consumer |
-|---|---|---|
-| `configuration_version` | `1` historical; `2` independently resolved R period; `3` opt-in period tuning; `4` portable sample standardisation; `5` original rolling windows/S1; `6` corrected bounded rolling windows/S1; `7` nine-method R pool; `8` one-variant all-model acceptance; `9` common contract, point methods, and M4 Comb | validator and DuckDB loader |
-| `experiment.name` | v2 default `poc2_m4_daily_100_resolved_period`; v1 name retained | experiment metadata and status |
-| `experiment.date` | required ISO date; v2 default `2026-09-30` | DuckDB experiment metadata |
-| `experiment.description` | required research objective | DuckDB experiment metadata |
-| `reproducibility.seed` | validated non-negative integer `1234` | scientific identity and future stochastic workers |
-| `data.dataset_name` | `m4_daily` | import and GIFT-Eval payloads |
-| `data.source` | GIFT-Eval system, pinned revision, local directory, three SHA-256 files | import integrity and provenance |
-| `data.benchmark` | `m4_daily/D/short`, `Econ/Fin`, one variate, daily frequency, 14-step horizon, one window, zero-based end-exclusive boundaries | import, planning, workers, evaluation |
-| `data.selection` | deterministic `first_official`, count `100` | import and plan |
-| `pipeline.processes` | ordered IDs/names 01–06 | process state, CLI selection, status |
-| `pipeline.preprocessing` | normally modes `standard`, `robust` with default `robust`; v8 selects only `robust` | Process 02 task creation and R payload |
-| `pipeline.transformations.methods` | v1–v3: `identity`, `minmax_then_standardize`; v4–v7: `identity`, `standardise_sample_v1`; v8 selects only `standardise_sample_v1` | Process 03 task creation and worker payload |
-| `pipeline.window_preparation.context_length` | v4 positive integer; committed value `64`; capability not yet consumed by current model adapters | central configuration and future selected window consumers |
-| `pipeline.window_preparation.frequencies` | v5 fixed approved table; v6 positive W/H definitions over supported keys; production v6 retains approved defaults and resolves stride W+H | rolling-window coordinator and child definitions |
-| `pipeline.window_preparation.split` | v5 Decimal count semantics; v6 `r_double_floor_v1`; both use S1 by original series, fraction 0.80, seed 123 and pinned tsai, with persisted membership controlling resume | eligible-cohort allocation and child membership |
-| `pipeline.window_preparation.block_policy` | v5 complete non-overlapping blocks at segment start; no padding, partial block, random offset or protected-boundary crossing | tsai window creation |
-| `pipeline.adjustment` | `identity` | variant identity |
-| `pipeline.combination` | equal weight over every configured model through v8; v9 uses `m4_comb` over stored SES/Holt/Damped means at one-third each | Process 05 payload and provenance |
-| `models.auto_arima` | R `forecast` package and all `auto.arima`/interval settings | Process 04 R payload |
-| `models.chronos_2` | repository, revision, package version, float32, nine quantiles, and batch/cross-learning policy; included with all nine R methods in v8 | Process 04 Python/Dask payload and preflight |
-| `models.ets` | v3 R `forecast` ETS with registered `opt.crit = "mae"` settings | Process 04 R payload |
-| `evaluation.method` | `gift_eval` | Process 06 selection |
-| `evaluation.gift_eval` | code revision, locked environment, submodule directory | bridge launch and distributed preflight |
-| `data.benchmark.frequency` | official GIFT-Eval frequency (`D`); v1 also retains historical `seasonality = 7` | import and period resolver |
-| `pipeline.r_period_override` | v2/v3 `null` or positive baseline R preprocessing/forecast period override | planning, Processes 02 and 04 |
-| `pipeline.seasonal_period_tuning` | v3-only approved three-fold MAE policy; baseline retained for ties/inconclusive results | Process 04 tuning |
-| `evaluation.options` | axis, invalid-label, NaN, and versioned scoring-seasonality policy | Process 06 payload |
-| `evaluation.provisional_candidate` | development candidate selector | result export logic |
-| `evaluation.submission_metadata` | explicit draft/non-submittable fields | export validation only |
-| `execution.default` | mode, process/import workers, batch/in-flight/retry/timeout/thread controls, memory floors, one writer | ordinary `run` and execution provenance |
-| `execution.final_acceptance` | versioned evidence snapshot; v4 records sequential Processes 1–3 on one Mac worker; legacy snapshots remain readable and heavy runs use the named execution profile | acceptance execution and preflight |
-| `execution.paths` | project, Chronos and R worker paths | coordinator, Dask workers, acceptance preflight |
-| `execution.restart` | skip completed; retry failed/interrupted | coordinator selection policy |
-
-Resolution derives four variants, three candidates, task counts
-100/200/400/800/1,200/12 for Processes 01–06, 1,200 forecast rows, and 12
-official evaluations. These values are not independent configuration fields.
-For the gate-local v4 acceptance, only Processes 01–03 were run: 100 imports,
-200 preprocessing tasks, and 400 transformation tasks.
-
-The scientific fingerprint covers data and selection, the scientific pipeline,
-models and intentionally controlled model settings, combination, evaluation,
-and seed. It excludes experiment metadata and execution controls. The
-configuration-integrity fingerprint covers the complete resolved document.
-
-Version 5's resolved configuration stores derived strides. Its parent schema
-adds stable numeric frequency/dataset/series lookups and preparation-run state;
-the normalized child schema stores definitions, S1 membership, tasks and
-prepared windows. Raw arrays remain in the parent and future values are resolved
-by zero-based, end-exclusive positions.
-
-## Consumer flow
-
-```text
-creation JSON → validated original/resolved JSON → DuckDB
-       DuckDB → ExperimentConfiguration → coordinator
-              → process selection → explicit task payload → Python or R worker
-```
-
-R receives JSON through stdin and returns JSON through stdout. A shared R input
-utility creates `stats::ts` from unchanged values and the resolved period for
-both preprocessing and the nine-method pool. R never reads
-the experiment JSON or DuckDB. Distributed Python workers receive ordinary
-serialized arguments. The Mac coordinator remains the only DuckDB writer.
-
-## Adding a field in a later POC
-
-1. Add the field to the single experiment JSON contract.
-2. Increment `configuration_version` when interpretation changes and retain an
-   explicit decoder for older stored versions.
-3. Update validation and deterministic resolution.
-4. Update DuckDB schema/stored configuration if queryable columns are needed.
-5. Expose the field through `ExperimentConfiguration`.
-6. Pass only the required subset through coordinator, process, and task payload.
-7. Update every Python or R consumer.
-8. Add validation, persistence, payload, restart, and scientific regression tests.
-9. Update architecture, this reference, and researcher instructions.
-
-An incompatible scientific change requires a new database. Never reinterpret
-or silently modify scientific settings in an existing database.
-
-## Cross-source reconciliation, approved 8 October 2026
-
-**Historical policy — superseded for production by X01 Increment 2.** GIFT-Eval
-is the sole canonical authority. Process 01 neither acquires M4comp2018 references
-nor compares histories at any precision or discrepancy threshold. Historical
-configuration fields remain preserved unchanged but inert; the adapter is held
-in `tmp/inactive/` for explicitly requested reproduction research only. The
-following records the earlier decision, not current execution instructions.
-
-Full Daily v12 creation may explicitly select
-`archived_forecasts.source_reconciliation.version = cross_source_v1`. This
-additive opt-in does not reinterpret older documents: absent policy retains the
-historical strict adapter. Thresholds are stored in original/resolved DuckDB
-configuration and its scientific fingerprint; a changed policy requires a fresh
-experiment. Part A remains accepted, published and closed.
-
-GIFT-Eval remains the observation authority. M4comp2018 supplies only archived
-forecast means and submission metadata. Identity/position/order, Daily frequency,
-history length, future horizon, paired missing/non-finite status and submission
-identity must match exactly. No observations are rounded, averaged or replaced.
-
-For each series, pool finite history and future values from both providers.
-The shared scale is max(P95 of absolute pooled values, pooled IQR, 1e-12), using
-R quantile type 7. Maximum and RMS differences are divided by that scale and
-reported as percentages. Secondary relative differences use max(abs(GIFT),
-abs(M4)) per pair; two zeros have relative difference zero. Exact unequal finite
-pairs are counted even when their discrepancy is informational. History/future
-reports include one-based differing positions; strict future-versus-final-history
-directions are compared at every evaluable horizon, without changing labels.
-
-Initial project thresholds (not universal statistical laws) are 0.01% per-series
-warning, 1% population review, 1% single-series material difference and 0.1%
-directional-impact review. Comparisons are strict `>`: equality does not breach.
-Informational and warning statuses continue automatically; exceeding any review
-threshold stops before Process 02. Structural incompatibility always stops.
-Later approved experiments may consciously revise explicit thresholds.
-
-Process 01's R adapter performs one reconciliation. `ImportCoordinator` writes
-`evidence/source-reconciliation/summary.json` and `series-discrepancies.csv`
-under `results/<experiment>/`, retaining aggregate measurements and locations,
-not another observation store. The same summary is recorded in existing import
-run/invocation evidence and the completed process summary; review-stop evidence
-is retained in the failed import run. Generated reports are never committed.
-Forecast/evaluation mathematics and the six-process workflow are unchanged.
-
-The separately approved [Process 03 cross-host validation policy](architecture.md#process-03-cross-host-numerical-validation)
-uses an operational four-ULP classification boundary, not a configurable
-scientific tolerance. Per-record comparisons, warnings and measured-impact
-review flags belong in existing process/execution evidence and exported
-execution summaries; they never enter resolved scientific settings or their
-fingerprints. The fresh full-Daily configuration uses the distinct
-`poc2_m4_daily_full_paper_tables_ulp_20261008` database/result/model namespace
-and preserves all 4,227 series, seed 1234 and the accepted reconciliation policy.
+Status reads DuckDB without modification. It shows the experiment, six processes
+in order, meaningful substeps when persisted, completed/failed/pending item
+counts, latest recorded failure and known total work. It does not validate
+scientific outputs, repair state, contact workers or infer an ETA that was not
+recorded.

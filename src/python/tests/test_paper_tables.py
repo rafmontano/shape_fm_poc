@@ -29,7 +29,7 @@ from util.shared_workflow_orchestration import run_gate_compute_flow
 
 # Test fixture: centrally approved v12 science; no model execution or source download.
 ROOT = Path(__file__).resolve().parents[3]
-CONFIG = load_experiment_configuration(ROOT / "config/experiments/poc2_m4_daily_100_paper_tables.json")
+CONFIG = load_experiment_configuration(ROOT / "config/experiment.json")
 SCIENCE = CONFIG.table_reproduction
 
 

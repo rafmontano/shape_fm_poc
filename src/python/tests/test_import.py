@@ -17,6 +17,7 @@ from pathlib import Path
 import pyarrow as pa
 import pyarrow.ipc as ipc
 
+from tests.configuration_fixtures import configuration_path
 from util.shared_configuration import (
     ExperimentConfiguration, ImportValidationError, load_experiment_configuration,
 )
@@ -115,8 +116,7 @@ class SourceTests(unittest.TestCase):
             source = root / "configured" / "m4_daily"
             write_source(source, [[float(value) for value in range(30)]] * 2)
             reference = load_experiment_configuration(
-                Path(__file__).resolve().parents[3]
-                / "config/experiments/poc2_m4_daily_100.json")
+                configuration_path(version=1, directory=directory))
             resolved = deepcopy(reference.resolved)
             resolved["data"]["source"]["directory"] = "configured"
             resolved["data"]["source"]["files"] = {

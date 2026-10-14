@@ -211,9 +211,6 @@ def repository_source_manifest() -> dict[str, str]:
     runtime_prefixes = ("src/python/", "src/r/", "config/", "scripts/", "environments/")
     runtime_files = {
         "config/execution_profiles.json",
-        "config/experiments/poc2_m4_daily_100_period_tuning.json",
-        "config/experiments/poc2_m4_daily_100_rolling_windows.json",
-        "config/experiments/poc2_m4_daily_100_rolling_windows_corrected.json",
         "pyproject.toml",
         "uv.lock",
         "renv.lock",

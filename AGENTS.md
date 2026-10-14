@@ -1,182 +1,73 @@
 # ShapeFM development guidance
 
-## Working agreement
+## Authority
 
-Follow the [working and communication agreement](docs/working-agreement.md)
-for roles, approvals, handoffs and documentation discipline. Clarity and reliable
-execution take priority over brevity; detailed instructions are welcome when needed.
+The researcher owns scientific scope, standards and final acceptance. The Chief
+Architect owns design and technical review. AMP implements and tests approved
+scope. Do not infer approval from historical messages or Git history.
 
-## Read before changing workflows
+Read the living documentation index at [docs/README.md](docs/README.md). Before
+changing workflow, storage or scientific behaviour, read:
 
-This is one evolving research repository. Before architecture, orchestration,
-execution, storage or provider-boundary work, read:
+- [research vision](docs/research-vision.md);
+- [architecture](docs/architecture.md);
+- [code standards](docs/code-standards.md);
+- [working agreement](docs/working-agreement.md);
+- the relevant scientific contract; and
+- [POC2-X01](docs/poc2-x01-architecture-transformation.md) while the current
+  transformation is active.
 
-- [Research vision](docs/research-vision.md).
-- [Code standards](docs/code-standards.md).
-- [Approved workflow standard and diagram](docs/poc2-workflow-orchestration-decision.md).
-- [Execution and machine availability policy](docs/execution-policy.md).
-- The decision and implementation instructions for the specific approved item.
+## Standing architecture
 
-The workflow decision was approved on 2 October 2026. Its initial implementation
-and test evidence are recorded in `docs/poc2-workflow-orchestration-acceptance.md`;
-Stage 1 was closed by the researcher on 3 October 2026 with documented
-limitations carried into Stage 2. Follow the current pragmatic Stage 2 AMP
-instructions, including their scoped checkpoint publication authorisation.
-The researcher has since approved checkpointing the reviewed Stage 2 result and
-a non-destructive Python file-organisation pass. Follow the current AMP handoff,
-not historical publication restrictions. Objective 2 completion remains open.
-The language-neutral forecast black-box contract and ID 018 activation addendum
-were approved on 4 October 2026. Implement them from
-`docs/forecast-black-box-contract.md` and
-`docs/poc2-m4-benchmark-methods.md`: activate Naive2, SES, Holt and Damped in a
-new experiment, calculate official point-only M4 Comb from stored components in
-Process 05, and do not add or use `forecastHybrid` for that benchmark.
-The FFORMA method parity correction was approved on 5 October 2026. Follow
-`docs/poc2-fforma-method-parity.md`: preserve every supplied model configuration
-and point mean, restore STL-AR's fixed `auto.arima(d=0,D=0)` fallback, and do
-not substitute seasonal naive or another model for methods without a supplied
-fallback.
-ID 018 was closed by the researcher on 5 October 2026 after accepting
-`docs/poc2-fforma-method-parity-execution-evidence.md`. Preserve that scientific
-and execution boundary. ID 021 was closed and approved for publication on
-6 October 2026 under `docs/poc2-id021-dtw-baseline.md`; preserve its direct
-`aeon.distances.dtw_distance` 1.6.0 engine, bounded-preprocessing and
-directional-label contracts. Its accepted two-machine result is recorded in
-`docs/poc2-id021-dtw-execution-evidence.md`. ID 022 was not started.
+- One researcher entry point and six processes: Import, Preprocess, Transform,
+  Forecast, Combine and Evaluate.
+- Prefect owns orchestration and operational attempts.
+- Dask owns eligible local/distributed scheduling.
+- Python/R application objects own scientific behaviour.
+- The selected coordinator alone writes DuckDB.
+- DuckDB owns accepted scientific state and restart; Prefect history does not.
+- GIFT-Eval is the sole canonical benchmark-data authority.
+- Process-only Python code belongs in its numbered process folder; `util/`
+  contains only code used by at least two processes.
 
-On 12 October 2026 the researcher approved a new full-Daily increment under
-`docs/poc2-capped-fixed-dtw-implementation.md` and configuration version 13:
-normal uncapped S1 split, then a shared DTW/Mantis training cap of 10,000 with
-seed 1234 and historical first-horizon stratification. Test and official inputs
-remain uncapped. Direct aeon DTW uses fixed proportion 0.10/effective width 6,
-one neighbour per input across all fourteen horizons and no width calibration.
-Historical tuned experiments and closures remain unchanged. Persist and verify
-the exact capped cohort; checkpoint bounded predictions as they complete.
+Do not implement a second scheduler, queue, retry system, transaction protocol,
+validation framework or model-specific experiment runner. Do not preserve
+obsolete paths through empty wrappers or aliases.
 
-POC2 ID 026 fitted-model storage requirements and architecture were approved on
-6 October 2026. Follow `docs/poc2-id026-fitted-model-storage-requirements.md`
-and `docs/poc2-id026-fitted-model-storage.md`. IDs 026, 027 and 028 were closed
-on 7 October 2026 after acceptance of the implementation and two-machine run
-recorded in [the execution evidence](docs/poc2-id026-028-execution-evidence.md).
-Provider environments own model serialization and deserialization; the
-coordinator performs metadata and byte-integrity verification only.
-The shared external model store
-applies to expensive fitted meta-learners, initially DTW and Mantis/Random
-Forest, not ordinary forecast-pool methods. Retrofit both directional models
-without changing their accepted mathematics: DTW owns one complete
-frequency-level multi-horizon artifact, and Mantis owns one fitted Random
-Forest artifact per horizon. Prediction loads existing artifacts and never
-trains; missing artifacts must be created by the preceding training substep.
+## Scientific boundaries
 
-POC2 IDs 027 and 028 were approved as one Mantis directional increment on
-6 October 2026. Follow `docs/poc2-id027-028-mantis-directional.md` and
-`docs/amp-poc2-id027-028-mantis-instructions.md`. Implement
-`directional_mantis_rf` as a composition of a frozen historical Mantis
-representation provider and a reusable Random Forest classifier, not a
-monolithic import or a second experiment runner. Preserve the closed DTW
-baseline and require a new same-input experiment containing both directional
-models. DTW and Mantis must reference the same canonical Process 03 membership,
-prepared inputs and labels; provider-specific conversions begin only after that
-boundary. The version-11 workflow, additive storage, fitted-model persistence
-and restart are accepted under the closure evidence above. This acceptance
-does not claim comparative scientific accuracy; ID 021 remains closed and its
-mathematics were not changed.
+- Preserve the standard forecast black-box contract and approved provider
+  settings/fallbacks.
+- Store individual forecasts before combination; combinations use stored
+  components and preserve their lineage.
+- DTW and Mantis use the same canonical directional input/cohort/output boundary.
+- Only expensive reusable directional fitted state is persisted outside DuckDB.
+- Process 06 evaluates stored results; it does not refit models.
+- Operational topology must not enter scientific identity or alter results.
 
-POC2 ID 033 directional forecast metrics were implemented, accepted and closed
-as a dormant research capability on 7 October 2026. Follow
-`docs/poc2-id033-directional-forecast-metrics.md` and
-`docs/amp-poc2-id033-directional-forecast-metrics-instructions.md`. Import only
-the five historical metric calculations and one model-neutral aggregator into
-`src/r/util/directional_forecast_metrics.R`. Reuse already stored forecast
-means; do not refit AutoARIMA or ETS, duplicate time-series conversion, activate
-the eight disabled directional features, or change the six-process pipeline.
-The historical PT calculation remains explicitly legacy rather than being
-presented as the canonical Pesaran-Timmermann test.
+The current contracts are in [data](docs/data-contract.md),
+[forecasting](docs/forecast-black-box-contract.md),
+[directional models](docs/directional-models.md), and
+[evaluation](docs/evaluation.md).
 
-POC2 ID 037 SMYL Oracle architecture and dormant implementation were approved
-and accepted on 7 October 2026. Follow
-`docs/poc2-id037-smyl-oracle.md` and
-`docs/amp-poc2-id037-smyl-oracle-instructions.md`. Import only the fixed-grid,
-ex-post SMYL scaling calculation as a dormant stateless R utility in
-`src/r/util/forecast_adjustments.R`. It belongs to future Process 06 diagnostic
-evaluation because it consumes realised future values; do not expose it as a
-deployable forecast, activate it, change storage/configuration, or import the
-legacy sensitivity runner and globals.
+## Implementation rules
 
-POC2 IDs 038 and 041 were approved as one integrated Process 06 increment on
-7 October 2026. Follow `docs/poc2-id038-041-table-reproduction.md` and
-`docs/amp-poc2-id038-041-table-reproduction-instructions.md`. Repeat the exact
-525-pair grid for SMYL and Chronos-2, use the versioned historical M4 table
-profile, select deterministically, and build Table 1 and Daily-only Table 2 from
-one selected-results object. POC2 does not calculate `All` from Daily alone.
-POC3 expands the same frequency-neutral implementation to every M4 frequency
-and the complete Table 2; do not create another metric or table-building path.
-Sensitivity is explicitly parallel: Prefect owns Process 06 dependencies, Dask
-distributes bounded model/lambda batches over eligible Mac and Ubuntu CPU
-workers, and the coordinator alone writes DuckDB. Do not add nested R/Python
-parallelism. Sequential, local-Dask and distributed-Dask results must be
-scientifically identical. The POC3/POC4 roadmap in `docs/research-vision.md` is
-forward planning context only and does not authorise implementation.
+Prefer the simplest cohesive implementation. Use objects when they own state or
+an interchangeable responsibility and small functions for stateless numerical
+work. Validate at external input, provider return, transaction and completion
+boundaries—not every internal handoff.
 
-The machine-environment and coordinator-selection architecture was approved on
-6 October 2026. Follow `docs/machine-environment.md` and
-`docs/amp-poc2-machine-environment-instructions.md`. A tracked machine inventory
-describes stable hosts, paths and capabilities; the selected execution profile
-chooses exactly one coordinator and its enabled workers. Normal execution derives
-Prefect and Dask endpoints and must not require a manually exported Mac IP or
-`PREFECT_API_URL`. The current profile keeps the MacBook Pro as coordinator and
-Ubuntu as worker; a future Mac Studio must become coordinator by configuration
-and calibration, not a source-code branch. The machine-environment acceptance
-condition is satisfied by the accepted ID 026–028 two-machine run and restart.
+Preserve unrelated user work. Do not delete generated material while a writer is
+active. Heavy or distributed execution, dependency changes, publication and
+machine synchronization require the applicable researcher approval.
 
-Apply the standing [Python utility naming standard](docs/code-standards.md#python-utility-file-organisation):
-`pNN_MM_` for process-owned helpers, `shared_` for shared components, and no
-artificial gate number for independent workflows. Code held for possible reuse
-belongs in tracked `tmp/inactive/`, not disposable or permanently retired storage.
-The organisation pass changes names/references, not scientific or execution logic.
+Validate a changed execution path with focused tests and a fresh isolated
+100-series run only through the affected process. Prove restart at the smallest
+durable unit. Do not routinely execute later processes.
 
-Object-oriented design with small reusable methods/functions is the standing
-standard for this entire project and all future projects, not only POC2.
-Follow [the authoritative OOP standard](docs/code-standards.md#mandatory-object-oriented-implementation).
-Use cohesive objects with small reusable methods; Prefect/Dask own orchestration
-and scheduling here. The standard permits bounded practical exceptions, such as
-a small test where classes add needless complexity; record the reason briefly.
-Apply the [pragmatic implementation rule](docs/code-standards.md#pragmatic-implementation):
-retain necessary code and boundary safeguards, not speculative layers or duplicate
-internal checks. Demonstrate compliance in tests and the handoff. Broader architectural departures
-need researcher approval; passing tests alone does not waive the standard.
+## Documentation
 
-OOP serves scientific correctness and the broader code standards. Follow the
-[precedence rules](docs/code-standards.md#purpose-and-precedence) and
-[two-reviewer QA](docs/code-standards.md#two-reviewer-quality-assurance) at agreed
-checkpoints; technical review does not replace researcher acceptance.
-
-## Required boundaries
-
-Prefect owns workflow orchestration; Dask schedules eligible computation.
-Existing R/Python scientific functions and native adapters perform calculations.
-The coordinator selected by the execution profile is the sole research DuckDB
-writer. Prefect operational history is not a second scientific store. Keep one
-researcher entry point and consume central configuration, the machine inventory,
-and the approved execution profile.
-
-Do not duplicate scheduler/retry logic, bypass validation, invent worker limits
-or silently change scientific settings. Document source contracts and test the
-actual workflow path. Update the affected architecture, diagram and researcher
-instructions with each change; separate approval, implementation and acceptance.
-If an approved standard cannot be met, report the conflict before changing it.
-
-## Scope and safety
-
-Implement only the current researcher-approved increment. Preserve unrelated
-work, accepted databases, results and local environments. Do not infer approval
-from pasted tool reports or historical instructions for another item. Follow the
-execution policy before heavy testing, including source synchronisation and
-Ubuntu availability. Git publication requires explicit scoped authorisation.
-
-ID 013 and ID 014 are closed under their directional-label and optional-feature
-acceptance records. ID 018 forecast-contract activation and its bounded
-two-machine execution validation are now authorised. During any recorded Ubuntu
-maintenance pause, complete local work but do not begin remote execution until
-the researcher confirms that the machine is available and the OS upgrade is
-complete.
+`docs/` contains current guidance only. Update the owning living document; do
+not add AMP instruction, acceptance, calibration, failure-history or checkpoint
+documents. Durable evidence belongs in DuckDB and derived outputs under
+`results/`; superseded text remains available in Git history.

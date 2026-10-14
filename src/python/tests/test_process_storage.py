@@ -17,7 +17,8 @@ from util.p00_01_researcher_actions import ProcessAction
 from util.shared_transformations import TransformationResult, transform
 
 ROOT = Path(__file__).resolve().parents[3]
-CONFIGURATION = ROOT / "config/experiments/poc2_m4_daily_100.json"
+from tests.configuration_fixtures import configuration_path
+CONFIGURATION = configuration_path(version=1)
 
 
 class ProcessStorageTests(unittest.TestCase):

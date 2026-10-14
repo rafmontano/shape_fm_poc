@@ -2,10 +2,10 @@
 # ==============================================================================
 # setup.sh
 #
-# Purpose: Install, verify, or safely rebuild the complete ShapeFM dependency superset.
+# Purpose: Restore the locked ShapeFM environment or check readiness offline.
 # Inputs: One supported operation, committed R/Python locks, dependency manifests, and optional timeout settings.
-# Outputs: Project-local environments/assets and a readable installation report; verify writes nothing.
-# Run from: scripts/setup.sh [install all|verify|rebuild all --confirm-delete|--help]
+# Outputs: Project-local environments/assets and concise readiness; verify writes nothing.
+# Run from: scripts/setup.sh [verify|--help]
 # ==============================================================================
 
 set -euo pipefail
@@ -20,30 +20,15 @@ DOWNLOAD_ATTEMPTS="${SHAPEFM_DOWNLOAD_ATTEMPTS:-3}"
 DOWNLOAD_RETRY_DELAY="${SHAPEFM_DOWNLOAD_RETRY_DELAY:-5}"
 UV="$REPOSITORY_ROOT/.tools/uv/uv"
 
-PYTHON_PROJECTS=(
-  "."
-  "environments/gift-eval"
-  "environments/chronos-2"
-  "environments/mantis"
-  "environments/classifiers"
-  "environments/tensorflow"
-)
-
 usage() {
   cat <<'EOF'
 Usage:
   scripts/setup.sh
-  scripts/setup.sh install all
   scripts/setup.sh verify
-  scripts/setup.sh rebuild all --confirm-delete
   scripts/setup.sh --help
 
-The default is the non-destructive complete installation (`install all`).
-Selective component installation is intentionally unsupported.
-
-`rebuild all --confirm-delete` never deletes folders. It first displays and
-moves every existing project-managed folder to a dated `_DDMMYY` sibling,
-then recreates and installs the complete environment.
+No arguments restores locked dependencies and acquires pinned assets.
+verify checks readiness offline without changing files.
 EOF
 }
 
@@ -56,8 +41,6 @@ fail() {
 
 parse_arguments() {
   OPERATION="install"
-  TARGET="all"
-  CONFIRM_ARCHIVE="false"
 
   if [[ $# -eq 0 ]]; then
     return
@@ -68,21 +51,9 @@ parse_arguments() {
   fi
   if [[ $# -eq 1 && "$1" == "verify" ]]; then
     OPERATION="verify"
-    TARGET=""
     return
   fi
-  if [[ $# -eq 2 && "$1" == "install" && "$2" == "all" ]]; then
-    return
-  fi
-  if [[ $# -eq 3 && "$1" == "rebuild" && "$2" == "all" && "$3" == "--confirm-delete" ]]; then
-    OPERATION="rebuild"
-    CONFIRM_ARCHIVE="true"
-    return
-  fi
-  if [[ "${1:-}" == "rebuild" && "${2:-}" == "all" ]]; then
-    fail "full rebuild requires exactly: scripts/setup.sh rebuild all --confirm-delete"
-  fi
-  fail "unsupported or selective operation; use scripts/setup.sh --help"
+  fail "unsupported operation; use scripts/setup.sh --help"
 }
 
 # Safety and prerequisites ----------------------------------------------------
@@ -106,6 +77,8 @@ validate_settings() {
   [[ "$DOWNLOAD_TIMEOUT" =~ ^[0-9]+$ ]] || fail "SHAPEFM_DOWNLOAD_TIMEOUT must be an integer"
   [[ "$DOWNLOAD_ATTEMPTS" =~ ^[0-9]+$ ]] || fail "SHAPEFM_DOWNLOAD_ATTEMPTS must be an integer"
   (( DOWNLOAD_ATTEMPTS >= 3 )) || fail "download attempts must be at least three"
+  [[ "$DOWNLOAD_RETRY_DELAY" =~ ^[0-9]+$ ]] || fail "SHAPEFM_DOWNLOAD_RETRY_DELAY must be an integer"
+  (( DOWNLOAD_TIMEOUT > 0 )) || fail "download timeout must be positive"
 }
 
 # Directory preparation -------------------------------------------------------
@@ -144,13 +117,23 @@ ensure_uv() {
     --delay "$DOWNLOAD_RETRY_DELAY" \
     --contains "UV_INSTALL_DIR"
   printf '[setup] Installing uv %s inside .tools/uv.\n' "$UV_VERSION"
-  env UV_INSTALL_DIR="$REPOSITORY_ROOT/.tools/uv" UV_NO_MODIFY_PATH=1 sh "$installer"
+  local staging
+  staging="$(mktemp -d "$REPOSITORY_ROOT/.tools/uv-stage.XXXXXX")"
+  if ! env UV_INSTALL_DIR="$staging" UV_NO_MODIFY_PATH=1 sh "$installer"; then
+    rm -rf "$staging"
+    fail "uv bootstrap failed"
+  fi
+  [[ "$("$staging/uv" --version | awk '{print $2}')" == "$UV_VERSION" ]] || fail "unexpected bootstrap uv version"
+  mkdir -p "$(dirname "$UV")"
+  mv "$staging/uv" "$UV"
+  rm -rf "$staging"
   [[ -x "$UV" ]] || fail "uv installation did not create $UV"
 }
 
 initialize_submodules() {
   printf '[setup] Initializing pinned Git submodules.\n'
-  git -C "$REPOSITORY_ROOT" submodule update --init --recursive
+  git -C "$REPOSITORY_ROOT" submodule update --init --recursive -- external/gift-eval
+  python3 -B "$REPOSITORY_ROOT/scripts/setup_support.py" check-source --root "$REPOSITORY_ROOT"
 }
 
 restore_r_environment() {
@@ -166,10 +149,12 @@ sync_python_environments() {
   export UV_PYTHON_INSTALL_DIR="$REPOSITORY_ROOT/.tools/python"
   export UV_CACHE_DIR="$REPOSITORY_ROOT/.tools/cache"
   export UV_PYTHON_PREFERENCE="only-managed"
-  for project in "${PYTHON_PROJECTS[@]}"; do
+  local projects
+  projects="$(python3 -B "$REPOSITORY_ROOT/scripts/setup_support.py" projects --root "$REPOSITORY_ROOT")"
+  while IFS= read -r project; do
     retry_command "Synchronize locked Python environment: $project" \
       "$UV" sync --project "$REPOSITORY_ROOT/$project" --locked
-  done
+  done <<< "$projects"
 }
 
 # Recoverable large-asset operations -----------------------------------------
@@ -218,42 +203,24 @@ acquire_assets() {
   download_model "environments/mantis" "mantis"
 }
 
-# Verification and reports ----------------------------------------------------
+# Readiness ------------------------------------------------------------------
 
 verify_installation() {
   require_command python3
   python3 -B "$REPOSITORY_ROOT/scripts/setup_support.py" verify --root "$REPOSITORY_ROOT"
 }
 
-write_installation_report() {
-  local report="$REPOSITORY_ROOT/results/installation-report_$(date -u +%Y%m%dT%H%M%SZ).txt"
-  printf '[setup] Validating the complete installation.\n'
-  verify_installation | tee "$report"
-  printf '[setup] Installation report: %s\n' "$report"
-}
-
-# Full rebuild archival -------------------------------------------------------
-
-archive_existing_installation() {
-  [[ "$CONFIRM_ARCHIVE" == "true" ]] || fail "rebuild requires --confirm-delete"
-  local archive_date
-  archive_date="$(date +%d%m%y)"
-  printf '[setup] Preflighting the complete archive plan for date %s.\n' "$archive_date"
-  # The helper collision-checks the complete plan before its first move. The
-  # misleading historical confirmation flag authorizes moves only, never deletion.
-  python3 -B "$REPOSITORY_ROOT/scripts/setup_support.py" archive \
-    --root "$REPOSITORY_ROOT" --date "$archive_date" --execute
-}
-
 install_all() {
+  export HF_HOME="$REPOSITORY_ROOT/.cache/huggingface"
+  export HF_HUB_CACHE="$HF_HOME"
   create_required_directories
   ensure_uv
   require_command git
   retry_command "Initialize pinned Git submodules" initialize_submodules
-  retry_command "Restore locked R environment" restore_r_environment
   sync_python_environments
+  retry_command "Restore locked R environment" restore_r_environment
   acquire_assets
-  write_installation_report
+  verify_installation
 }
 
 main() {
@@ -269,9 +236,6 @@ main() {
   if [[ "$OPERATION" == "verify" ]]; then
     verify_installation
     return
-  fi
-  if [[ "$OPERATION" == "rebuild" ]]; then
-    archive_existing_installation
   fi
   install_all
 }

@@ -16,6 +16,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import tests.acceptance as acceptance
+from tests.configuration_fixtures import configuration_path
 from tests.acceptance import (
     GIB,
     _activate_configuration,
@@ -49,8 +50,7 @@ class AcceptanceReadinessTests(unittest.TestCase):
         """
         _activate_configuration(
             load_experiment_configuration(
-                Path(__file__).resolve().parents[3]
-                / "config/experiments/poc2_m4_daily_100.json"
+                configuration_path(version=1)
             )
         )
         gpu_workers = [
@@ -260,7 +260,7 @@ class AcceptanceReadinessTests(unittest.TestCase):
             from util.shared_database import initialize_experiment_database
 
             initialize_experiment_database(
-                database, root / "config/experiments/poc2_m4_daily_100.json"
+                database, configuration_path(version=1, directory=directory)
             )
             report_path = Path(directory) / "report.json"
             report = _report_document(
@@ -297,7 +297,7 @@ class AcceptanceReadinessTests(unittest.TestCase):
             from util.shared_database import initialize_experiment_database
 
             initialize_experiment_database(
-                database, root / "config/experiments/poc2_m4_daily_100.json"
+                database, configuration_path(version=1, directory=directory)
             )
             report_path = Path(directory) / "report.json"
             report = _report_document(

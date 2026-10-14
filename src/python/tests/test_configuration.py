@@ -16,6 +16,7 @@ from copy import deepcopy
 from pathlib import Path
 
 import duckdb
+from tests.configuration_fixtures import configuration_path, table_document
 
 from util.shared_configuration import (
     ExperimentConfigurationError,
@@ -28,23 +29,19 @@ from util.shared_database import (
 )
 
 
-# Test/calibration value: repository fixture authored in the committed experiment JSON;
-# tests do not override production configuration authority.
+# Test-owned schema variants derive provider settings from the canonical document;
+# no archived document or production configuration is rewritten.
 REFERENCE_CONFIGURATION = (
-    Path(__file__).resolve().parents[3]
-    / "config/experiments/poc2_m4_daily_100.json"
+    configuration_path(version=1)
 )
 RESOLVED_PERIOD_CONFIGURATION = (
-    Path(__file__).resolve().parents[3]
-    / "config/experiments/poc2_m4_daily_100_resolved_period.json"
+    configuration_path(version=2)
 )
 ALL_MODELS_CONFIGURATION = (
-    Path(__file__).resolve().parents[3]
-    / "config/experiments/poc2_m4_daily_100_all_models.json"
+    configuration_path(version=8)
 )
 FORECAST_CONTRACT_CONFIGURATION = (
-    Path(__file__).resolve().parents[3]
-    / "config/experiments/poc2_m4_daily_100_forecast_contract_m4_comb.json"
+    configuration_path(version=9)
 )
 
 
@@ -56,11 +53,34 @@ class ExperimentConfigurationTests(unittest.TestCase):
     Outputs: Assertions and temporary DuckDB/file mutations owned by individual tests.
     """
 
+    def test_canonical_factory_retains_supported_schema_cardinalities(self):
+        """All consumers can exercise older schemas without an archived JSON file."""
+        expected = {
+            **{version: {"1": 100, "2": 200, "3": 400, "4": 800, "5": 1200, "6": 12}
+               for version in range(1, 7)},
+            7: {"1": 100, "2": 200, "3": 400, "4": 3600, "5": 4000, "6": 40},
+            8: {"1": 100, "2": 100, "3": 100, "4": 1000, "5": 1100, "6": 11},
+            9: {"1": 100, "2": 100, "3": 100, "4": 1400, "5": 1500, "6": 15},
+            10: {"1": 100, "2": 100, "3": 100, "4": 1401, "5": 1, "6": 14},
+            11: {"1": 100, "2": 100, "3": 100, "4": 1430, "5": 1, "6": 28},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            for version, counts in expected.items():
+                with self.subTest(version=version):
+                    path = configuration_path(version=version, directory=directory)
+                    self.assertEqual(path.parent, Path(directory))
+                    configuration = load_experiment_configuration(path)
+                    self.assertEqual(configuration.version, version)
+                    self.assertEqual(configuration.resolved["derived"]["expected_task_counts"], counts)
+        modified = table_document(version=4)
+        modified["models"]["auto_arima"]["settings"]["stepwise"] = False
+        self.assertTrue(table_document(version=4)["models"]["auto_arima"]["settings"]["stepwise"])
+
     def test_r_pool_contract_preserves_legacy_and_stored_identity(self):
         """Nine native methods plan separately; v7 never changes old AutoARIMA defaults."""
         from util.shared_configuration import R_MODEL_METHODS
         configuration = load_experiment_configuration(
-            REFERENCE_CONFIGURATION.parent / "poc2_m4_daily_100_r_pool.json")
+            configuration_path(version=7))
         self.assertEqual(tuple(configuration.resolved["models"]), tuple(R_MODEL_METHODS))
         self.assertEqual(configuration.resolved["derived"]["expected_task_counts"]["4"], 3600)
         self.assertFalse(configuration.r_model_settings("auto_arima")["stepwise"])
@@ -69,7 +89,7 @@ class ExperimentConfigurationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "pool.duckdb"
             initialize_experiment_database(
-                database, REFERENCE_CONFIGURATION.parent / "poc2_m4_daily_100_r_pool.json")
+                database, configuration_path(version=7, directory=directory))
             self.assertEqual(load_database_configuration(database).scientific_hash,
                              configuration.scientific_hash)
         invalid = deepcopy(configuration.original)
@@ -160,7 +180,7 @@ class ExperimentConfigurationTests(unittest.TestCase):
         """The reference contract derives all Process 01–06 and result counts."""
         configuration = load_experiment_configuration(REFERENCE_CONFIGURATION)
         self.assertEqual(configuration.version, 1)
-        self.assertEqual(configuration.name, "poc2_m4_daily_100")
+        self.assertEqual(configuration.name, "test_schema_1")
         self.assertEqual(configuration.date, "2026-09-28")
         self.assertEqual(configuration.seed, 1234)
         self.assertEqual(

@@ -32,7 +32,7 @@ class ProgressTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.database = Path(temporary.name).resolve() / "results/experiment.duckdb"
         initialize_experiment_database(
-            self.database, ROOT / "config/experiments/poc2_m4_daily_100_paper_tables.json"
+            self.database, ROOT / "config/experiment.json"
         )
         with duckdb.connect(str(self.database)) as connection:
             connection.execute("UPDATE experiment_processes SET updated_at='2026-01-01'")

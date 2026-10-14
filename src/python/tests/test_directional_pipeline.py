@@ -22,7 +22,8 @@ from util.window_preparation import _target_content_hash
 
 
 ROOT = Path(__file__).resolve().parents[3]
-CONFIG = ROOT / "config/experiments/poc2_m4_daily_100_directional_dtw.json"
+from tests.configuration_fixtures import configuration_path, table_document
+CONFIG = configuration_path(version=10)
 
 
 class DirectionalPipelineTests(unittest.TestCase):
@@ -44,7 +45,7 @@ class DirectionalPipelineTests(unittest.TestCase):
         """Real task transactions survive a later failed external prediction block."""
         from tests.test_experiment_execution import ConfiguredPlanningTests
 
-        fixture = json.loads((ROOT / "config/experiments/poc2_m4_daily_full_capped_fixed_dtw.json").read_text())
+        fixture = table_document(capped=True)
         fixture["data"]["selection"] = {"method": "first_official", "count": 100}
         fixture["execution"]["default"]["batch_sizes"]["directional_prediction"] = 1
         path = Path(self.directory.name) / "fixed.json"
@@ -281,7 +282,7 @@ class DirectionalPipelineTests(unittest.TestCase):
 
     def test_fresh_database_process_03_completes_without_ambiguous_columns(self):
         """The real fresh parent/child path completes bounded directional preparation."""
-        fixture = json.loads((ROOT / "config/experiments/poc2_m4_daily_full_capped_fixed_dtw.json").read_text(encoding="utf-8"))
+        fixture = table_document(capped=True)
         fixture["data"]["selection"] = {"method": "first_official", "count": 100}
         fixture["execution"]["default"]["batch_sizes"]["preprocess"] = 100
         fixture["execution"]["default"]["batch_sizes"]["window_preparation"] = 16

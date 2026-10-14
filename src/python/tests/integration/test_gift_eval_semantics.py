@@ -22,6 +22,7 @@ from gluonts.dataset.split import split
 from gluonts.ev.metrics import MAE
 from gluonts.model import evaluate_forecasts
 from gluonts.model.forecast import QuantileForecast
+from tests.configuration_fixtures import configuration_path
 from util.shared_configuration import load_experiment_configuration
 
 
@@ -65,11 +66,11 @@ class GiftEvalSemanticsTests(unittest.TestCase):
         # Test/calibration value: SHAPEFM_GIFT_EVAL_ROOT is a machine-environment
         # override for this fixture; it does not override production data authority.
         source_root = Path(
-            os.environ.get("SHAPEFM_GIFT_EVAL_ROOT", root / "data/source/gift_eval")
+            os.environ.get("SHAPEFM_GIFT_EVAL_ROOT", root / "data/gift_eval")
         )
         os.environ["GIFT_EVAL"] = str(source_root)
         config = load_experiment_configuration(
-            root / "config/experiments/poc2_m4_daily_100.json"
+            configuration_path(version=1)
         ).resolved["data"]
 
         dataset = Dataset("m4_daily", term="short")

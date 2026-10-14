@@ -7,7 +7,7 @@
   "dataset": {
     "repository": "Salesforce/GiftEval",
     "revision": "30841734ac5cfddbd0c3bad6d09d2b6b32becbb0",
-    "default_local_source_directory": "data/source/gift_eval",
+    "default_local_source_directory": "data/gift_eval",
     "phase_0_1_subset": "m4_daily",
     "required_files": [
       "data-00000-of-00001.arrow",

@@ -17,6 +17,7 @@ from unittest.mock import Mock, patch
 
 import duckdb
 
+from tests.configuration_fixtures import table_document, write_configuration
 from util.shared_configuration import (
     ExperimentConfigurationError, load_experiment_configuration,
     resolve_experiment_configuration,
@@ -27,7 +28,7 @@ from util.shared_execution_profiles import ExecutionSettings, resolve_execution_
 from util.shared_process_storage import ProcessStorage
 
 # Test fixture: fresh document, never an accepted research database.
-CONFIG = Path(__file__).resolve().parents[3] / "config/experiments/poc2_m4_daily_100_paper_tables.json"
+CONFIG = Path(__file__).resolve().parents[3] / "config/experiment.json"
 
 
 class TableConfigurationTests(unittest.TestCase):
@@ -75,15 +76,20 @@ class TableConfigurationTests(unittest.TestCase):
             self.assertEqual(stored.original, config.original)
             self.assertEqual(stored.scientific_hash, config.scientific_hash)
         changed = deepcopy(config.original)
-        full = load_experiment_configuration(CONFIG.with_name("poc2_m4_daily_full_paper_tables.json"))
+        full = resolve_experiment_configuration(table_document(full=True))
         self.assertEqual(full.series_count, 4227)
         self.assertEqual(expected_task_counts(100, config.workflow),
                          {2: 100, 3: 100, 4: 2830, 5: 1500, 6: 46})
 
     def test_historical_reconciliation_metadata_is_inert(self):
         """Preserve historical documents without imposing their retired import gate."""
-        path = CONFIG.with_name("poc2_m4_daily_full_paper_tables.json")
-        config = load_experiment_configuration(path)
+        document = table_document(full=True)
+        document["archived_forecasts"]["source_reconciliation"] = {
+            "version": "cross_source_v1", "series_warning_pct": .01,
+            "population_review_pct": 1, "single_series_material_pct": 1,
+            "directional_impact_review_pct": .1,
+        }
+        config = resolve_experiment_configuration(document)
         policy = config.original["archived_forecasts"]["source_reconciliation"]
         self.assertEqual(policy["series_warning_pct"], .01)
         self.assertEqual(policy["population_review_pct"], 1)
@@ -91,6 +97,7 @@ class TableConfigurationTests(unittest.TestCase):
         self.assertEqual(policy["directional_impact_review_pct"], .1)
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "policy.duckdb"
+            path = write_configuration(directory, document)
             initialize_experiment_database(database, path)
             self.assertEqual(load_database_configuration(database).resolved["archived_forecasts"]["source_reconciliation"], policy)
         changed = deepcopy(config.original)
@@ -105,13 +112,17 @@ class TableConfigurationTests(unittest.TestCase):
 
     def test_complete_pool_and_resolved_counts(self):
         """Reuse approved model contracts and count each mixed branch explicitly."""
-        approved = load_experiment_configuration(CONFIG.with_name(
-            "poc2_m4_daily_100_forecast_contract_m4_comb.json"))
-        for filename, count in ((CONFIG.name, 100), ("poc2_m4_daily_full_paper_tables.json", 4227)):
-            config = load_experiment_configuration(CONFIG.with_name(filename))
+        approved = load_experiment_configuration(CONFIG)
+        point_models = {
+            model: settings for model, settings in approved.original["models"].items()
+            if not model.startswith("directional_")
+        }
+        self.assertEqual(len(point_models), 14)
+        for full, count in ((False, 100), (True, 4227)):
+            config = resolve_experiment_configuration(table_document(full=full))
             self.assertEqual(config.evaluation_options, approved.evaluation_options)
             self.assertEqual(len(config.original["models"]), 16)
-            for model, settings in approved.original["models"].items():
+            for model, settings in point_models.items():
                 self.assertEqual(config.original["models"][model], settings)
             self.assertEqual(config.original["pipeline"]["combination"], approved.original["pipeline"]["combination"])
             derived = config.resolved["derived"]
@@ -165,7 +176,9 @@ class TableConfigurationTests(unittest.TestCase):
                 with patch("util.p01_03_gift_eval_source.iter_source_series", return_value=iter(())) as reader:
                     if count == 3:
                         self.assertEqual(list(source.records()), [])
-                        reader.assert_called_once_with(source.path, "D", 3)
+                        reader.assert_called_once_with(
+                            source.path, "D", 3, exclude=frozenset(),
+                        )
                     else:
                         with self.assertRaises(ImportValidationError):
                             source.records()
@@ -265,6 +278,7 @@ class TableConfigurationTests(unittest.TestCase):
         coordinator.root = CONFIG.parents[2]
         coordinator.quantiles = tuple(coordinator.config["models"]["chronos_2"]["quantile_levels"])
         coordinator.connection = Mock()
+        coordinator.store_m4_references = Mock()
         coordinator._run_04_directional_dtw = Mock()
         coordinator._run_04_directional_mantis_rf = Mock()
         coordinator._store_v11_dtw_predictions = Mock()

@@ -1412,7 +1412,9 @@ class ExperimentCoordinator:
         timeout = float(execution["worker_timeouts_seconds"]["r"])
         threads = str(execution["thread_limits"]["r"])
         action = payload.get("action")
-        if action in {"forecast", "diagnose_period"} and "r_forecast_worker" in paths:
+        if action == "reference_forecast":
+            script = paths["r_m4comp2018_worker"]
+        elif action in {"forecast", "diagnose_period"} and "r_forecast_worker" in paths:
             script = paths["r_forecast_worker"]
         elif action == "forecast":
             script = paths["r_auto_arima_worker"]
@@ -2390,6 +2392,63 @@ class ExperimentCoordinator:
         if errors:
             raise RuntimeError("; ".join(errors))
 
+    def store_m4_references(self, experiment_id: str) -> int:
+        """Request only missing archived means; the coordinator alone stores them.
+
+        Only canonical identity, official position and horizon leave DuckDB.
+        Each reference row is its own durable restart boundary.
+        """
+        enabled = self.configuration.resolved["archived_forecasts"]["enabled"]
+        jobs = {}
+        for provider in enabled:
+            for dataset, series, position, horizon in self.connection.execute(
+                """SELECT s.dataset_id,s.series_id,s.source_row,w.horizon
+                   FROM series s JOIN evaluation_windows w USING (dataset_id,series_id)
+                   JOIN experiments e ON e.dataset_id=s.dataset_id
+                   LEFT JOIN reference_forecasts r ON r.dataset_id=s.dataset_id
+                     AND r.series_id=s.series_id AND r.forecast_id=?
+                   WHERE e.experiment_id=? AND s.frequency='D'
+                     AND w.window_id='short/000' AND r.reference_forecast_id IS NULL
+                   ORDER BY s.source_row""", [provider, experiment_id]
+            ).fetchall():
+                job = jobs.setdefault((dataset, series), {
+                    "dataset_id": dataset, "series_id": series,
+                    "official_position": position, "horizon": horizon, "forecast_ids": [],
+                })
+                job["forecast_ids"].append(provider)
+        if not jobs:
+            return 0
+        records = self._r_worker({"action": "reference_forecast", "jobs": list(jobs.values())})["records"]
+        expected = {(dataset, series, provider) for (dataset, series), job in jobs.items()
+                    for provider in job["forecast_ids"]}
+        identities = [(r["dataset_id"], r["series_id"], r["forecast_id"]) for r in records]
+        if len(identities) != len(expected) or set(identities) != expected:
+            raise ValueError("archived provider returned missing, duplicate or unexpected references")
+        for record in records:
+            job = jobs[(record["dataset_id"], record["series_id"])]
+            provider = record["forecast_id"]
+            if (record["submission_id"] != {"m4_smyl": 118, "m4_fforma": 245}[provider]
+                    or record["official_m4_series_id"] != f"D{job['official_position'] + 1}"
+                    or record["horizon"] != job["horizon"] or len(record["mean"]) != job["horizon"]
+                    or record["scale"] != "original" or record["status"] != "success"):
+                raise ValueError("archived provider identity or horizon mismatch")
+            validate_forecast_capability(record["mean"], record["median"], record["quantile_levels"],
+                                         record["quantiles"], record["forecast_capability"])
+            content_hash = json_fingerprint(record)
+            self.connection.execute(
+                """INSERT INTO reference_forecasts
+                   (reference_forecast_id,dataset_id,series_id,official_m4_series_id,
+                    forecast_id,submission_id,submission_rank,submission_author,horizon,
+                    mean,point_semantics,forecast_capability,source_metadata,content_hash)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                [f"reference/{content_hash[:32]}", record["dataset_id"], record["series_id"],
+                 record["official_m4_series_id"], provider, record["submission_id"],
+                 record["submission_rank"], record["submission_author"], record["horizon"],
+                 record["mean"], record["point_semantics"], record["forecast_capability"],
+                 canonical_json(record["source_metadata"]), content_hash],
+            )
+        return len(records)
+
     def _run_04_forecast(
         self,
         experiment_id: str,
@@ -2409,6 +2468,7 @@ class ExperimentCoordinator:
         Chronos OOM batches, inverse-transforms outputs, and transactionally persists
         original-scale forecast arrays, provenance, hashes, and task state.
         """
+        self.store_m4_references(experiment_id)
         if self.configuration.version in {10, 11, 12, 13}:
             if not rows:
                 return

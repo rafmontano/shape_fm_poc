@@ -13,8 +13,10 @@ from unittest.mock import MagicMock, patch
 
 import duckdb
 
+from tests.configuration_fixtures import configuration_path
 import util.p00_01_researcher_actions as action_module
 from util.shared_configuration import load_experiment_configuration
+from util.shared_active_paths import ActivePaths
 from util.shared_database import initialize_experiment_database
 from util.window_preparation import WindowPreparationCoordinator
 from util.p00_01_researcher_actions import (
@@ -38,7 +40,7 @@ class ResearcherCLITests(unittest.TestCase):
         results = cli.request(["results"])
         self.assertEqual(results.action, "results")
         self.assertEqual(results.database, DEFAULT_DATABASE.resolve())
-        run = cli.request(["run", "--database", "x.duckdb", "--processes", "2-4"])
+        run = cli.request(["run", "--processes", "2-4"])
         self.assertEqual(run.value("processes"), (2, 3, 4))
 
     def test_help_does_not_construct_actions_or_provenance(self):
@@ -80,7 +82,7 @@ class ActionContractTests(unittest.TestCase):
     def test_process_six_sequential_profile_stays_local(self):
         """CLI selection reaches one local calculation, with no cluster or GPU."""
         request = ResearcherCLI().request([
-            "run", "--database", "results/existing.duckdb", "--processes", "6",
+            "run", "--processes", "6",
             "--execution-profile", "sequential_safe",
         ])
         self.assertEqual(request.value("processes"), (6,))
@@ -115,26 +117,26 @@ class ActionContractTests(unittest.TestCase):
 
     def test_partial_forecast_selector_fails_before_storage(self):
         request = ResearcherCLI().request([
-            "results", "--database", "missing.duckdb", "--series-id", "one"
+            "results", "--series-id", "one"
         ])
         with self.assertRaisesRegex(ValueError, "must be supplied together"):
             ResearcherActions().dispatch(request, {})
 
     def test_run_dispatch_forwards_the_existing_signature(self):
         with tempfile.TemporaryDirectory() as directory:
-            database = Path(directory) / "experiment.duckdb"
+            paths = ActivePaths(Path(directory))
+            database = paths.parent
             process = MagicMock()
             process.run.return_value = {"execution_id": "execution/1"}
             actions = ResearcherActions(process_action=process)
             request = ResearcherCLI().request([
-                "run", "--database", str(database), "--configuration", "config.json",
+                "run", "--database", str(database), "--configuration", str(paths.configuration),
                 "--processes", "4", "--local-heavy-exception", "approval/test",
             ])
-            with patch("util.p00_02_researcher_cli.RESULTS_ROOT", Path(directory).resolve()):
-                result = actions.dispatch(request, {"action": "run"})
+            result = actions.dispatch(request, {"action": "run"})
         self.assertEqual(result["execution"]["execution_id"], "execution/1")
         process.run.assert_called_once_with(
-            database.resolve(), Path("config.json").resolve(), (4,), None, "approval/test"
+            database.resolve(), paths.configuration, (4,), None, "approval/test"
         )
 
 
@@ -145,6 +147,9 @@ class RestoredResultsAndParserTests(unittest.TestCase):
         """Create an action dispatcher and deterministic invocation evidence."""
         self.actions = ResearcherActions()
         self.invocation = {"action": "results"}
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.paths = ActivePaths(Path(temporary.name))
 
     def request(self, arguments):
         """Parse one request through the actual CLI owner."""
@@ -154,16 +159,16 @@ class RestoredResultsAndParserTests(unittest.TestCase):
         """Plan, run, status, results, and test retain baseline defaults/options."""
         cli = ResearcherCLI()
         self.assertIsNotNone(cli.request(["plan"]).value("configuration"))
-        run = cli.request(["run", "--database", "x"])
+        run = cli.request(["run"])
         self.assertEqual(run.value("processes"), tuple(range(1, 7)))
         self.assertIsNone(run.value("execution_profile"))
         profile = cli.request([
-            "run", "--database", "x", "--processes", "4",
+            "run", "--processes", "4",
             "--execution-profile", "poc2_seasonal_recovery",
         ])
         self.assertEqual(profile.value("execution_profile"), "poc2_seasonal_recovery")
         exception = cli.request([
-            "run", "--database", "x", "--processes", "4",
+            "run", "--processes", "4",
             "--local-heavy-exception", "approval/example",
         ])
         self.assertEqual(exception.value("local_heavy_exception"), "approval/example")
@@ -172,17 +177,17 @@ class RestoredResultsAndParserTests(unittest.TestCase):
 
     def test_invocation_public_arguments_include_database(self):
         """Public invocation evidence retains the selected database argument."""
-        request = self.request(["status", "--database", "selected.duckdb"])
+        request = self.request(["status", "--database", str(self.paths.parent)])
         with patch.object(InvocationProvenance, "_git", return_value="revision"):
             record = InvocationProvenance().record(request)
-        self.assertEqual(record["arguments"]["database"], "selected.duckdb")
-        self.assertEqual(record["database"], str(Path("selected.duckdb").resolve()))
+        self.assertEqual(record["arguments"]["database"], str(self.paths.parent))
+        self.assertEqual(record["database"], str(self.paths.parent))
 
     def test_default_and_explicit_official_results_routes(self):
         """Default results resolve latest while explicit identity skips lookup."""
         with tempfile.TemporaryDirectory() as directory:
-            database = Path(directory) / "results.duckdb"
-            initialize_experiment_database(database, ROOT / "config/experiments/poc2_m4_daily_100.json")
+            database = ActivePaths(Path(directory)).parent
+            initialize_experiment_database(database, configuration_path(version=1, directory=directory))
             with (
                 patch.object(action_module, "latest_experiment_id", return_value="latest") as latest,
                 patch.object(action_module, "official_results", return_value=[{"id": 1}]) as official,
@@ -204,7 +209,8 @@ class RestoredResultsAndParserTests(unittest.TestCase):
         fixture_type = make_dataclass("StoredForecast", ["forecast_id", "candidate", "mean"])
         stored = fixture_type("forecast/1", "model", (1.0, 2.0))
         with tempfile.TemporaryDirectory() as directory:
-            database = Path(directory) / "results.duckdb"
+            database = ActivePaths(Path(directory)).parent
+            database.parent.mkdir()
             database.touch()
             with patch.object(action_module, "get_forecast", return_value=stored) as provider:
                 output = self.actions.dispatch(self.request([
@@ -223,7 +229,7 @@ class RestoredResultsAndParserTests(unittest.TestCase):
         stored = fixture_type("window/1", "dataset/1", "7", 2)
         with patch.object(action_module, "get_prepared_window", return_value=stored) as provider:
             output = self.actions.dispatch(self.request([
-                "results", "--database", "parent.duckdb", "--windows-database", "child.duckdb",
+                "results", "--database", str(self.paths.parent), "--windows-database", str(self.paths.child),
                 "--dataset-id", "dataset/1", "--series-id", "7", "--window-ordinal", "2",
             ]), self.invocation)
         self.assertEqual(output["prepared_window"]["window_id"], "window/1")
@@ -232,9 +238,10 @@ class RestoredResultsAndParserTests(unittest.TestCase):
     def test_prepare_windows_dispatches_exact_arguments(self):
         """Preparation remains opt-in and forwards parent, child, profile, and bounds."""
         with tempfile.TemporaryDirectory() as directory:
-            parent = Path(directory) / "parent.duckdb"
+            parent = ActivePaths(Path(directory)).parent
+            parent.parent.mkdir()
             parent.touch()
-            child = Path(directory) / "child.duckdb"
+            child = ActivePaths(Path(directory)).child
             window = MagicMock()
             window.run.return_value = {"preparation_id": "preparation/1"}
             actions = ResearcherActions(window_action=window)
@@ -249,8 +256,9 @@ class RestoredResultsAndParserTests(unittest.TestCase):
     def test_prepare_features_is_explicit_and_forwards_profile_or_bound(self):
         """Optional extraction has its own command and does not alter window preparation."""
         with tempfile.TemporaryDirectory() as directory:
-            parent = Path(directory) / "parent.duckdb"
-            child = Path(directory) / "child.duckdb"
+            parent = ActivePaths(Path(directory)).parent
+            child = ActivePaths(Path(directory)).child
+            parent.parent.mkdir()
             parent.touch()
             child.touch()
             feature = MagicMock()
@@ -286,14 +294,14 @@ class RestoredResultsAndParserTests(unittest.TestCase):
             ) as provider,
         ):
             output = self.actions.dispatch(self.request([
-                "results", "--database", "parent.duckdb",
-                "--windows-database", "child.duckdb", "--dataset-id", "dataset/1",
+                "results", "--database", str(self.paths.parent),
+                "--windows-database", str(self.paths.child), "--dataset-id", "dataset/1",
                 "--series-id", "7", "--window-ordinal", "2",
                 "--feature-set-id", "fforma_base_v1",
             ]), self.invocation)
         self.assertEqual(output["prepared_features"]["feature_values"], (1.0,))
         provider.assert_called_once_with(
-            Path("child.duckdb"),
+            self.paths.child,
             window_id="window/1",
             feature_set_id="fforma_base_v1",
         )
@@ -314,7 +322,7 @@ class RestoredResultsAndParserTests(unittest.TestCase):
         """Every incomplete forecast selector combination fails before providers."""
         options = [("--variant-id", "v"), ("--series-id", "s"), ("--candidate", "c")]
         for mask in range(1, 7):
-            arguments = ["results", "--database", "missing.duckdb"]
+            arguments = ["results", "--database", str(self.paths.parent)]
             for index, pair in enumerate(options):
                 if mask & (1 << index):
                     arguments.extend(pair)
@@ -324,10 +332,10 @@ class RestoredResultsAndParserTests(unittest.TestCase):
     def test_missing_database_experiment_results_and_forecast_fail_clearly(self):
         """All baseline read-only absence modes preserve clear failures."""
         with self.assertRaisesRegex(FileNotFoundError, "database does not exist"):
-            self.actions.dispatch(self.request(["results", "--database", "missing.duckdb"]), {})
+            self.actions.dispatch(self.request(["results", "--database", str(self.paths.parent)]), {})
         with tempfile.TemporaryDirectory() as directory:
-            database = Path(directory) / "results.duckdb"
-            initialize_experiment_database(database, ROOT / "config/experiments/poc2_m4_daily_100.json")
+            database = ActivePaths(Path(directory)).parent
+            initialize_experiment_database(database, configuration_path(version=1, directory=directory))
             with patch.object(action_module, "latest_experiment_id",
                               side_effect=RuntimeError("no experiment is planned")):
                 with self.assertRaisesRegex(RuntimeError, "no experiment"):
@@ -352,10 +360,8 @@ class RestoredProcessActionTests(unittest.TestCase):
         """Create isolated database paths and select the bounded reference configuration."""
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)
-        boundary = patch("util.p00_02_researcher_cli.RESULTS_ROOT", self.root.resolve())
-        boundary.start()
-        self.addCleanup(boundary.stop)
-        self.configuration = ROOT / "config/experiments/poc2_m4_daily_100.json"
+        self.paths = ActivePaths(self.root)
+        self.configuration = configuration_path(version=1, directory=self.root)
 
     def tearDown(self):
         """Remove every test-owned database and configuration copy."""
@@ -391,19 +397,31 @@ class RestoredProcessActionTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "no callable run"):
                 registry.load(1)
 
-    def test_new_database_requires_configuration_without_creation(self):
-        """A missing creation configuration fails before DuckDB creates a file."""
-        database = self.root / "missing.duckdb"
-        with self.assertRaisesRegex(ValueError, "configuration is required"):
+    def test_new_database_requires_bootstrap_configuration_without_creation(self):
+        """The automatic fixed bootstrap must exist before DuckDB creates a file."""
+        database = self.paths.parent
+        with self.assertRaisesRegex(ValueError, "cannot read experiment configuration.*config/experiment.json"):
             ProcessAction().run(database, None, (1,))
         self.assertFalse(database.exists())
 
+    def test_new_database_automatically_loads_fixed_bootstrap(self):
+        """Creation loads the fixed JSON before enforcing later-process prerequisites."""
+        self.paths.configuration.parent.mkdir()
+        self.paths.configuration.write_bytes(self.configuration.read_bytes())
+        registry = MagicMock()
+        with self.assertRaisesRegex(RuntimeError, "requires completed Processes 01"):
+            ProcessAction(registry).run(self.paths.parent, None, (2,))
+        registry.load.assert_not_called()
+        with duckdb.connect(str(self.paths.parent), read_only=True) as connection:
+            self.assertEqual(connection.execute(
+                "SELECT process_id, status FROM experiment_processes ORDER BY process_id"
+            ).fetchall(), [(number, "pending") for number in range(1, 7)])
+
     def test_unavailable_enabled_machine_blocks_before_database_creation(self):
         """Distributed endpoint failure cannot create new scientific state."""
-        database = self.root / "unreachable.duckdb"
+        database = self.paths.parent
         configuration = (
-            ROOT / "config/experiments/"
-            "poc2_m4_daily_100_directional_dtw_mantis_rf.json"
+            configuration_path(version=11, directory=self.root)
         )
         cluster = MagicMock()
         cluster.start.side_effect = RuntimeError("enabled machine is unreachable")
@@ -427,15 +445,15 @@ class RestoredProcessActionTests(unittest.TestCase):
 
     def test_existing_database_rejects_competing_configuration(self):
         """Resume keeps stored DuckDB configuration authoritative."""
-        database = self.root / "existing.duckdb"
+        database = self.paths.parent
         initialize_experiment_database(database, self.configuration)
         with self.assertRaisesRegex(ValueError, "only valid when creating"):
             ProcessAction().run(database, self.configuration, (1,))
 
     def test_tuning_requires_profile_before_wrapper_dispatch(self):
         """Heavy tuning cannot silently use the local ordinary route."""
-        database = self.root / "tuning.duckdb"
-        tuning = ROOT / "config/experiments/poc2_m4_daily_100_period_tuning.json"
+        database = self.paths.parent
+        tuning = configuration_path(version=3, directory=self.root)
         initialize_experiment_database(database, tuning)
         registry = MagicMock()
         with self.assertRaisesRegex(RuntimeError, "requires --execution-profile"):
@@ -467,7 +485,7 @@ class RestoredProcessActionTests(unittest.TestCase):
     def test_directional_comparison_starts_one_mantis_gpu_process(self):
         """Version 11 narrows logical GPU capacity to its approved single process."""
         configuration = load_experiment_configuration(
-            ROOT / "config/experiments/poc2_m4_daily_100_directional_dtw_mantis_rf.json"
+            configuration_path(version=11, directory=self.root)
         )
         cluster = MagicMock()
         cluster.scheduler_address = "tcp://scheduler:8786"
@@ -493,9 +511,10 @@ class RestoredProcessActionTests(unittest.TestCase):
 
     def test_resume_skips_completed_processes_without_creation_json(self):
         """Later-process resume retains its generic path; import is tested in test_active_import."""
-        creation = self.root / "creation.json"
+        creation = self.paths.configuration
+        creation.parent.mkdir()
         creation.write_bytes(self.configuration.read_bytes())
-        database = self.root / "resume.duckdb"
+        database = self.paths.parent
         initialize_experiment_database(database, creation)
         connection = duckdb.connect(str(database))
         try:
@@ -513,7 +532,7 @@ class RestoredProcessActionTests(unittest.TestCase):
 
     def test_interrupted_execution_and_invocation_are_recovered(self):
         """A later sole coordinator closes both stale parent record kinds."""
-        database = self.root / "interrupted.duckdb"
+        database = self.paths.parent
         initialize_experiment_database(database, self.configuration)
         connection = duckdb.connect(str(database))
         try:
@@ -544,7 +563,7 @@ class RestoredProcessActionTests(unittest.TestCase):
 
     def test_selected_wrappers_run_in_order_and_prerequisite_is_enforced(self):
         """Later generic gates run in order; import restart is covered through its real entry."""
-        database = self.root / "ordered.duckdb"
+        database = self.paths.parent
         initialize_experiment_database(database, self.configuration)
         with duckdb.connect(str(database)) as connection:
             connection.execute("UPDATE experiment_processes SET status='completed' WHERE process_id=1")
@@ -557,27 +576,29 @@ class RestoredProcessActionTests(unittest.TestCase):
                           return_value={"output_validated": True}):
             ProcessAction(registry).run(database, None, (2, 3))
         self.assertEqual(calls, [2, 3])
-        blocked = self.root / "blocked.duckdb"
+        blocked = ActivePaths(self.root / "blocked").parent
         initialize_experiment_database(blocked, self.configuration)
         with self.assertRaisesRegex(RuntimeError, "requires completed Processes 01, 02, 03"):
             ProcessAction().run(blocked, None, (4,))
 
     def test_process_03_failure_closes_database_and_allows_resume(self):
         """A controlled preparation failure preserves prior gates and reopens cleanly."""
-        database = self.root / "recoverable.duckdb"
-        windows = self.root / "recoverable.windows.duckdb"
+        database = self.paths.parent
+        windows = self.paths.child
         configuration = (
-            ROOT / "config/experiments/"
-            "poc2_m4_daily_100_directional_dtw_mantis_rf.json"
+            configuration_path(version=11, directory=self.root)
         )
         registry = MagicMock()
         registry.load.return_value = SimpleNamespace(run=MagicMock(return_value={}))
+        initialize_experiment_database(database, configuration)
+        with duckdb.connect(str(database)) as connection:
+            connection.execute("UPDATE experiment_processes SET status='completed' WHERE process_id=1")
         with patch.object(
             action_module.ProcessStorage,
             "validate",
             return_value={"output_validated": True},
         ):
-            ProcessAction(registry).run(database, configuration, (1, 2))
+            ProcessAction(registry).run(database, None, (2,))
 
         def controlled_failure(path):
             with WindowPreparationCoordinator(path, windows):

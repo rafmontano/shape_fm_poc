@@ -18,7 +18,8 @@ class CompletePipelineTests(unittest.TestCase):
 
     def test_v13_full_scope_plan_preserves_all_candidates(self):
         root = Path(__file__).resolve().parents[3]
-        fixture = json.loads((root / "config/experiments/poc2_m4_daily_full_capped_fixed_dtw.json").read_text())
+        from tests.configuration_fixtures import table_document
+        fixture = table_document(capped=True)
         fixture["data"]["selection"] = {"method": "first_official", "count": 100}
         with tempfile.TemporaryDirectory() as directory:
             configuration = Path(directory) / "configuration.json"
@@ -49,7 +50,7 @@ class CompletePipelineTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[3]
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "experiment.duckdb"
-            initialize_experiment_database(database, root / "config/experiments/poc2_m4_daily_100_paper_tables.json")
+            initialize_experiment_database(database, root / "config/experiment.json")
             with ExperimentCoordinator(database) as coordinator:
                 coordinator.connection.execute("""INSERT INTO datasets
                     (dataset_id,dataset_name,source_system,source_revision,source_file_hashes,

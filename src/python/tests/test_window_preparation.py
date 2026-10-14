@@ -49,13 +49,14 @@ from util.window_preparation import (
 
 
 ROOT = Path(__file__).resolve().parents[3]
-CONFIGURATION = ROOT / "config/experiments/poc2_m4_daily_100_rolling_windows_corrected.json"
-LEGACY_CONFIGURATION = ROOT / "config/experiments/poc2_m4_daily_100_rolling_windows.json"
+from tests.configuration_fixtures import configuration_path
+CONFIGURATION = configuration_path(version=6)
+LEGACY_CONFIGURATION = configuration_path(version=5)
 VERSION_11_CONFIGURATION = (
-    ROOT / "config/experiments/poc2_m4_daily_100_directional_dtw_mantis_rf.json"
+    configuration_path(version=11)
 )
 STANDARDISATION_CONFIGURATION = (
-    ROOT / "config/experiments/poc2_m4_daily_100_standardised.json"
+    configuration_path(version=4)
 )
 LOCAL_TEST_LIMITS = {"max_series": 100, "max_windows": 200}
 
@@ -599,7 +600,7 @@ class WindowPersistenceTests(unittest.TestCase):
     def test_shared_cohort_is_created_at_completion_and_validated_on_resume(self) -> None:
         # Pragmatic fixture exception: parser version 13 is the parent's separate increment.
         # Use the resolved v12 configuration with equivalent approved cohort settings.
-        document = json.loads((ROOT / "config/experiments/poc2_m4_daily_100_paper_tables.json").read_text())
+        document = json.loads((ROOT / "config/experiment.json").read_text())
         document["execution"]["default"]["batch_sizes"]["window_preparation"] = 16
         path = self.parent.with_name("v12.json")
         path.write_text(json.dumps(document))

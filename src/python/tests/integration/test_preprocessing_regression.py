@@ -16,7 +16,7 @@ class RobustPreprocessingRegressionTests(unittest.TestCase):
 
     def test_first_100_match_legacy_tsclean(self):
         root = Path(__file__).resolve().parents[4]
-        source = root / "data/source/gift_eval/m4_daily"
+        source = root / "data/gift_eval/m4_daily"
         contexts = [
             list(series.target[:-14])
             for series in iter_source_series(source, "D", 100)

@@ -1,62 +1,91 @@
-# Foundation Stage 1 data contract
+# ShapeFM data contract
 
-## Identity
+## Canonical source
 
-`datasets.dataset_id` identifies an exact imported version and is derived from:
-
-- logical dataset `gift_eval/m4_daily`;
-- pinned Hugging Face revision and the three source-file hashes;
-- canonical import/data-contract version and material canonicalisation settings.
-
-Execution controls such as `max_series` and `workers` are excluded. Smoke and
-full imports therefore share one dataset ID and one logical restartable run.
-
-Within that version, `(dataset_id, series_id)` is the primary series identity.
-M4 Daily keeps the official source item ID as `series_id`, so the first series
-is retrieved as dataset `m4_daily`, series `0`.
-
-## Series
-
-Each `series` row contains one complete `FLOAT[]` target, source identity and
-row, frequency, start timestamp, observation count, deterministic target hash,
-source metadata, and creation time. This layout is optimized for retrieving a
-complete time series as one object.
-
-## Evaluation windows
-
-All array boundaries are **zero-based and end-exclusive**. M4 Daily uses one
-generic `validation_and_test` window with horizon 14. For target length `N`:
+GIFT-Eval is the sole canonical time-series source. The active M4 Daily source is:
 
 ```text
-train_start       0
-train_end         N - 28
-validation_start N - 28
-validation_end   N - 14
-test_start       N - 14
-test_end         N
+data/gift_eval/m4_daily/
+├── data-00000-of-00001.arrow
+├── dataset_info.json
+└── state.json
 ```
 
-For first series `0`, `N = 1020`: training is `[0, 992)`, validation is
-`[992, 1006)`, and test is `[1006, 1020)`. These reproduce the official
-GIFT-Eval short-term M4 semantics.
+The source revision and file hashes are pinned in `config/experiment.json` and
+`config/dependencies/gift_eval.json`. Process 01 does not compare GIFT-Eval
+histories with M4comp2018 or another source before accepting them. Secondary
+source-comparison adapters are inactive unless the researcher explicitly
+requests a comparison.
 
-## Version-5 prepared windows
+## Series identity
 
-The version-5 parent adds deterministic integer lookup aliases for frequency,
-dataset and series identities; canonical string primary keys remain unchanged.
-`window_preparation_runs` links one immutable preparation identity to one child
-DuckDB and records parent/configuration/membership fingerprints and run status.
+`dataset_id` identifies the exact imported dataset version. Within it,
+`(dataset_id, series_id)` identifies a series. The canonical row stores the full
+target array, source/frequency metadata, observation count and required lineage.
+Finite observations are preserved. Source null/NaN positions remain missing;
+infinity, empty targets and malformed identity/frequency fail.
 
-The child stores its schema/preparation metadata, one frequency-definition row
-per selected frequency, one S1 split definition, one membership row per eligible
-source series, restartable per-series tasks, and prepared input windows. A window
-stores zero-based end-exclusive source positions, transformed input, fitted
-`standardise_sample_v1` state, preprocessing/package/worker provenance and
-content hashes. It does not store raw input or future arrays. Read-only retrieval
-joins the numeric series key to the parent and resolves unchanged future values
-from the canonical target.
+M4 Daily uses the official GIFT-Eval item identity and prediction length 14.
+Array boundaries are zero-based and end-exclusive. For length `N`:
 
-Membership is assigned to original series, so every window of a series inherits
-one partition. Complete blocks begin at the official training segment start and
-advance W+H. Validation/test labels are protected; no block crosses the training
-end, and no partial block is padded or retained.
+```text
+training   [0, N-28)
+validation [N-28, N-14)
+test       [N-14, N)
+```
+
+## Process 01 — Import
+
+Process 01 reads the selected GIFT-Eval records, converts each to the canonical
+series object and commits it atomically to `results/experiment.duckdb`. It does
+not clean, transform or infer statistical seasonality. Restart reads committed
+series identities and imports only missing work.
+
+## Process 02 — Preprocess
+
+Preprocessing uses historical observations only and never changes the canonical
+target. The supported modes are:
+
+- `standard`: `forecast::na.interp()` fills missing observations;
+- `robust`: `forecast::tsclean()` performs the approved missing/outlier handling.
+
+The R period is resolved once from configured frequency unless an explicit
+experiment override is approved. It is an R modelling convention, not a
+seasonality test and not GIFT-Eval's scoring seasonality.
+
+## Process 03 — Transform and windows
+
+`standardise_sample_v1` fits on the finite prepared historical input. A
+nonconstant input uses sample standard deviation (`n-1`); constant/singleton
+inputs use scale 1. Store the fitted state so forecasts can be inverted without
+refitting.
+
+Rolling windows are created only inside the official training boundary. Split
+membership is assigned to the original series before windows are generated, so
+all windows from one series stay in one S1 partition. Complete non-overlapping
+blocks use configured input length plus future horizon; no partial block is
+padded. Daily uses input length 64 and horizon 14.
+
+High-volume windows, membership, transformed inputs, labels and reusable
+features belong in `results/windows.duckdb`. Raw series and general experiment
+state remain in the parent. The child links to the parent through the same
+experiment and stable source/configuration fingerprints.
+
+## Directional labels
+
+The stored binary definition is `directional_strict_v1`:
+
+```text
+1 when future_value > reference_value; otherwise 0
+```
+
+Equality is 0 and no numerical tolerance is applied. Missing future values are
+unavailable, not class 0. The reference is the final cleaned input value on its
+original scale; future observations never enter cleaning or transformation fit.
+
+## Trust boundary
+
+Process 01 validates the external source and canonical conversion. Processes 02
+and 03 validate their native worker results before committing them. Once a
+canonical row is committed, downstream code treats it as trusted and does not
+repeatedly reconcile it with another source or rehash it during ordinary status.

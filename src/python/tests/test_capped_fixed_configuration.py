@@ -5,22 +5,20 @@ import unittest
 from copy import deepcopy
 from pathlib import Path
 
+from tests.configuration_fixtures import table_document
 from util.shared_configuration import (
     ExperimentConfigurationError, json_fingerprint,
     load_experiment_configuration, resolve_experiment_configuration,
 )
 
-CONFIG = Path(__file__).resolve().parents[3] / "config/experiments/poc2_m4_daily_full_capped_fixed_dtw.json"
-
-
 class CappedFixedConfigurationTests(unittest.TestCase):
     """Small public-interface tests need no provider or scientific execution."""
 
     def test_fresh_contract_and_unchanged_backbone(self):
-        raw = json.loads(CONFIG.read_text())
+        raw = table_document(capped=True)
         before = deepcopy(raw)
         config = resolve_experiment_configuration(raw)
-        legacy = load_experiment_configuration(CONFIG.with_name("poc2_m4_daily_full_paper_tables.json"))
+        legacy = resolve_experiment_configuration(table_document(full=True))
         self.assertEqual(raw, before)
         self.assertEqual(config.original, before)
         self.assertEqual(config.version, 13)
@@ -50,7 +48,7 @@ class CappedFixedConfigurationTests(unittest.TestCase):
                 self.assertEqual(config.original["models"][model], legacy.original["models"][model])
 
     def test_policy_and_backbone_rejections(self):
-        raw = json.loads(CONFIG.read_text())
+        raw = table_document(capped=True)
         mutations = [
             (("pipeline", "window_preparation", "training_cohort", "cap"), value)
             for value in (None, True, 10000.0, 9999)
@@ -82,7 +80,7 @@ class CappedFixedConfigurationTests(unittest.TestCase):
                     resolve_experiment_configuration(changed)
 
     def test_scientific_identity_retains_actual_policy(self):
-        config = load_experiment_configuration(CONFIG)
+        config = resolve_experiment_configuration(table_document(capped=True))
         science = config.scientific_configuration
         self.assertEqual(science["configuration_version"], 13)
         self.assertEqual(science["pipeline"], config.resolved["pipeline"])

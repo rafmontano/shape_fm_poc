@@ -16,6 +16,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from tests.configuration_fixtures import configuration_path
 from util.shared_configuration import json_fingerprint
 from util.shared_database import initialize_experiment_database
 from util.shared_execution_profiles import resolve_execution_profile
@@ -55,16 +56,16 @@ def forecast_result(job, mean, *, fallback=False, executed_model=None, quantiles
 
 
 def initialize_test_database(
-    path: Path, configuration_name: str = "poc2_m4_daily_100.json"
+    path: Path, version: int = 1
 ) -> None:
     """Purpose: Create a configured database for experiment coordinator tests.
 
-    Inputs: Destination ``Path`` and one committed 100-series configuration name.
+    Inputs: Destination ``Path`` and a supported test schema version.
     Outputs: None; creates and initializes the DuckDB file at ``path``.
     """
     initialize_experiment_database(
         path,
-        Path(__file__).resolve().parents[3] / "config/experiments" / configuration_name,
+        configuration_path(version=version, directory=path.parent),
     )
 
 
@@ -595,7 +596,7 @@ class TransactionTests(unittest.TestCase):
         database = self.directory / "poc1.duckdb"
         database.unlink()
         initialize_test_database(
-            database, "poc2_m4_daily_100_standardised.json"
+            database, version=4
         )
         self.coordinator = ExperimentCoordinator(database)
         self._insert_benchmark_and_instances()
@@ -699,7 +700,7 @@ class TransactionTests(unittest.TestCase):
         database = self.directory / "poc1.duckdb"
         database.unlink()
         initialize_test_database(
-            database, "poc2_m4_daily_100_forecast_contract_m4_comb.json"
+            database, version=9
         )
         self.coordinator = ExperimentCoordinator(database)
         self._insert_benchmark_and_instances()
@@ -1025,8 +1026,7 @@ class ConfiguredPlanningTests(unittest.TestCase):
         config_path = self.directory / "period-7.json"
         document = json.loads(
             (
-                Path(__file__).resolve().parents[3]
-                / "config/experiments/poc2_m4_daily_100_resolved_period.json"
+                configuration_path(version=2)
             ).read_text(encoding="utf-8")
         )
         document["experiment"]["name"] += "_period_7"

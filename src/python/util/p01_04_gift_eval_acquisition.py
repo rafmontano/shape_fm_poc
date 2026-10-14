@@ -3,7 +3,7 @@
 #
 # Purpose: Acquire and verify the immutable, revision-pinned GIFT-Eval source data.
 # Inputs: Dependency-lock metadata, acquisition scope, and a GIFT-Eval source directory.
-# Outputs: Verified source files and `source-manifest.json`; validation details on stdout.
+# Outputs: Verified source files; verification details returned without a sidecar.
 # Run from: Developer utility: `.venv/bin/python -m util.p01_04_gift_eval_acquisition <m4_daily|complete|verify>` with `PYTHONPATH=src/python`.
 # ==============================================================================
 
@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -23,11 +24,7 @@ import pyarrow.ipc as ipc
 from huggingface_hub import HfApi, snapshot_download
 
 from .shared_configuration import ImportValidationError
-from .shared_provenance import atomic_write_json, sha256_file, utc_now
-
-
-# Code constant: acquisition-protocol manifest filename; callers cannot override it.
-MANIFEST_NAME = "source-manifest.json"
+from .shared_provenance import sha256_file
 
 
 def repository_root() -> Path:
@@ -125,27 +122,6 @@ def hashes_match(files: dict[str, dict[str, Any]], expected: dict[str, str]) -> 
     )
 
 
-def manifest_matches(
-    manifest_path: Path,
-    repository: str,
-    revision: str,
-    scope: str,
-    files: dict[str, dict[str, Any]],
-) -> bool:
-    """Return whether an existing manifest exactly identifies repository, revision, scope, and files."""
-    try:
-        with manifest_path.open("r", encoding="utf-8") as stream:
-            manifest = json.load(stream)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return False
-    return (
-        manifest.get("repository") == repository
-        and manifest.get("revision") == revision
-        and manifest.get("scope") == scope
-        and manifest.get("files") == files
-    )
-
-
 def remote_dataset_names(repository: str, revision: str) -> list[str]:
     """Purpose: Discover dataset directories present in a pinned Hugging Face snapshot.
 
@@ -172,7 +148,7 @@ def verify_source(
     """Purpose: Validate a local GIFT-Eval dataset snapshot for the requested acquisition scope.
 
     Inputs: Source directory, dependency-lock mapping, and ``m4_daily`` or complete scope.
-    Outputs: Manifest content with repository/revision, dataset directories, and file fingerprints.
+    Outputs: Verification information with revision, directories, and file fingerprints.
     Side effects: Reads local source files and queries Hugging Face for complete-scope directory names.
     """
     dataset = dependency["dataset"]
@@ -196,14 +172,13 @@ def verify_source(
 
 
 def acquire(source_root: Path, dependency: dict[str, Any], scope: str) -> dict[str, Any]:
-    """Purpose: Acquire, verify, and manifest an immutable GIFT-Eval dataset snapshot.
+    """Purpose: Acquire and verify an immutable GIFT-Eval dataset snapshot.
 
     Inputs: Destination root, dependency-lock metadata, and ``m4_daily`` or complete scope.
-    Outputs: Verified manifest data, manifest path, and ``already_valid``/``downloaded`` outcome.
-    Side effects: May create directories, download snapshot files/cache data, and atomically write the manifest.
+    Outputs: Verification information and ``already_valid``/``downloaded`` outcome.
+    Side effects: Downloads using the shared cache; removes source-local download metadata after success.
     """
     source_root = source_root.resolve()
-    manifest_path = source_root / MANIFEST_NAME
     try:
         verified = verify_source(source_root, dependency, scope)
     except ImportValidationError:
@@ -218,31 +193,20 @@ def acquire(source_root: Path, dependency: dict[str, Any], scope: str) -> dict[s
             repo_type="dataset",
             revision=dataset["revision"],
             local_dir=source_root,
-            cache_dir=repository_root() / "data" / ".cache" / "huggingface",
+            cache_dir=repository_root() / ".cache" / "huggingface",
             allow_patterns=[f"{dataset['phase_0_1_subset']}/*"]
             if scope == "m4_daily"
             else None,
         )
         verified = verify_source(source_root, dependency, scope)
+        metadata = source_root / ".cache" / "huggingface"
+        if metadata.is_dir():
+            shutil.rmtree(metadata)
+            if not any(metadata.parent.iterdir()):
+                metadata.parent.rmdir()
         outcome = "downloaded"
 
-    manifest_current = manifest_matches(
-        manifest_path,
-        verified["repository"],
-        verified["revision"],
-        scope,
-        verified["files"],
-    )
-    if not manifest_current:
-        atomic_write_json(
-            manifest_path,
-            {
-                **verified,
-                "source_directory": str(source_root),
-                "verified_at": utc_now(),
-            },
-        )
-    return {**verified, "manifest": str(manifest_path), "outcome": outcome}
+    return {**verified, "outcome": outcome}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -268,8 +232,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Purpose: Parse and dispatch GIFT-Eval source acquisition or verification.
 
     Inputs: Optional arguments; defaults originate in the dependency lock and repository layout.
-    Outputs: Manifest JSON on stdout with status 0, or an error on stderr with status 1.
-    Side effects: May access Hugging Face, download files, write ``source-manifest.json``, and run Git.
+    Outputs: Verification JSON on stdout with status 0, or an error on stderr with status 1.
+    Side effects: May access Hugging Face, download source files, and run Git.
     """
     args = build_parser().parse_args(argv)
     try:

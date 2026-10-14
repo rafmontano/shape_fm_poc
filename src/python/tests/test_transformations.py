@@ -38,7 +38,8 @@ from util.window_preparation import prepare_context
 
 
 ROOT = Path(__file__).resolve().parents[3]
-CONFIGURATION = ROOT / "config/experiments/poc2_m4_daily_100_standardised.json"
+from tests.configuration_fixtures import configuration_path
+CONFIGURATION = configuration_path(version=4)
 R_TRANSFORMATIONS = ROOT / "src/r/util/transformations.R"
 
 
@@ -232,7 +233,7 @@ class StandardisationContractTests(unittest.TestCase):
             resolve_experiment_configuration(invalid)
 
         tuned = json.loads(
-            (ROOT / "config/experiments/poc2_m4_daily_100_period_tuning.json").read_text(
+            configuration_path(version=3).read_text(
                 encoding="utf-8"
             )
         )

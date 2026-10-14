@@ -21,6 +21,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from tests.configuration_fixtures import configuration_path
 from util.execution_calibration import (
     CALIBRATION_CANDIDATES,
     _chronos_context_responses,
@@ -346,9 +347,7 @@ class ExecutionProfileTests(unittest.TestCase):
 
     def test_operational_topology_does_not_change_scientific_configuration(self) -> None:
         """Coordinator address overrides remain outside scientific identity."""
-        path = Path(__file__).resolve().parents[3] / (
-            "config/experiments/poc2_m4_daily_100_directional_dtw_mantis_rf.json"
-        )
+        path = configuration_path(version=11)
         before = load_experiment_configuration(path)
         with patch.dict(
             os.environ, {"SHAPEFM_COORDINATOR_ADDRESS": "192.0.2.9"}, clear=False
@@ -367,7 +366,7 @@ class ExecutionProfileTests(unittest.TestCase):
         coordinator = object.__new__(ExperimentCoordinator)
         coordinator.root = Path(__file__).resolve().parents[3]
         coordinator.configuration = load_experiment_configuration(
-            coordinator.root / "config/experiments/poc2_m4_daily_100_standardised.json"
+            configuration_path(version=4)
         )
         coordinator.config = coordinator.configuration.workflow
         coordinator.execution_hardware = MagicMock(return_value={})
@@ -663,8 +662,7 @@ class ExecutionProfileTests(unittest.TestCase):
     def test_full_m4_daily_task_counts(self) -> None:
         """A 4,227-series M4 Daily run expands to the expected tasks per process."""
         workflow = load_experiment_configuration(
-            Path(__file__).resolve().parents[3]
-            / "config/experiments/poc2_m4_daily_100.json"
+            configuration_path(version=1)
         ).workflow
         counts = expected_task_counts(4_227, workflow)
         self.assertEqual(
@@ -735,7 +733,7 @@ class PersistentWorkerTests(unittest.TestCase):
         forecast_payload = {
             "action": "forecast",
             "settings": load_experiment_configuration(
-                root / "config/experiments/poc2_m4_daily_100_r_pool.json"
+                configuration_path(version=7)
             ).workflow["models"]["auto_arima"]["settings"],
             "jobs": [
                 {

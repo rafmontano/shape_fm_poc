@@ -31,7 +31,8 @@ from util.p04_04_seasonal_period_tuning import (
 
 
 ROOT = Path(__file__).resolve().parents[3]
-CONFIGURATION = ROOT / "config/experiments/poc2_m4_daily_100_period_tuning.json"
+from tests.configuration_fixtures import configuration_path
+CONFIGURATION = configuration_path(version=3)
 
 
 class SeasonalPeriodTuningTests(unittest.TestCase):

@@ -16,8 +16,9 @@ from util.shared_experiment_execution import ExperimentCoordinator, expected_tas
 
 
 ROOT = Path(__file__).resolve().parents[3]
-V10 = ROOT / "config/experiments/poc2_m4_daily_100_directional_dtw.json"
-V11 = ROOT / "config/experiments/poc2_m4_daily_100_directional_dtw_mantis_rf.json"
+from tests.configuration_fixtures import configuration_path
+V10 = configuration_path(version=10)
+V11 = configuration_path(version=11)
 
 
 class DirectionalComparisonPipelineTests(unittest.TestCase):

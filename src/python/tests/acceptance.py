@@ -29,6 +29,7 @@ import duckdb
 from prefect import flow
 from prefect.context import get_run_context
 
+from tests.configuration_fixtures import configuration_path
 from util.shared_configuration import ExperimentConfiguration, canonical_json
 from util.shared_database import initialize_experiment_database, load_database_configuration
 from util.shared_distributed_execution import (
@@ -1519,7 +1520,7 @@ def _run_acceptance(
         )
     if database_was_fresh:
         configuration = initialize_experiment_database(
-            database, root / "config/experiments/poc2_m4_daily_100.json"
+            database, configuration_path(version=1)
         )
     else:
         configuration = load_database_configuration(database)

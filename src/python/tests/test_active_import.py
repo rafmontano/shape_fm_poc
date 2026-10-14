@@ -40,7 +40,7 @@ class ActiveImportTests(unittest.TestCase):
         self.paths = ActivePaths(Path(temporary.name))
         source = self.paths.root / "source/m4_daily"
         write_source(source, [[float(i * i + offset) for i in range(30 + offset)] for offset in (0, 2, 5)])
-        configuration = json.loads((ROOT / "config/experiments/poc2_m4_daily_100_paper_tables.json").read_text())
+        configuration = json.loads((ROOT / "config/experiment.json").read_text())
         configuration["data"]["source"]["directory"] = str(source.parent)
         configuration["data"]["source"]["files"] = {
             name: value["sha256"] for name, value in source_fingerprint(source)["files"].items()

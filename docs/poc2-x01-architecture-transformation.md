@@ -1,292 +1,145 @@
-# POC2-X01 architecture transformation
+# POC2-X01 validation architecture transformation
 
-Status: **in progress — Increment 3 authorised**, by the researcher on
-14 October 2026. Increment 1 is the published starting point. Implementation and evidence remain subject to ChatGPT technical
-review and independent researcher approval under the
-[working agreement](working-agreement.md). This target does **not** authorise a
-wholesale rewrite, scientific changes, or starting another increment.
+## Objective
 
-## Increment 3: Process 01 simplification
+Transform the active six-process implementation so the code reflects the
+approved architecture: readable Prefect processes, transparent Dask execution,
+cohesive application objects, DuckDB restart authority and validation only at
+real trust boundaries. Preserve accepted scientific behaviour.
 
-The approved [meaningful hierarchy standard](code-standards.md#meaningful-workflow-hierarchy-x01-increment-3)
-supersedes Increment 2's artificial substeps. The pre-edit inventory and target
-are recorded below. [Increment 3 evidence](poc2-x01-increment3-evidence.md) records
-the implemented candidate, bounded validation and remaining review boundary.
-No later process, Ubuntu operation, dependency change or new storage is authorised.
+This is a transformation, not a rewrite. It is complete only when the active
+path is materially simpler; moving the same code into new folders is not enough.
 
-Before: `00_main.main → ResearcherActions.dispatch/_run → ProcessAction.run/_run
-→ experiment_flow → gate_flow → execute_gate → ProcessAction._execute
-→ 01_import.run → gate1_import_flow → canonical_import/reference acceptance
-→ ImportCoordinator → DuckDB`. This is 14 named application frames to storage
-(count dispatch and public/private run separately; omit Prefect internals).
-
-Active import modules at the starting revision: `01_import.py` (30 lines),
-`p01_01_import_flow.py` (98), `p01_02_import_execution.py` (958),
-`p01_03_gift_eval_source.py` (215), `p01_04_import_state.py` (121): 1,422 physical
-lines including comments/blank lines. Process-specific branches also live in
-`shared_process_storage.py` and bootstrap; the after report must disclose them.
-The acquisition helper is a planning/source-download facility, not entered by import.
-Largest retained legacy method: `import_m4_daily`, 165 lines.
-
-Responsibilities: `ConfiguredGiftEvalSource` parses Arrow/pins source;
-`ImportCoordinator` mixes source sequencing, legacy worker pools, provenance,
-item storage and validation; `ImportState` duplicates completion/fingerprints;
-generic `ProcessStorage` also validates and transitions import. Three domain
-owners plus a generic state owner; three transport dataclasses carry source/task/
-result (plus legacy WorkerOutcome). Prefect has Experiment, generic gate, nested
-import and two subflows (five flows), inspect/execute/validate task types, one
-per-series task type and the workflow-identity task (104 application task
-executions for a fresh 100-item run; framework subflow markers excluded).
-
-Full-data passes: source pin before and after import; canonical membership scan;
-two substep output fingerprints, then two more in the generic final validator.
-Completed restart rehashes both outputs. Partial item restart additionally
-recalculates completed records. Legacy generic fallback reopens source, hashes it
-and recalculates every stored item. Legacy `import_m4_daily`, ProcessPool dispatch
-and `import_configured` are exercised only by historical tests/acceptance harness;
-they must not remain active compatibility APIs. Restart levels are process,
-artificial substep and atomic item. Human status exposes both artificial substeps.
-
-Shared call-path modules: researcher CLI/request/actions, active paths,
-configuration, database/bootstrap, workflow orchestration/writer locks,
-execution-event storage, process storage, provenance, plus their import-time
-dependencies (later coordinators/providers are imported but not executed).
-The evidence report will distinguish whole-module size from executed functions.
-
-Target prepared before production edits:
+## Required result
 
 ```text
-researcher command → experiment → ImportProcess.run()
-  → GiftEvalSource → canonical conversion → execution interface
-  → ImportStore → experiment.duckdb
+00_main Experiment flow
+  ├─ 01_import/process.py
+  ├─ 02_preprocess/process.py
+  ├─ 03_transform/process.py
+  ├─ 04_forecast/process.py
+  ├─ 05_combine/process.py
+  └─ 06_evaluate/process.py
+
+process flow → cohesive source/provider/repository objects
+             → bounded local or Dask scientific calls
+             → coordinator DuckDB transaction
 ```
 
-One Process 01 flow, zero import tasks/substeps. Store owns all import SQL and
-atomic item completion; finalization confirms count and computes one final
-scientific fingerprint using the Increment 2 serialization. Completed restart
-returns stored summary without opening the source or rehashing tables. Partial
-restart filters completed identities before conversion. Local callable execution
-implements the small interface without adding an execution framework. A genuine
-need for another substep, changed science/later-process execution, or 700+ active
-process-specific lines requires review before committing.
+`util/` contains only cohesive code used by at least two active processes. There
+are no empty parent scripts, forwarding facades, generic gate engines, duplicate
+completion state machines or model-specific experiment runners.
 
-## Increment 2: historical implementation boundary
+## Transformation rule for each process
 
-The [Increment 2 implementation evidence](poc2-x01-increment2-evidence.md)
-records the focused checks, fresh Process 01 run, restart, cleanup and limitations.
-Implementation is complete for review; researcher acceptance remains pending.
+1. Map the active call path, objects, functions, validations, lines and stores.
+2. Define the process's inputs, meaningful substeps (if any), atomic items and
+   durable outputs before editing.
+3. Keep scientific functions/providers unchanged unless a separately approved
+   scientific defect exists.
+4. Replace custom orchestration/scheduling/transactions with Prefect, Dask and
+   DuckDB responsibilities.
+5. Remove pass-through layers, duplicate checks and obsolete compatibility
+   paths/tests.
+6. Place process-only code in its numbered folder and genuinely shared code in
+   `util/`.
+7. Show the before/after call path and objective file/function/class/line counts.
+8. Validate from an empty generated workspace with 100 series only through the
+   changed process, then prove restart at its smallest durable unit.
 
-The continuing branch is `poc2-x01-architecture-transformation`; no per-item
-branches, tags, merges or changes to main. This approval supersedes the historical
-Increment 1 path/cleanup restrictions below, not its scientific boundaries.
+Do not run later processes “for completeness.” Do not create a branch per
+process. Work continues on `poc2-x01-architecture-transformation` until the
+six-process result is reviewed.
 
-The [active storage contract](experiment-configuration.md#active-experiment-storage)
-owns the fixed layout: `config/experiment.json`, `results/experiment.duckdb`,
-`results/windows.duckdb`, `results/tables/`, `results/figures/`, and
-`models/<model>/<frequency>/<horizon>/...`. Names, dates, run numbers and correction
-labels belong in DuckDB, not filenames. No experiment-named results directory or
-researcher-facing evidence directory is permitted.
+## Process 01 reference
 
-These are two stores for **one experiment**, never alternative experiments.
-Process 01 creates only the parent. Process 03 owns creation/resume of the required
-child and its linkage through stable configuration/scientific/source fingerprints.
-Before then status says `not created (Process 03 pending)`; a missing/incompatible
-child after completion is a recovery error. No third DuckDB is authorised.
-
-Increment 2 implements default bootstrap, database-only restart, read-only status
-for both logical roles, and durable `01.01 Import canonical GIFT-Eval dataset` and
-`01.02 Persist and accept canonical import`. Persist concise identity,
-state, item counts, attempts, timestamps, failure context and required fingerprints;
-do not duplicate scientific payloads. Remove duplicate internal validation only
-where trust-boundary checks remain. No Processes 02–06 science is changed or run.
-Process 03's legacy child-path derivation is deferred to its own increment, which
-must adopt exactly `results/windows.duckdb` and validate fresh through Process 03.
-Later export/model-path wiring likewise remains outside Process 01 validation.
-
-GIFT-Eval alone is the time-series input authority. Substep 01.01 consumes pinned
-GIFT-Eval records and commits canonical series and evaluation-window boundaries
-per item; its completed checkpoint accepts the exact cohort. Substep 01.02 consumes
-that persisted cohort, commits import acceptance and checkpoints its fingerprint.
-Restart skips completed substeps and retries only unfinished items/boundaries.
-No M4comp2018 acquisition, comparison, discrepancy threshold or warning can gate
-canonical import. Historical comparison code is inactive, for explicitly requested
-research reproduction only. Existing historical configuration metadata remains
-stored unchanged for identity compatibility, not as an active import policy.
-
-Clean obsolete generated material on Mac and Ubuntu only after all writers stop.
-The researcher has archived Part B to NAS. Preserve tracked files, source data,
-environments, model downloads, compiled DTW/Numba caches and Ubuntu stashes/source.
-Starting a new experiment clears both databases and generated outputs/models as
-one package after writers have closed; never delete a WAL independently of a writer.
-There is no implicit reset/overwrite in `run`.
-
-Use `run --processes 1` and `status --format human` without path/name arguments.
-First run loads `config/experiment.json`; subsequent requests use only the parent.
-Tests alone may inject paths under isolated temporary directories. Validate a fresh
-100-series Process 01 run, both substeps, a database-only no-new-work restart,
-and byte-preserving status. Stop on failure, preserving concise local evidence;
-do not broaden execution. Implementation evidence belongs in the X01 evidence
-document, not generated researcher-facing result folders. Researcher acceptance
-is separate from implementation and testing.
-
-## Current and approved target architecture
-
-Current map (accepted Part B baseline; migration remains incomplete):
+Target:
 
 ```text
-00_main.py → ResearcherCLI → ResearcherActions
-  run → ProcessAction → Prefect experiment/gate flows → numbered wrappers 01–06
-    → ImportCoordinator / ExperimentCoordinator + process-specific components
-    → Dask eligible batches → native R/Python providers
-    → coordinator validation/storage → DuckDB + external fitted-model artifacts
-  status → stored configuration/process/experiment reads → JSON
-  export → validated stored Process 06 results → derived files
-
-Prefect: operational history; DuckDB: scientific state and restart authority
-Legacy recovery: process/task records plus specialised checkpoints, not a
-uniform durable substep hierarchy; execution and bookkeeping remain intertwined.
+researcher command → Experiment flow → ImportProcess.run()
+  → GiftEvalSource → canonical conversion
+  → ImportRepository transaction → results/experiment.duckdb
 ```
 
-Approved target (destination, not a claim of implementation):
+Process 01 has no justified independent scientific substep. Import acceptance is
+internal finalization. A fresh run validates the configured external source,
+converts selected items and commits them. A partial restart reads completed item
+identities and converts only missing/failed items. A completed restart returns
+the stored summary without reopening the source or rehashing tables.
 
-```text
-Single researcher entry point: 00_main.py + central configuration
-  ├─ run → thin Prefect process/substep dependencies
-  │          → cohesive preparation/provider/storage objects
-  │          → bounded Dask batches → native scientific item calculations
-  │          → trust-boundary validation → sole coordinator DuckDB writer
-  │          ← durable accepted outputs and restart identities
-  └─ status → read-only state reader → progress interpretation → JSON/human
+The import path must not contain M4comp2018 reconciliation, a second source
+authority, custom multiprocessing, a generic gate state machine, artificial
+status substeps or repeated whole-source/table fingerprints.
 
-Restart hierarchy: process → meaningful substep → bounded batch → scientific item
-Prefect history links operational attempts; it is not scientific result storage.
-```
+Process 01 is accepted only when:
 
-Incrementally separate responsibilities behind the existing contracts. Preserve
-accepted databases, artifacts, configurations, calculations and historical
-records. Replace only the scoped path after bounded evidence; retain necessary
-compatibility until its replacement is proven. Do not duplicate an execution
-authority, add speculative frameworks, or split files merely to change counts.
-Follow the [object and pragmatic standards](code-standards.md), existing
-[architecture](architecture.md), and
-[workflow ownership decision](poc2-workflow-orchestration-decision.md).
+- the active call path is understandable from the experiment and process flow;
+- the process-owned implementation is materially smaller than its baseline;
+- normal operation retains only source, conversion, transaction and completion
+  checks;
+- a fresh 100-series run produces exactly 100 canonical series and no later
+  process work;
+- an interrupted/partial restart computes only missing items;
+- a completed restart performs no source/scientific work; and
+- human/JSON status is read-only and reports Process 01 completion accurately.
 
-## Stable contracts and ownership
+## Remaining processes
 
-Processes remain **01 import, 02 preprocess, 03 transform, 04 forecast,
-05 combine, 06 evaluate**, with existing numbered wrappers and one researcher
-entry point. Existing commands, scientific settings, canonical membership,
-provider mathematics, fallbacks, model artifacts and output contracts remain
-stable. Optional preparation workflows are not new compulsory processes.
+The same structure applies with process-specific science:
 
-- Prefect owns dependencies, operational attempts and configured retries.
-- Dask schedules eligible bounded computation using the approved profile.
-- Native providers own calculations and native model serialization.
-- The profile-selected coordinator is the sole research DuckDB writer.
-- Creation-time JSON bootstraps configuration; thereafter DuckDB is authoritative.
-  Prefect history and derived human reports are not competing research stores.
-- Validate at external configuration/data, provider-return, storage and restart
-  trust boundaries. Reuse authoritative checks; do not repeatedly validate trusted
-  internal rows or recalculate science merely to present status.
+- Process 02: prepared-series items.
+- Process 03: windows/membership/labels/features in the fixed child database.
+- Process 04: provider forecasts and expensive fitted-model lifecycle.
+- Process 05: stored component dependency resolution and combinations.
+- Process 06: stored metrics, sensitivity, tables and read-only exports.
 
-Scientific identity describes the research inputs, methods, settings and outputs.
-Operational identity describes attempts, hosts, source revision, worker placement,
-batching and framework runs. Record and link both; operational changes must not
-silently alter historical scientific identity. Preserve existing fingerprints
-and explicit source/restart compatibility checks rather than weakening them.
+## Acceptance of X01
 
-The target restart hierarchy is process → substep → batch → item. A meaningful
-substep has explicit prerequisites and accepted outputs; a batch is bounded
-dispatch, not a substitute for scientific item identity. A required failed child
-cannot make its parent complete. Restart uses durably committed scientific work,
-not an in-memory future or cached Prefect success. Persist outputs atomically
-through their storage owner: **insert absent output, verify equivalent existing
-output, fail on conflicting identity/content**; never silently overwrite accepted
-science. Commit-before-acknowledgement recovery must reuse accepted output.
-Substep persistence and changes to execution/restart are **not Increment 1 work**.
+X01 closes only after all six active paths conform, the researcher can follow
+the workflow/progress, accepted scientific results remain unchanged, fixed
+storage paths/restart work from a clean generated workspace, and obsolete code,
+tests, configuration and documentation have been removed. The researcher makes
+the final acceptance decision.
 
-## Researcher progress and Increment 1 implementation boundary
+## Pre-implementation checkpoint — 14 October 2026
 
-`status --database results/<experiment>.duckdb --format human` is presentation
-only. Omitted format and `--format json` retain JSON status. The read-only branch
-adds `ProgressReader`, `ProgressInterpretation` and `HumanProgress` in
-`src/python/util/p00_04_progress.py`; existing status readers remain in place.
-No execution coordinator refactoring, schema migration, new tables, second state
-store, polling, monitoring or dashboard is authorised.
+The approved documentation/configuration/data/root cleanup is preserved before
+the five-layer increments. This checkpoint is not acceptance of Increments A–F.
+The new approved first-level flows and second-level pseudocode supersede the
+earlier workflow targets above; those targets will be reconciled during the
+implementation, not treated as an alternative orchestration design.
 
-Show stored name/description/configuration/source revision, Processes 01–06 in
-order, statuses/timestamps, task counts, recorded active process, latest committed
-activity, latest recorded error/context and Process 06 candidate counts where
-available. Distinguish stored experiment status from the process-derived pipeline
-state. Missing substeps and ETA must say `not recorded`. Never infer liveness,
-an expected-work denominator, or remaining time from legacy task counts.
+The structural baseline counts all production `.py` files under `src/python`,
+including package initializers, and excludes tests, caches and package metadata.
+Physical lines include comments and blank lines. Imports are counted throughout
+the AST, including imports inside functions.
 
-Status opens DuckDB read-only, never evaluates or validates scientific outputs,
-schedules work, repairs records or writes database state. The former JSON status
-call to the validating Process 06 table summary is replaced with a plain read
-retaining its existing fields; `results`/export validation remains unchanged.
-Legacy timestamps are record timestamps, not a complete commit/error history.
-Process/execution state is database-wide; downstream tasks are selected-experiment
-specific and import counts use the latest import run. An interrupted process may
-still say running; a locked database may refuse inspection rather than be repaired.
+| Measure | Before Increment A |
+| --- | ---: |
+| Production Python files | 59 |
+| Production source folders, including root | 2 |
+| Production physical lines | 26,419 |
+| Test Python files | 37 |
+| Test physical lines | 14,776 |
+| Files directly importing Prefect/Dask integrations | 11 |
+| Physical lines in those integration files | 14,084 |
+| Files importing MLflow | 0 |
 
-## Governing incremental validation rule
+The longest production files are `shared_experiment_execution.py` (5,270),
+`shared_distributed_execution.py` (2,205), `window_preparation.py` (1,651),
+`shared_configuration.py` (1,577) and `shared_database.py` (1,314 physical lines).
 
-Every execution-bearing transformation increment uses a **fresh, isolated
-100-series experiment starting with no experiment DuckDB**. Documentation-only
-changes need no scientific run. Use the earliest adequate process boundary:
+Cleanup validation: 95 focused tests passed; offline setup readiness reported
+zero missing prerequisites; changed Python syntax, shell syntax, living-document
+relative links and whitespace checks passed. A fresh isolated run through
+Process 01 accepted 100 series with observations exactly equal to the first
+100 canonical Arrow records in 6.784 seconds including CLI startup. The second
+request, after removing its bootstrap JSON, completed in 6.960 seconds with all
+100 accepted task attempts unchanged. Processes 02–06 remained pending and no
+child database was created. This measures the starting implementation only.
 
-| Changed behaviour | Highest permitted process without further justification |
-| --- | --- |
-| Researcher status/reporting | 01 unless later state is specifically required |
-| Process 02 | 02 (run 01–02) |
-| Process 03 | 03 (run 01–03) |
-| Process 04 | 04 (run 01–04) |
-| Process 05 | 05 (run 01–05) |
-| Process 06 | 06 (run 01–06) |
-| Shared component | Earliest process adequately exercising the change |
-
-**Routine execution beyond the affected process “for completeness” is prohibited.**
-Broader execution requires a demonstrated dependency or separate researcher
-authorisation. Focused fixtures may represent later, failed, running or interrupted
-states without executing those scientific processes. Do not run the historical
-acceptance/regression matrix for Increment 1.
-
-Increment 1 compiles changed Python files and checks focused reader/formatting,
-existing JSON compatibility, repeated-status byte preservation, pending/running/
-completed/failed/legacy fixtures, changed-path documentation links and whitespace.
-Then commit/push the candidate normally before the fresh run:
-
-```sh
-.venv/bin/python src/python/00_main.py run \
-  --configuration config/experiments/poc2_m4_daily_100_paper_tables.json \
-  --database results/poc2_m4_daily_100_paper_tables.duckdb --processes 1
-.venv/bin/python src/python/00_main.py status \
-  --database results/poc2_m4_daily_100_paper_tables.duckdb --format json
-.venv/bin/python src/python/00_main.py status \
-  --database results/poc2_m4_daily_100_paper_tables.duckdb --format human
-```
-
-Check both the database and sibling results directory are absent beforehand.
-The existing output contract requires this configuration-matching filename at
-the root of `results/`; create its new sibling directory for Increment 1 evidence.
-Preserve outputs there, hash the database, repeat both status calls and require
-the same hash. Confirm Process 01 completed, 02–06 pending, 100 imported series,
-and no invented substeps/ETA. No no-new-work rerun is required. Ubuntu must not be
-contacted or modified for this local increment. Processes 02–06 must not run.
-
-On implementation or fresh Process 01 validation failure: stop, preserve the
-isolated database and concise evidence, report the exact failure, and do not
-change scientific settings or refactor unrelated execution to bypass it.
-
-## Recoverable delivery boundary
-
-Baseline: `b8efcbae4776409184417849a3fb6f63eb5ce6eb`, local `main` and
-`origin/main`, verified clean and without ShapeFM-owned execution before changes.
-Push safety branch `archive/poc2-part-b-accepted-2026-10-14` at that exact revision;
-an existing safety branch must match. Create and push
-`poc2-x01-architecture-transformation` from the same baseline with an upstream.
-Do not create a tag, change/push/merge into main, synchronise Ubuntu, or begin
-Increment 2. Stage only reviewed source/tests/governance, never generated results.
-Leave a clean pushed working branch and unchanged main/safety references.
-Researcher review and acceptance remain open after successful validation.
+The tracked bootstrap and current generated parent database still describe
+version 12 with horizon-specific DTW width calibration and an uncapped cohort.
+The living directional contract describes fixed proportion 0.10 and a shared
+10,000-window cap. Scientific comparison must distinguish those settings;
+topology parity cannot establish their scientific equivalence.

@@ -20,6 +20,82 @@ from util.shared_experiment_execution import (
 from util.p04_05_m4_submission import retrieve_m4_submission
 
 
+class M4ReferenceLoadingTests(unittest.TestCase):
+    """Bounded 100-series provider/coordinator fixture, without other Process 04 work."""
+
+    def test_100_canonical_series_archive_and_restart(self):
+        root = Path(__file__).resolve().parents[3]
+        with tempfile.TemporaryDirectory() as directory:
+            database = migrate_database(Path(directory) / "references.duckdb")
+            with duckdb.connect(str(database)) as connection:
+                connection.execute("""INSERT INTO experiments
+                    (experiment_id,benchmark_configuration_id,dataset_id,name,
+                     scientific_configuration,configuration_hash,scope,status)
+                    VALUES ('fixture','benchmark','canonical','fixture','{}','hash','100','planned')""")
+                # Asymmetric identities and deliberately unrelated canonical values.
+                # Their only role here is identity/position; no comparison is allowed.
+                for position in range(100):
+                    identity = str(99 - position)
+                    connection.execute("""INSERT INTO series
+                        (dataset_id,series_id,source_series_id,source_row,frequency,
+                         start_timestamp,target,observation_count,content_hash,source_metadata)
+                        VALUES ('canonical',?,?,?,'D',current_timestamp,?,30,'fixture','{}')""",
+                        [identity, identity, position, [-1000.0 - position] * 30])
+                    connection.execute("""INSERT INTO evaluation_windows
+                        (dataset_id,series_id,window_id,split_name,train_start,train_end,
+                         validation_start,validation_end,test_start,test_end,horizon,boundary_convention)
+                        VALUES ('canonical',?,'short/000','validation_and_test',0,2,2,16,16,30,14,
+                                'zero-based, end-exclusive')""", [identity])
+                # The real archived vectors remain; x/xx are inaccessible even if
+                # a provider accidentally reintroduces history/future comparison.
+                bridge = Path(directory) / "reference_fixture.R"
+                bridge.write_text(f'''source({json.dumps(str(root / "src/r/04_03_forecast_m4_reference.R"))})
+objects <- new.env()
+data("M4", package="M4comp2018", envir=objects)
+data("submission_info", package="M4comp2018", envir=objects)
+vectors <- lapply(objects$M4, function(entry) {{
+  e <- new.env()
+  e$st <- entry$st; e$period <- entry$period; e$pt_ff <- entry$pt_ff
+  for (name in c("x", "xx")) makeActiveBinding(name, function(...) stop("time-series access forbidden"), e)
+  e
+}})
+payload <- jsonlite::fromJSON(file("stdin"), simplifyVector=FALSE)
+result <- forecast_m4_reference(payload$jobs, vectors, objects$submission_info,
+                                as.character(packageVersion("M4comp2018")))
+cat(jsonlite::toJSON(result, auto_unbox=TRUE, digits=17, null="null"))
+''')
+                coordinator = ExperimentCoordinator.__new__(ExperimentCoordinator)
+                coordinator.root = root
+                coordinator.connection = connection
+                coordinator.configuration = SimpleNamespace(
+                    resolved={"archived_forecasts": {"enabled": ["m4_smyl", "m4_fforma"]}},
+                    execution_paths={"r_m4comp2018_worker": str(bridge)},
+                    execution={"worker_timeouts_seconds": {"r": 120}, "thread_limits": {"r": 1}},
+                )
+                self.assertEqual(coordinator.store_m4_references("fixture"), 200)
+                self.assertEqual(connection.execute(
+                    "SELECT forecast_id,submission_id,count(*) FROM reference_forecasts GROUP BY ALL ORDER BY forecast_id"
+                ).fetchall(), [("m4_fforma", 245, 100), ("m4_smyl", 118, 100)])
+                for provider, expected in (
+                    ("m4_smyl", [2030.245625, 2027.124375, 2030.594375]),
+                    ("m4_fforma", [2030.78274281549, 2031.8173540627, 2032.85253254582]),
+                ):
+                    official, mean, capability = connection.execute(
+                        "SELECT official_m4_series_id,mean,forecast_capability FROM reference_forecasts WHERE series_id='99' AND forecast_id=?",
+                        [provider],
+                    ).fetchone()
+                    self.assertEqual((official, capability), ("D1", "mean_only"))
+                    for observed, wanted in zip(mean[:3], expected):
+                        self.assertAlmostEqual(observed, wanted, places=8)
+                connection.execute("DELETE FROM reference_forecasts WHERE series_id='0' AND forecast_id='m4_fforma'")
+                coordinator.configuration.execution_paths["r_m4comp2018_worker"] = "src/r/04_03_forecast_m4_reference.R"
+                self.assertEqual(coordinator.store_m4_references("fixture"), 1)
+                with patch.object(coordinator, "_r_worker", side_effect=AssertionError("provider on completed restart")):
+                    self.assertEqual(coordinator.store_m4_references("fixture"), 0)
+                self.assertEqual(connection.execute("SELECT count(*) FROM reference_forecasts").fetchone()[0], 200)
+                print("Archived-reference fixture: 100 canonical series → 200 references; partial restart 1; completed restart 0")
+
+
 class M4ReferenceTests(unittest.TestCase):
     """Exercise the separate mean-only archive and retrieval boundaries."""
 
