@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,14 +11,12 @@ from unittest.mock import patch
 
 import duckdb
 
-from util.shared_configuration import ImportValidationError
 from util.shared_database import SCHEMA_VERSION, migrate_database
 from util.shared_experiment_execution import (
     ExperimentCoordinator,
     get_forecast_mean,
     validate_forecast_capability,
 )
-from util.p01_02_import_execution import ImportCoordinator
 from util.p04_05_m4_submission import retrieve_m4_submission
 
 
@@ -79,10 +76,30 @@ class M4ReferenceTests(unittest.TestCase):
                 [20.0, 21.0], "fforma-hash",
             ),
         ]
-        holder = ImportCoordinator.__new__(ImportCoordinator)
-        holder.connection = connection
-        self.assertEqual(holder._store_reference_forecasts(self.records), (2, 0))
-        self.assertEqual(holder._store_reference_forecasts(self.records), (0, 2))
+        # Stored-reference consumers are independent of the canonical import path.
+        for record in self.records:
+            connection.execute(
+                """INSERT INTO reference_forecasts
+                (reference_forecast_id, dataset_id, series_id, official_m4_series_id,
+                 forecast_id, submission_id, submission_rank, submission_author,
+                 horizon, mean, point_semantics, forecast_capability,
+                 source_metadata, content_hash)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                [
+                    f"reference/{record['forecast_id']}", record["dataset_id"],
+                    record["series_id"], record["official_m4_series_id"],
+                    record["forecast_id"], record["submission_id"],
+                    record["submission_rank"], record["submission_author"],
+                    record["horizon"], record["mean"], record["point_semantics"],
+                    record["forecast_capability"],
+                    json.dumps({
+                        "source_package": record["source_package"],
+                        "source_package_version": record["source_package_version"],
+                        "source_revision": record["source_revision"], "scale": "original",
+                    }),
+                    record["content_hash"],
+                ],
+            )
         connection.execute(
             """INSERT INTO forecasts
             (forecast_id, experiment_id, variant_id, forecast_instance_id,
@@ -176,50 +193,6 @@ class M4ReferenceTests(unittest.TestCase):
         )
         connection.close()
 
-    def test_conflicting_restart_is_rejected(self):
-        connection = duckdb.connect(str(self.database))
-        holder = ImportCoordinator.__new__(ImportCoordinator)
-        holder.connection = connection
-        changed = [dict(self.records[0], mean=[99.0, 99.0])]
-        with self.assertRaisesRegex(ImportValidationError, "conflicting"):
-            holder._store_reference_forecasts(changed)
-        connection.close()
-
-    def test_gate1_sends_only_selected_identity_and_validates_response(self):
-        connection = duckdb.connect(str(self.database))
-        holder = ImportCoordinator.__new__(ImportCoordinator)
-        holder.connection = connection
-        holder.configuration = SimpleNamespace(
-            execution_paths={"r_m4comp2018_worker": "src/r/01_02_import_m4comp2018.R"},
-            execution={"worker_timeouts_seconds": {"r": 30}},
-        )
-        config = {
-            "dataset_name": "m4_daily", "max_series": 1,
-            "benchmark": {"frequency": "D", "prediction_length": 2},
-            "archived_forecasts": {
-                "enabled": ["m4_smyl"],
-                "providers": {"m4_smyl": {"submission_id": 118}},
-            },
-        }
-        response = dict(self.records[0])
-        with patch("util.p01_02_import_execution.subprocess.run") as run:
-            run.return_value = subprocess.CompletedProcess(
-                ["Rscript"], 0, json.dumps({"records": [response]}), ""
-            )
-            records = holder._read_m4_reference_forecasts("dataset", config)
-        self.assertEqual(records, [response])
-        payload = json.loads(run.call_args.kwargs["input"])
-        self.assertEqual(payload["forecast_ids"], ["m4_smyl"])
-        self.assertEqual(
-            payload["series"],
-            [{
-                "series_id": "0", "source_position": 0,
-                "official_m4_series_id": "D1", "history": [1.0, 2.0, 3.0],
-                "future": [4.0, 5.0], "horizon": 2,
-            }],
-        )
-        connection.close()
-
     def test_gate4_retrieves_each_exact_mean_with_provenance(self):
         smyl = retrieve_m4_submission(self.database, self.request())
         fforma = retrieve_m4_submission(self.database, self.request("m4_fforma"))
@@ -229,44 +202,6 @@ class M4ReferenceTests(unittest.TestCase):
         self.assertEqual(smyl["forecast_capability"], "mean_only")
         self.assertEqual(smyl["provenance"]["submission_id"], 118)
         self.assertEqual(smyl["requested_provider"], smyl["executed_provider"])
-
-    def test_reconciliation_publishes_evidence_and_stops_review_before_references(self):
-        """Derived reports do not correct canonical observations or bypass the review gate."""
-        connection = duckdb.connect(str(self.database))
-        holder = ImportCoordinator.__new__(ImportCoordinator)
-        holder.connection = connection
-        holder.database_path = self.database
-        holder._source_before = {"source": "unchanged"}
-        holder._selected_ids = ["0"]
-        source = SimpleNamespace(fingerprint=lambda: holder._source_before, settings={})
-        before = connection.execute("SELECT target FROM series").fetchall()
-        for status in ("informational", "warning", "researcher_review_required"):
-            summary = {"run_id": "fixture", "dataset_id": "dataset"}
-            evidence = {"summary": {"status": status}, "series": [{"source_position": 0,
-                        "maximum_normalized_difference_pct": .00001, "differing_positions": "2"}]}
-            def read(*_):
-                holder._source_reconciliation = evidence
-                return self.records
-            with patch.object(holder, "_verify_expected_membership"), \
-                 patch.object(holder, "_read_m4_reference_forecasts", side_effect=read), \
-                 patch.object(holder, "_store_reference_forecasts", return_value=(0, 2)) as store, \
-                 patch.object(holder, "verify_import_completion"), \
-                 patch.object(holder, "record_import_outcome") as outcome:
-                if status == "researcher_review_required":
-                    with self.assertRaisesRegex(ImportValidationError, "before Process 02"):
-                        holder.finish_configured_import(source, summary)
-                    store.assert_not_called()
-                    outcome.assert_not_called()
-                else:
-                    holder.finish_configured_import(source, summary)
-                    store.assert_called_once()
-                    outcome.assert_called_once_with(summary)
-                self.assertEqual(summary["source_reconciliation"], evidence["summary"])
-                directory = self.database.with_suffix("") / "evidence/source-reconciliation"
-                self.assertEqual(json.loads((directory / "summary.json").read_text()), evidence["summary"])
-                self.assertIn("0,1e-05,2", (directory / "series-discrepancies.csv").read_text())
-                self.assertEqual(connection.execute("SELECT target FROM series").fetchall(), before)
-        connection.close()
 
     def test_gate4_rejects_incompatible_requests_without_fallback(self):
         cases = (

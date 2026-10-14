@@ -30,12 +30,13 @@ class ProgressTests(unittest.TestCase):
         """Create only schema/configuration in a disposable database, not a run."""
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        self.database = Path(temporary.name) / "progress.duckdb"
+        self.database = Path(temporary.name).resolve() / "results/experiment.duckdb"
         initialize_experiment_database(
             self.database, ROOT / "config/experiments/poc2_m4_daily_100_paper_tables.json"
         )
         with duckdb.connect(str(self.database)) as connection:
             connection.execute("UPDATE experiment_processes SET updated_at='2026-01-01'")
+            connection.execute("DROP TABLE process_substeps")  # Legacy fixture: no substep records.
 
     def status(self, format=None, identity=None):
         """Invoke the actual entry point and capture terminal presentation."""
@@ -97,7 +98,7 @@ class ProgressTests(unittest.TestCase):
                 with duckdb.connect(str(self.database)) as connection:
                     connection.execute("UPDATE experiment_processes SET status=?", [state])
                 text = self.status("human")
-                for number, name in enumerate(("import", "preprocess", "transform", "forecast", "combine", "evaluate"), 1):
+                for number, name in enumerate(("Import", "Preprocess", "Transform/window preparation", "Forecast", "Combine", "Evaluate"), 1):
                     self.assertIn(f"Process {number:02d} {name}: {state}", text)
                 self.assertEqual(text.count("substeps: not recorded"), 6)
                 self.assertIn("ETA: not recorded", text)
@@ -109,7 +110,7 @@ class ProgressTests(unittest.TestCase):
             connection.execute("DELETE FROM experiment_processes WHERE process_id=3")
             connection.execute("DROP TABLE paper_metric_candidates")
         text = self.status("human")
-        self.assertIn("Process 03 transform: not recorded", text)
+        self.assertIn("Process 03 Transform/window preparation: not recorded", text)
         self.assertIn("Process 06 candidates: not recorded (table absent)", text)
 
     def test_counts_activity_error_context_and_unvalidated_report(self):
@@ -147,6 +148,7 @@ class ProgressTests(unittest.TestCase):
         self.assertEqual(set(default["status"]), {
             "configuration_version", "name", "date", "description", "seed",
             "scientific_hash", "configuration_integrity_hash", "resolved_configuration", "processes",
+            "database_roles", "substeps",
         })
         self.assertEqual(default["status"]["configuration_version"], 12)
         self.assertEqual([row["process_id"] for row in default["status"]["processes"]], list(range(1, 7)))
@@ -179,7 +181,7 @@ class ProgressTests(unittest.TestCase):
 
     def test_missing_database_is_not_created(self):
         """Read-only status cannot create an absent experiment database."""
-        self.database = self.database.parent / "absent.duckdb"
+        self.database.unlink()
         with self.assertRaises(duckdb.IOException):
             self.status("human")
         self.assertFalse(self.database.exists())

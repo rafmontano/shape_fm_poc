@@ -19,14 +19,15 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from .shared_configuration import PROCESS_NAMES
+from .shared_active_paths import ActivePaths
 from .p00_03_researcher_request import ResearcherRequest
 
 ROOT = Path(__file__).resolve().parents[3]
 RESULTS_ROOT = ROOT / "results"
-DEFAULT_DATABASE = ROOT / "results/poc2_acceptance.duckdb"
+DEFAULT_DATABASE = ActivePaths().parent
 DEFAULT_PLAN_DATABASE = ROOT / "results/poc2_local_plan.duckdb"
 DEFAULT_REPORT = ROOT / "results/poc2_acceptance_report.json"
-DEFAULT_CONFIGURATION = ROOT / "config/experiments/poc2_m4_daily_100_resolved_period.json"
+DEFAULT_CONFIGURATION = ActivePaths().configuration
 
 
 class ResearcherCLI:
@@ -85,36 +86,35 @@ class ResearcherCLI:
         plan = commands.add_parser("plan", help="dry-plan a deterministic M4 Daily subset")
         plan.add_argument("--configuration", type=Path, default=DEFAULT_CONFIGURATION)
         run = commands.add_parser("run", help="create or resume configured Processes 01-06")
-        run.add_argument("--database", type=Path, required=True)
-        run.add_argument("--configuration", type=Path)
+        run.add_argument("--database", type=Path, default=DEFAULT_DATABASE, help=argparse.SUPPRESS)
+        run.add_argument("--configuration", type=Path, help=argparse.SUPPRESS)
         run.add_argument("--processes", type=self.process_selection, default=tuple(PROCESS_NAMES))
         run.add_argument("--execution-profile")
         run.add_argument("--local-heavy-exception", metavar="APPROVAL_REFERENCE")
         windows = commands.add_parser("prepare-windows", help="create or resume rolling windows")
-        windows.add_argument("--database", type=Path, required=True)
-        windows.add_argument("--windows-database", type=Path, required=True)
+        windows.add_argument("--database", type=Path, default=DEFAULT_DATABASE, help=argparse.SUPPRESS)
+        windows.add_argument("--windows-database", type=Path, default=ActivePaths().child, help=argparse.SUPPRESS)
         windows.add_argument("--execution-profile")
         windows.add_argument("--local-max-series", type=self.positive_integer)
         windows.add_argument("--local-max-windows", type=self.positive_integer)
         features = commands.add_parser(
             "prepare-features", help="optionally create or resume reusable window features"
         )
-        features.add_argument("--database", type=Path, required=True)
-        features.add_argument("--windows-database", type=Path, required=True)
+        features.add_argument("--database", type=Path, default=DEFAULT_DATABASE, help=argparse.SUPPRESS)
+        features.add_argument("--windows-database", type=Path, default=ActivePaths().child, help=argparse.SUPPRESS)
         features.add_argument("--execution-profile")
         features.add_argument("--local-max-windows", type=self.positive_integer)
         status = commands.add_parser("status", help="read acceptance experiment status")
-        status.add_argument("--database", type=Path, default=DEFAULT_DATABASE)
+        status.add_argument("--database", type=Path, default=DEFAULT_DATABASE, help=argparse.SUPPRESS)
         status.add_argument("--experiment-id")
         status.add_argument("--format", choices=("json", "human"), default=argparse.SUPPRESS,
                             help="presentation format (default: json)")
         export = commands.add_parser("export", help="export stored Process 06 tables and selective figures")
-        export.add_argument("--database", type=Path, required=True,
-                            help="authoritative results/<experiment>.duckdb")
+        export.add_argument("--database", type=Path, default=DEFAULT_DATABASE, help=argparse.SUPPRESS)
         export.add_argument("--output", type=Path,
                             help="destination below repository results/; defaults to results/<experiment>/")
         results = commands.add_parser("results", help="read evaluations or one stored forecast")
-        results.add_argument("--database", type=Path, default=DEFAULT_DATABASE)
+        results.add_argument("--database", type=Path, default=DEFAULT_DATABASE, help=argparse.SUPPRESS)
         results.add_argument("--experiment-id")
         results.add_argument("--variant-id")
         results.add_argument("--series-id")
@@ -135,6 +135,14 @@ class ResearcherCLI:
         action = values.pop("action")
         if action == "plan":
             values["database"] = DEFAULT_PLAN_DATABASE
+        elif action is not None:
+            paths = ActivePaths.from_parent(values["database"])
+            if values.get("configuration") is not None:
+                if paths.root == ROOT or values["configuration"].resolve() != paths.configuration:
+                    raise ValueError("configuration overrides are test-only; use config/experiment.json")
+            if values.get("windows_database") is not None:
+                if values["windows_database"].resolve() != paths.child:
+                    raise ValueError("child database must use the fixed results/windows.duckdb path")
         return ResearcherRequest(action, values)
 
     def help(self) -> None:

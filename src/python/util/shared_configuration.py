@@ -1167,7 +1167,10 @@ def validate_experiment_configuration(value: dict[str, Any]) -> None:
         }
     if tuning_enabled or version in {7, 8, 9}:
         required_paths.add("r_forecast_worker")
-    if set(paths) != required_paths or any(
+    # Historical documents retain this inert path for identity compatibility;
+    # canonical import neither requires nor invokes the reproduction adapter.
+    required_paths.discard("r_m4comp2018_worker")
+    if set(paths) - {"r_m4comp2018_worker"} != required_paths or any(
         not isinstance(path, str) or not path for path in paths.values()
     ):
         raise ExperimentConfigurationError("execution.paths must define all worker paths")
@@ -1309,16 +1312,7 @@ def _validate_table_configuration(value: dict[str, Any]) -> None:
     archived = _require_mapping(value["archived_forecasts"], "archived_forecasts")
     if archived.get("enabled") != ["m4_smyl", "m4_fforma"]:
         raise ExperimentConfigurationError("v12 requires both approved archive means")
-    policy = archived.get("source_reconciliation")
-    if "source_reconciliation" in archived:
-        policy = _require_mapping(policy, "source_reconciliation")
-        _require_keys(policy, {"version", "series_warning_pct", "population_review_pct",
-            "single_series_material_pct", "directional_impact_review_pct"}, "source_reconciliation")
-        if (policy["version"] != "cross_source_v1" or any(
-                type(v) not in (int, float) or not 0 <= v <= 100
-                for k, v in policy.items() if k != "version")
-                or policy["series_warning_pct"] > policy["single_series_material_pct"]):
-            raise ExperimentConfigurationError("invalid source reconciliation thresholds")
+    # Preserve historical metadata unchanged, but never use it to gate GIFT-Eval.
     projected = deepcopy(value)
     projected["archived_forecasts"].pop("source_reconciliation", None)
     data = _require_mapping(value["data"], "data")

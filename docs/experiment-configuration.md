@@ -107,7 +107,47 @@ After Process 06 completes, the single researcher entry point supports:
 .venv/bin/python src/python/00_main.py export --database results/<experiment>.duckdb --output results/<experiment>
 ```
 
-### Mandatory experiment-results location
+### Active experiment storage
+
+Approved X01 Increment 2, 14 October 2026: one active experiment uses fixed paths:
+
+```text
+config/experiment.json
+results/experiment.duckdb
+results/windows.duckdb
+results/tables/
+results/figures/
+models/<model>/<frequency>/<horizon>/...
+```
+
+The parent `experiment.duckdb` owns configuration, canonical series, process/task
+state, forecasts, combinations, evaluations and researcher results. The child
+`windows.duckdb` owns high-volume prepared rolling windows, split membership,
+transformed inputs, labels/features and restartable window-preparation work.
+Both belong to one experiment. Do not merge them or create a third database.
+The child links to the parent by stable configuration, scientific and source
+fingerprints, not a second experiment identity.
+
+Process 01 correctly creates only the parent. Process 03 must create/resume the
+fixed child; it is required for the present directional workflow from that
+creation point onward. Before Process 03, child state is `not created (Process 03
+pending)`. After its owning substep completes, missing/incompatible child state
+is an explicit recovery error. Status reports both roles without scientific
+validation. Increment 2 centralises the paths; production Process 03 wiring is
+deferred to its own fresh 100-series validation through Process 03.
+
+Ordinary commands take no database/name/output paths. Bootstrap reads the fixed
+JSON once and stores original/resolved documents; resume uses only the parent.
+Tests may override both database paths only under isolated temporary directories.
+Experiment identity/history lives inside DuckDB, never experiment/date/run/correction
+suffixes in filenames. No experiment-named results folder or researcher-facing
+evidence directory is permitted. Tables and figures use their fixed directories.
+Starting a new experiment explicitly clears both databases and generated artifacts
+as one package only after all writers have stopped and closed their WALs; `run`
+never silently overwrites an existing active experiment. Environments, downloaded
+model caches and source data are not experiment artifacts.
+
+### Historical experiment-results location (superseded by X01)
 
 Every persistent experiment database and researcher-facing CSV, PDF, PNG,
 manifest or evidence file belongs below the repository's top-level `results/`
@@ -424,6 +464,13 @@ An incompatible scientific change requires a new database. Never reinterpret
 or silently modify scientific settings in an existing database.
 
 ## Cross-source reconciliation, approved 8 October 2026
+
+**Historical policy — superseded for production by X01 Increment 2.** GIFT-Eval
+is the sole canonical authority. Process 01 neither acquires M4comp2018 references
+nor compares histories at any precision or discrepancy threshold. Historical
+configuration fields remain preserved unchanged but inert; the adapter is held
+in `tmp/inactive/` for explicitly requested reproduction research only. The
+following records the earlier decision, not current execution instructions.
 
 Full Daily v12 creation may explicitly select
 `archived_forecasts.source_reconciliation.version = cross_source_v1`. This

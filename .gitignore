@@ -57,6 +57,9 @@ rsconnect/
 /.cache/
 /results/
 
+# Researcher-owned active bootstrap; tracked templates remain in config/experiments/.
+/config/experiment.json
+
 # Generated environments inside independently locked uv projects
 /environments/*/.venv/
 

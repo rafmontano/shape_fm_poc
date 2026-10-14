@@ -24,6 +24,33 @@ results, configured execution, and the 100-series acceptance workflow.
 
 ## Planning and inspection
 
+X01 Increment 2 normal workflow (supersedes historical path-taking examples):
+
+```sh
+.venv/bin/python src/python/00_main.py run --processes 1
+.venv/bin/python src/python/00_main.py status --format human
+.venv/bin/python src/python/00_main.py status --format json
+```
+
+Edit `config/experiment.json` before first creation. Process 01 creates only
+`results/experiment.duckdb`, storing original/resolved configuration. Resume uses
+that parent alone; the JSON need not exist. Existing active experiments are never
+silently replaced. No names/database/output paths are needed by the researcher.
+The required Process 03 child is `results/windows.duckdb`; before Process 03 it is
+`not created (Process 03 pending)`. Both stores are one experiment, linked by
+stable fingerprints. Missing/incompatible child state after its creation boundary
+is a recovery error, not permission to rebuild implicitly. Process 03 fixed-path
+execution wiring is deferred; do not run Processes 02–06 for Increment 2.
+
+For a new experiment, stop all writers and let databases/WALs close, archive any
+required result, then explicitly clear both databases and generated outputs/fitted
+models as one package. Preserve source data, environments and reusable caches.
+Follow the [fixed active layout](experiment-configuration.md#active-experiment-storage):
+no experiment-named files/folders or researcher-facing evidence directories.
+
+Historical pre-X01 commands and acceptance contracts follow; they are not the
+current Increment 2 workflow:
+
 ```sh
 .tools/uv/uv run --locked --no-sync python src/python/00_main.py plan \
   --configuration config/experiments/poc2_m4_daily_100_resolved_period.json

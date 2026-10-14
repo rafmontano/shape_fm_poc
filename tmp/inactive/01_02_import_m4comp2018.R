@@ -2,12 +2,14 @@
 # ==============================================================================
 # 01_02_import_m4comp2018.R
 #
-# Purpose: Read and validate the two approved M4 Daily competition forecasts.
+# Purpose: Historical M4 competition adapter, retained only for explicitly
+#   requested research reproduction. Not part of the active GIFT-Eval import.
 # Inputs: JSON on stdin with action="read", dataset identity, approved forecast
 #   IDs, expected Daily frequency/horizon, and selected canonical series entries.
 #   source_position is zero-based within the official M4 Daily subset.
 # Outputs: JSON records for m4_smyl and m4_fforma; this adapter writes no files
-#   or databases. Run with: Rscript src/r/01_02_import_m4comp2018.R < request.json
+#   or databases. Run only for requested reproduction with:
+#   Rscript tmp/inactive/01_02_import_m4comp2018.R < request.json
 # ==============================================================================
 
 # Code constant: the only submissions approved for import, in output order.

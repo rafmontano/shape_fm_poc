@@ -11,13 +11,10 @@
 
 from __future__ import annotations
 
-import csv
 import hashlib
 import importlib.metadata
-import json
 import math
 import multiprocessing
-import os
 import platform
 import struct
 import subprocess
@@ -630,205 +627,6 @@ class ImportCoordinator:
                 failed += 1
         return completed, failed
 
-    def _read_m4_reference_forecasts(
-        self, dataset_id: str, config: dict[str, Any]
-    ) -> list[dict[str, Any]]:
-        """Purpose: Ask the bounded R adapter for selected official M4 point forecasts.
-
-        Inputs: Imported dataset identity and authoritative Stage 1 settings.
-        Outputs: Validated adapter records for selected series/providers; the subprocess
-        reads package data only and neither it nor this method writes DuckDB.
-        """
-        archived = config.get("archived_forecasts")
-        self._source_reconciliation = None
-        if archived is None:
-            return []
-        enabled = list(archived["enabled"])
-        if not enabled:
-            return []
-        horizon = int(config["benchmark"]["prediction_length"])
-        rows = self.connection.execute(
-            """SELECT series_id, source_row, frequency, target
-               FROM series WHERE dataset_id=? ORDER BY source_row
-               LIMIT ?""",
-            [dataset_id, config["max_series"]],
-        ).fetchall()
-        if any(
-            str(row[0]) != str(row[1])
-            or row[2] != config["benchmark"]["frequency"]
-            or len(row[3]) <= horizon
-            for row in rows
-        ):
-            raise ImportValidationError(
-                "canonical series identities, frequency, or lengths are incompatible with M4 Daily"
-            )
-        payload = {
-            "action": "read",
-            "dataset_id": dataset_id,
-            "dataset_name": config["dataset_name"],
-            "forecast_ids": enabled,
-            "expected_frequency": config["benchmark"]["frequency"],
-            "expected_horizon": horizon,
-            "series": [
-                {
-                    "series_id": row[0],
-                    "source_position": row[1],
-                    "official_m4_series_id": f"D{row[1] + 1}",
-                    "history": list(row[3][:-horizon]),
-                    "future": list(row[3][-horizon:]),
-                    "horizon": horizon,
-                }
-                for row in rows
-            ],
-        }
-        if "source_reconciliation" in archived:
-            source = self.configuration.resolved["data"]["source"]
-            metadata = source_metadata(repository_root() / source["directory"] / config["dataset_name"])
-            payload.update(source_reconciliation=archived["source_reconciliation"],
-                gift_eval_source={"name": source["system"], "revision": source["revision"],
-                    "version": metadata["dataset_info.json"]["version"]})
-        worker = self.configuration.execution_paths["r_m4comp2018_worker"]
-        try:
-            completed = subprocess.run(
-                ["Rscript", str(repository_root() / worker)],
-                cwd=repository_root(),
-                input=canonical_json(payload),
-                capture_output=True,
-                text=True,
-                check=True,
-                timeout=float(
-                    self.configuration.execution["worker_timeouts_seconds"]["r"]
-                ),
-                env={**os.environ, "RENV_CONFIG_SYNCHRONIZED_CHECK": "false"},
-            )
-        except subprocess.CalledProcessError as error:
-            detail = (error.stderr or error.stdout or str(error)).strip()
-            raise ImportValidationError(
-                f"M4comp2018 reference adapter failed: {detail}"
-            ) from error
-        try:
-            response = json.loads(completed.stdout)
-            records = response["records"]
-        except (json.JSONDecodeError, KeyError, TypeError) as error:
-            raise ImportValidationError(
-                "M4comp2018 reference adapter returned invalid JSON"
-            ) from error
-        expected = {(str(row[0]), provider) for row in rows for provider in enabled}
-        observed: set[tuple[str, str]] = set()
-        for record in records:
-            identity = (str(record.get("series_id")), record.get("forecast_id"))
-            mean = record.get("mean")
-            if (
-                identity not in expected
-                or identity in observed
-                or record.get("dataset_id") != dataset_id
-                or record.get("official_m4_series_id")
-                != f"D{int(identity[0]) + 1}"
-                or record.get("horizon") != horizon
-                or not isinstance(mean, list)
-                or len(mean) != horizon
-                or any(not isinstance(value, (int, float)) or not math.isfinite(value) for value in mean)
-                or record.get("forecast_capability") != "mean_only"
-                or record.get("point_semantics") != "M4 competition point forecast"
-                or record.get("source_package") != "M4comp2018"
-                or record.get("submission_id")
-                != archived["providers"][identity[1]]["submission_id"]
-                or record.get("submission_rank")
-                != {"m4_smyl": 1, "m4_fforma": 2}[identity[1]]
-                or not isinstance(record.get("source_package_version"), str)
-                or not record["source_package_version"]
-                or not isinstance(record.get("source_revision"), str)
-                or not record["source_revision"]
-                or not isinstance(record.get("content_hash"), str)
-                or not record["content_hash"]
-            ):
-                raise ImportValidationError(
-                    "M4comp2018 reference adapter returned incompatible identity or values"
-                )
-            observed.add(identity)
-        if observed != expected:
-            raise ImportValidationError(
-                "M4comp2018 reference adapter omitted a selected series or provider"
-            )
-        if "source_reconciliation" in archived:
-            reconciliation = response["reconciliation"]
-            if (reconciliation["summary"]["thresholds"] != archived["source_reconciliation"]
-                    or len(reconciliation["series"]) != len(rows)
-                    or [r["source_position"] for r in reconciliation["series"]] != [r[1] for r in rows]):
-                raise ImportValidationError("incomplete source reconciliation evidence")
-            self._source_reconciliation = reconciliation
-        return records
-
-    def _store_reference_forecasts(self, records: list[dict[str, Any]]) -> tuple[int, int]:
-        """Purpose: Atomically insert identical archived forecasts or reject conflicts.
-
-        Inputs: Fully validated adapter records.
-        Outputs: Counts of inserted and already-identical records after one transaction.
-        """
-        inserted = skipped = 0
-        self.connection.execute("BEGIN TRANSACTION")
-        try:
-            for record in records:
-                key = [record["dataset_id"], str(record["series_id"]), record["forecast_id"]]
-                source_metadata = canonical_json({
-                    "source_package": record["source_package"],
-                    "source_package_version": record["source_package_version"],
-                    "source_revision": record["source_revision"],
-                    "scale": "original",
-                })
-                existing = self.connection.execute(
-                    """SELECT official_m4_series_id, submission_id, submission_rank,
-                              submission_author, horizon, mean, point_semantics,
-                              forecast_capability, source_metadata, content_hash
-                       FROM reference_forecasts
-                       WHERE dataset_id=? AND series_id=? AND forecast_id=?""",
-                    key,
-                ).fetchone()
-                expected = (
-                    record["official_m4_series_id"],
-                    int(record["submission_id"]),
-                    int(record["submission_rank"]),
-                    record["submission_author"],
-                    int(record["horizon"]),
-                    record["mean"],
-                    record["point_semantics"],
-                    record["forecast_capability"],
-                    source_metadata,
-                    record["content_hash"],
-                )
-                if existing is not None:
-                    if tuple(existing) != expected:
-                        raise ImportValidationError(
-                            "conflicting archived forecast exists for "
-                            f"{record['series_id']}/{record['forecast_id']}"
-                        )
-                    skipped += 1
-                    continue
-                reference_id = (
-                    "reference/"
-                    + json_fingerprint(
-                        {"dataset_id": key[0], "series_id": key[1], "forecast_id": key[2]}
-                    )[:32]
-                )
-                self.connection.execute(
-                    """INSERT INTO reference_forecasts
-                    (reference_forecast_id, dataset_id, series_id,
-                     official_m4_series_id, forecast_id, submission_id,
-                     submission_rank, submission_author, horizon, mean,
-                     point_semantics, forecast_capability, source_metadata,
-                     content_hash)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    [reference_id, *key[:2], record["official_m4_series_id"], key[2],
-                     *expected[1:6], expected[6], expected[7],
-                     expected[8], expected[9]],
-                )
-                inserted += 1
-            self.connection.execute("COMMIT")
-        except BaseException:
-            self.connection.execute("ROLLBACK")
-            raise
-        return inserted, skipped
-
     def import_m4_daily(
         self,
         source_dir: Path,
@@ -919,12 +717,6 @@ class ImportCoordinator:
             source_after = source_fingerprint(source_dir)
             if source_after != source_before:
                 raise ImportValidationError("source files changed during import")
-            reference_records = self._read_m4_reference_forecasts(dataset_id, config)
-            reference_inserted, reference_skipped = self._store_reference_forecasts(
-                reference_records
-            )
-            summary["reference_forecasts_inserted"] = reference_inserted
-            summary["reference_forecasts_skipped"] = reference_skipped
             counts = dict(
                 self.connection.execute(
                     "SELECT status, count(*) FROM tasks WHERE run_id = ? GROUP BY status",
@@ -1085,27 +877,23 @@ class ImportCoordinator:
         summary["submitted_tasks"] += 1
         return task
 
-    def finish_configured_import(self, source: ConfiguredGiftEvalSource,
-                                 summary: dict[str, Any]) -> dict[str, Any]:
-        """Verify source/membership and references before accepting the import run."""
+    def finish_canonical_import(self, source: ConfiguredGiftEvalSource,
+                                summary: dict[str, Any]) -> None:
+        """Accept exact canonical membership against the unchanged external source."""
         if source.fingerprint() != self._source_before:
             raise ImportValidationError("source files changed during import")
         self._verify_expected_membership(summary["run_id"], summary["dataset_id"], self._selected_ids)
-        references = self._read_m4_reference_forecasts(summary["dataset_id"], source.settings)
-        if self._source_reconciliation is not None:
-            reconciliation = self._source_reconciliation
-            summary["source_reconciliation"] = reconciliation["summary"]
-            directory = self.database_path.with_suffix("") / "evidence/source-reconciliation"
-            directory.mkdir(parents=True, exist_ok=True)
-            (directory / "summary.json").write_text(canonical_json(reconciliation["summary"]) + "\n")
-            with (directory / "series-discrepancies.csv").open("w", newline="", encoding="utf-8") as stream:
-                writer = csv.DictWriter(stream, fieldnames=list(reconciliation["series"][0]), lineterminator="\n")
-                writer.writeheader()
-                writer.writerows(reconciliation["series"])
-            if reconciliation["summary"]["status"] == "researcher_review_required":
-                raise ImportValidationError("cross-source reconciliation requires researcher review before Process 02")
-        inserted, skipped = self._store_reference_forecasts(references)
-        summary.update(reference_forecasts_inserted=inserted, reference_forecasts_skipped=skipped)
+        self.summarize_import(summary)
+        self.verify_import_completion(summary)
+
+    def finish_configured_import(self, source: ConfiguredGiftEvalSource,
+                                 summary: dict[str, Any]) -> dict[str, Any]:
+        """Persist parent acceptance after the GIFT-Eval canonical substep commits."""
+        self.record_import_outcome(summary)
+        return summary
+
+    def summarize_import(self, summary: dict[str, Any]) -> None:
+        """Read committed item counts without importing or recalculating their values."""
         summary["task_counts"] = dict(self.connection.execute(
             "SELECT status, count(*) FROM tasks WHERE run_id=? GROUP BY status", [summary["run_id"]]
         ).fetchall())
@@ -1113,9 +901,7 @@ class ImportCoordinator:
             "SELECT count(*), coalesce(sum(observation_count),0) FROM series WHERE dataset_id=?",
             [summary["dataset_id"]],
         ).fetchone()
-        self.verify_import_completion(summary)
-        self.record_import_outcome(summary)
-        return summary
+        summary["selected_series"] = summary["series_count"]
 
     def record_import_outcome(self, summary: dict[str, Any], error: str | None = None) -> None:
         """Record success or failure for both parent import and invocation atomically."""

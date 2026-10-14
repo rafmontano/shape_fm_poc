@@ -1,9 +1,23 @@
 # ShapeFM architecture
 
-POC2-X01 architecture transformation is **in progress, Increment 1 only**. Its
+POC2-X01 architecture transformation is **in progress, Increment 2 authorised**. Its
 [governing target and incremental validation rule](poc2-x01-architecture-transformation.md)
-preserve the accepted baseline and add a read-only human status branch; they do
+preserve scientific contracts and add fixed paths and Process 01 restart state; they do
 not authorise a wholesale rewrite or later increments.
+
+The [active two-DuckDB contract](experiment-configuration.md#active-experiment-storage)
+supersedes experiment-named output paths below. `config/experiment.json` bootstraps
+`results/experiment.duckdb`, the parent authority. Process 01 creates only that
+parent. Process 03 creates/resumes `results/windows.duckdb`, the required child
+for high-volume windows, split membership, transformed inputs and labels/features.
+Both stores share one experiment identity through stable parent/configuration/source
+fingerprints. They are neither alternatives nor candidates for consolidation.
+Status reports both roles; before Process 03 the child is not created/pending,
+and after completion a missing/incompatible child is a recovery error.
+New-experiment cleanup clears both stores together after writers stop. Neither
+filename contains scientific identity; no third DuckDB, experiment-named results
+folder or researcher-facing evidence directory is authorised. Process 03 fixed-path
+wiring remains explicitly deferred in Increment 2.
 
 The governing long-term direction is documented in the
 [ShapeFM research vision](research-vision.md). Architecture and implementation
@@ -41,13 +55,14 @@ selected by the inventory and execution profile. JSON stdin/stdout is the
 language and isolated-subprocess boundary, not a second state store. The
 coordinator is the sole DuckDB writer.
 
-The opt-in [cross-source reconciliation contract](experiment-configuration.md#cross-source-reconciliation-approved-8-october-2026)
-keeps GIFT-Eval observations authoritative and M4comp2018 forecasts separate.
-Process 01 validates structure exactly, measures paired numeric discrepancies
-in its existing stateless R adapter, and records coordinator-owned summary
-evidence plus derived reports under the experiment results directory. Review
-thresholds block Process 02 without correcting observations. No new scheduler,
-observation store or scientific evaluation path is introduced.
+GIFT-Eval is the sole canonical time-series authority. Process 01 imports its
+configured records and persists acceptance through two durable substeps:
+`01.01 Import canonical GIFT-Eval dataset` and
+`01.02 Persist and accept canonical import`. It never compares histories with
+M4comp2018 to accept, reject, warn about or modify import. The former
+[cross-source policy](experiment-configuration.md#cross-source-reconciliation-approved-8-october-2026)
+is superseded for production. Historical adapters in `tmp/inactive/` are for
+explicitly requested research reproduction only, with no active import wiring.
 
 The approved [IDs 038/041 table-reproduction decision](poc2-id038-041-table-reproduction.md)
 adds a frequency-neutral Process 06 diagnostic path. It repeats the historical

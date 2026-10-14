@@ -1,7 +1,7 @@
 #!/usr/bin/env Rscript
-# Focused fixture tests for the bounded M4comp2018 read adapter.
+# Historical fixture tests; run only for explicitly requested reproduction.
 
-source("src/r/01_02_import_m4comp2018.R")
+source("tmp/inactive/01_02_import_m4comp2018.R")
 
 assert <- function(value, message) if (!isTRUE(value)) stop(message, call. = FALSE)
 fails <- function(expression, pattern) {

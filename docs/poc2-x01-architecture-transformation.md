@@ -1,10 +1,69 @@
 # POC2-X01 architecture transformation
 
-Status: **in progress — Increment 1 only**, authorised by the researcher on
-14 October 2026. Implementation and evidence remain subject to ChatGPT technical
+Status: **in progress — Increment 2 authorised**, by the researcher on
+14 October 2026. Increment 1 is the published starting point. Implementation and evidence remain subject to ChatGPT technical
 review and independent researcher approval under the
 [working agreement](working-agreement.md). This target does **not** authorise a
 wholesale rewrite, scientific changes, or starting another increment.
+
+## Increment 2: active experiment and Process 01
+
+The [Increment 2 implementation evidence](poc2-x01-increment2-evidence.md)
+records the focused checks, fresh Process 01 run, restart, cleanup and limitations.
+Implementation is complete for review; researcher acceptance remains pending.
+
+The continuing branch is `poc2-x01-architecture-transformation`; no per-item
+branches, tags, merges or changes to main. This approval supersedes the historical
+Increment 1 path/cleanup restrictions below, not its scientific boundaries.
+
+The [active storage contract](experiment-configuration.md#active-experiment-storage)
+owns the fixed layout: `config/experiment.json`, `results/experiment.duckdb`,
+`results/windows.duckdb`, `results/tables/`, `results/figures/`, and
+`models/<model>/<frequency>/<horizon>/...`. Names, dates, run numbers and correction
+labels belong in DuckDB, not filenames. No experiment-named results directory or
+researcher-facing evidence directory is permitted.
+
+These are two stores for **one experiment**, never alternative experiments.
+Process 01 creates only the parent. Process 03 owns creation/resume of the required
+child and its linkage through stable configuration/scientific/source fingerprints.
+Before then status says `not created (Process 03 pending)`; a missing/incompatible
+child after completion is a recovery error. No third DuckDB is authorised.
+
+Increment 2 implements default bootstrap, database-only restart, read-only status
+for both logical roles, and durable `01.01 Import canonical GIFT-Eval dataset` and
+`01.02 Persist and accept canonical import`. Persist concise identity,
+state, item counts, attempts, timestamps, failure context and required fingerprints;
+do not duplicate scientific payloads. Remove duplicate internal validation only
+where trust-boundary checks remain. No Processes 02–06 science is changed or run.
+Process 03's legacy child-path derivation is deferred to its own increment, which
+must adopt exactly `results/windows.duckdb` and validate fresh through Process 03.
+Later export/model-path wiring likewise remains outside Process 01 validation.
+
+GIFT-Eval alone is the time-series input authority. Substep 01.01 consumes pinned
+GIFT-Eval records and commits canonical series and evaluation-window boundaries
+per item; its completed checkpoint accepts the exact cohort. Substep 01.02 consumes
+that persisted cohort, commits import acceptance and checkpoints its fingerprint.
+Restart skips completed substeps and retries only unfinished items/boundaries.
+No M4comp2018 acquisition, comparison, discrepancy threshold or warning can gate
+canonical import. Historical comparison code is inactive, for explicitly requested
+research reproduction only. Existing historical configuration metadata remains
+stored unchanged for identity compatibility, not as an active import policy.
+
+Clean obsolete generated material on Mac and Ubuntu only after all writers stop.
+The researcher has archived Part B to NAS. Preserve tracked files, source data,
+environments, model downloads, compiled DTW/Numba caches and Ubuntu stashes/source.
+Starting a new experiment clears both databases and generated outputs/models as
+one package after writers have closed; never delete a WAL independently of a writer.
+There is no implicit reset/overwrite in `run`.
+
+Use `run --processes 1` and `status --format human` without path/name arguments.
+First run loads `config/experiment.json`; subsequent requests use only the parent.
+Tests alone may inject paths under isolated temporary directories. Validate a fresh
+100-series Process 01 run, both substeps, a database-only no-new-work restart,
+and byte-preserving status. Stop on failure, preserving concise local evidence;
+do not broaden execution. Implementation evidence belongs in the X01 evidence
+document, not generated researcher-facing result folders. Researcher acceptance
+is separate from implementation and testing.
 
 ## Current and approved target architecture
 

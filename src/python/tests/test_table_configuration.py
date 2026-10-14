@@ -80,8 +80,8 @@ class TableConfigurationTests(unittest.TestCase):
         self.assertEqual(expected_task_counts(100, config.workflow),
                          {2: 100, 3: 100, 4: 2830, 5: 1500, 6: 46})
 
-    def test_reconciliation_policy_is_stored_and_fingerprinted(self):
-        """Review thresholds are explicit science; older v12 documents stay strict."""
+    def test_historical_reconciliation_metadata_is_inert(self):
+        """Preserve historical documents without imposing their retired import gate."""
         path = CONFIG.with_name("poc2_m4_daily_full_paper_tables.json")
         config = load_experiment_configuration(path)
         policy = config.original["archived_forecasts"]["source_reconciliation"]
@@ -98,8 +98,9 @@ class TableConfigurationTests(unittest.TestCase):
         self.assertNotEqual(config.scientific_hash, resolve_experiment_configuration(changed).scientific_hash)
         for bad in (True, float("nan"), -1, 101):
             changed["archived_forecasts"]["source_reconciliation"]["series_warning_pct"] = bad
-            with self.assertRaises(ExperimentConfigurationError):
-                resolve_experiment_configuration(changed)
+            resolve_experiment_configuration(changed)
+        changed["execution"]["paths"].pop("r_m4comp2018_worker")
+        resolve_experiment_configuration(changed)
         self.assertNotIn("source_reconciliation", load_experiment_configuration(CONFIG).original["archived_forecasts"])
 
     def test_complete_pool_and_resolved_counts(self):

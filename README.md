@@ -12,6 +12,43 @@ the command does not install or update dependencies. The public actions are
 `plan`, `run`, `prepare-windows`, the opt-in `prepare-features`, `status`,
 `results`, and `test`.
 
+## Active experiment (X01 Increment 2)
+
+Normal use takes no experiment name, database path or output path:
+
+```sh
+.venv/bin/python src/python/00_main.py run --processes 1
+.venv/bin/python src/python/00_main.py status --format human
+```
+
+The [active storage contract](docs/experiment-configuration.md#active-experiment-storage)
+and [runbook](docs/local-execution.md#planning-and-inspection) supersede historical
+path-taking examples below. The fixed repository layout is:
+
+```text
+config/experiment.json
+results/experiment.duckdb
+results/windows.duckdb
+results/tables/
+results/figures/
+models/<model>/<frequency>/<horizon>/...
+```
+
+Process 01 creates only the parent `experiment.duckdb`: configuration, canonical
+series, process/task state and subsequent forecasts/evaluations. Process 03 owns
+the required `windows.duckdb` child for rolling windows, splits, transformed inputs
+and labels/features. They represent one experiment through stable fingerprints,
+not alternative databases; no third store is authorised. Status reports both,
+with the child pending before Process 03 and an explicit recovery error if missing
+or incompatible after its creation boundary. Process 03 wiring is deferred to its
+own increment. Increment 2 runs **Process 01 only**.
+
+Bootstrap reads the fixed JSON; restart uses the parent without JSON. Identity
+and history live inside DuckDB, never in filenames. After writers stop, starting
+a new experiment explicitly clears both stores and generated outputs/models as
+one package. There is no silent overwrite, experiment-named result folder, or
+researcher-facing evidence directory. Source data and reusable caches are retained.
+
 The [working and communication agreement](docs/working-agreement.md) defines
 roles, approvals and effective collaboration. It prioritises productivity and
 clarity, not word limits.

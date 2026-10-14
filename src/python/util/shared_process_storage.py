@@ -90,6 +90,18 @@ class ProcessStorage:
 
                 configuration = load_database_configuration(self.database, connection)
                 expected = configuration.series_count
+                tables = {row[0] for row in connection.execute("SHOW TABLES").fetchall()}
+                if "process_substeps" in tables and connection.execute(
+                    "SELECT count(*) FROM process_substeps WHERE process_id=1"
+                ).fetchone()[0]:
+                    from .p01_04_import_state import ImportState
+
+                    state = ImportState(connection, configuration)
+                    for identity in state.definitions:
+                        if not state.accepted(identity):
+                            raise RuntimeError(f"Process 01 substep {identity} is not completed")
+                    return {"output_validated": True, "expected_task_count": expected,
+                            "stored_task_count": expected}
                 stored = int(connection.execute("SELECT count(*) FROM series").fetchone()[0])
                 incomplete = int(connection.execute("SELECT count(*) FROM tasks WHERE status!='completed'").fetchone()[0])
                 tasks = int(connection.execute("SELECT count(*) FROM tasks").fetchone()[0])

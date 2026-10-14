@@ -17,6 +17,7 @@ from typing import Any
 import duckdb
 
 from .shared_configuration import PROCESS_NAMES
+from .shared_active_paths import ActivePaths
 
 
 class ProgressReader:
@@ -25,6 +26,44 @@ class ProgressReader:
     def __init__(self, database: Path):
         """Retain a database path; construction has no side effects."""
         self.database = database
+
+    def annotations(self, status: dict[str, Any]) -> dict[str, Any]:
+        """Read substeps and logical database roles without revalidating science."""
+        paths = ActivePaths.from_parent(self.database)
+        with duckdb.connect(str(self.database), read_only=True) as connection:
+            tables = {row[0] for row in connection.execute("SHOW TABLES").fetchall()}
+            substeps = []
+            if "process_substeps" in tables:
+                result = connection.execute("SELECT * FROM process_substeps ORDER BY substep_id")
+                names = [column[0] for column in result.description]
+                substeps = [dict(zip(names, row)) for row in result.fetchall()]
+            links = connection.execute(
+                "SELECT preparation_id,definition_hash,status FROM window_preparation_runs"
+            ).fetchall() if "window_preparation_runs" in tables else []
+        required = any(row["process_id"] == 3 and row["status"] == "completed"
+                       for row in status["processes"]) or any(row[2] == "completed" for row in links)
+        if not paths.child.exists():
+            child_state = ("recovery error: required child is missing" if required else
+                           "not created (Process 03 pending)")
+        else:
+            try:
+                with duckdb.connect(str(paths.child), read_only=True) as child:
+                    metadata = child.execute(
+                        """SELECT preparation_id,definition_hash,parent_scientific_hash,
+                                  parent_configuration_hash FROM preparation_metadata"""
+                    ).fetchall()
+                compatible = bool(metadata) and all(
+                    (row[0], row[1]) in {(link[0], link[1]) for link in links}
+                    and row[2:] == (status["scientific_hash"], status["configuration_integrity_hash"])
+                    for row in metadata
+                )
+                child_state = "available (stored linkage matches)" if compatible else "recovery error: incompatible child linkage"
+            except duckdb.Error as error:
+                child_state = f"recovery error: child unreadable ({type(error).__name__})"
+        return {"substeps": substeps, "database_roles": {
+            "main": {"path": "results/experiment.duckdb", "state": "available"},
+            "windows": {"path": "results/windows.duckdb", "state": child_state},
+        }}
 
     @staticmethod
     def paper_summary(connection: duckdb.DuckDBPyConnection, experiment_id: str) -> dict:
@@ -89,6 +128,8 @@ class ProgressReader:
         """Select timestamped state and error evidence, retaining its known context."""
         # Code constants: existing table/column contracts, not new restart state.
         sources = [
+            ("process_substeps", "'Process ' || process_id || ' substep ' || substep_id || coalesce(' item ' || failure_item,'')",
+             "last_progress_at", "error", "", []),
             ("experiment_processes", "'Process ' || process_id", "updated_at", "last_error", "", []),
             ("execution_events", "'execution ' || execution_id || ' processes=' || requested_processes",
              "coalesce(completed_at, started_at)", "error", "", []),
@@ -177,12 +218,25 @@ class HumanProgress:
                  f"Source revision (latest execution): {self._value(evidence['revision'])}",
                  f"Data source revision: {self._value(config['resolved_configuration'].get('data', {}).get('source', {}).get('revision'))}",
                  f"Imported series: {self._value(evidence['imported_series'])}", ""]
+        for role, label in (("main", "Main"), ("windows", "Windows")):
+            database = config["database_roles"][role]
+            lines.append(f"{label} database: {database['path']} — {database['state']}")
+        lines.append("")
         for row in progress["processes"]:
             counts = [f"{task['status']}={task['count']}" for task in evidence["tasks"]
                       if task["stage"] == row["process_id"]]
-            lines += [f"Process {row['process_id']:02d} {row['name']}: {row['status']}",
+            substeps = [step for step in config["substeps"] if step["process_id"] == row["process_id"]]
+            name = "Transform/window preparation" if row["process_id"] == 3 else row["name"].capitalize()
+            lines += [f"Process {row['process_id']:02d} {name}: {row['status']}",
                       f"  started: {self._value(row.get('started_at'))}; completed: {self._value(row.get('completed_at'))}",
-                      f"  tasks: {', '.join(sorted(counts)) if counts else 'not recorded'}; substeps: not recorded"]
+                      f"  tasks: {', '.join(sorted(counts)) if counts else 'not recorded'}" +
+                      ("" if substeps else "; substeps: not recorded")]
+            for step in substeps:
+                lines += [f"  {step['substep_id']} {step['name']}: {step['status']}",
+                          f"    items planned={step['planned_items']}, completed={step['completed_items']}, failed={step['failed_items']}; attempts={step['attempt_count']}",
+                          f"    started: {self._value(step['started_at'])}; last progress: {self._value(step['last_progress_at'])}; completed: {self._value(step['completed_at'])}"]
+                if step["error"]:
+                    lines.append(f"    failure: {step['error']}")
         active = ", ".join(f"{number:02d}" for number in progress["active"])
         lines += ["", f"Active process (recorded): {active or 'none recorded'}"]
         for key, label in (("activity", "Latest committed activity (record timestamp)"),
@@ -198,7 +252,7 @@ class HumanProgress:
         for frequency, model, count, sensitivity in candidates or []:
             lines.append(f"  {frequency} / {model}: {count} stored; {sensitivity} sensitivity candidates")
         lines += ["ETA: not recorded",
-                  "Limitations: legacy state has no durable substep progress or heartbeat; recorded running",
+                  "Limitations: later processes have no durable substep progress; there is no heartbeat. Recorded running",
                   "does not prove live work. Task counts cover recorded rows, not an expected-work denominator.",
                   "Activity/error timestamps are record timestamps, not a complete commit/error history;",
                   "process/execution state is database-wide and import counts use the latest import run.",

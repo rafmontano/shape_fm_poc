@@ -30,7 +30,7 @@ from .shared_configuration import (
 
 
 # Code constant: latest DuckDB migration version implemented by this source revision.
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 # Bootstrap/interface default: legacy library database path; an explicit path from the
 # coordinator overrides it, and the path does not define scientific identity.
 DEFAULT_DATABASE = Path("data/shapefm.duckdb")
@@ -80,6 +80,24 @@ CREATE TABLE IF NOT EXISTS execution_events (
     status VARCHAR NOT NULL CHECK (status IN ('running', 'completed', 'failed')),
     summary JSON,
     error VARCHAR
+);
+
+CREATE TABLE IF NOT EXISTS process_substeps (
+    process_id INTEGER NOT NULL,
+    substep_id VARCHAR PRIMARY KEY,
+    name VARCHAR NOT NULL,
+    status VARCHAR NOT NULL CHECK (status IN ('pending','running','completed','failed')),
+    planned_items INTEGER NOT NULL,
+    completed_items INTEGER NOT NULL DEFAULT 0,
+    failed_items INTEGER NOT NULL DEFAULT 0,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    started_at TIMESTAMPTZ,
+    last_progress_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    failure_item VARCHAR,
+    error VARCHAR,
+    input_fingerprint VARCHAR NOT NULL,
+    output_fingerprint VARCHAR
 );
 
 CREATE TABLE IF NOT EXISTS datasets (
@@ -1048,7 +1066,12 @@ def migrate_database(path: Path = DEFAULT_DATABASE) -> Path:
         connection.execute(
             "INSERT INTO schema_versions (version, description) VALUES (?, ?) "
             "ON CONFLICT (version) DO NOTHING",
-            [SCHEMA_VERSION, "Fixed configuration widths have no measured calibration accuracy"],
+            [13, "Fixed configuration widths have no measured calibration accuracy"],
+        )
+        connection.execute(
+            "INSERT INTO schema_versions (version, description) VALUES (?, ?) "
+            "ON CONFLICT (version) DO NOTHING",
+            [SCHEMA_VERSION, "Durable Process 01 substep restart boundaries"],
         )
         connection.execute("COMMIT")
     except BaseException:
@@ -1102,6 +1125,9 @@ def initialize_experiment_database(
                 "INSERT INTO experiment_processes (process_id, process_name, status) VALUES (?, ?, 'pending')",
                 list(PROCESS_NAMES.items()),
             )
+            from .p01_04_import_state import ImportState
+
+            ImportState(connection, configuration).initialize()
             connection.execute("COMMIT")
         except BaseException:
             connection.execute("ROLLBACK")

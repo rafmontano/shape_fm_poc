@@ -34,6 +34,7 @@ from .shared_experiment_execution import (ExperimentCoordinator, configuration_s
                                    experiment_status, get_forecast,
                                    latest_experiment_id, official_results, table_results)
 from .shared_process_storage import ProcessStorage
+from .shared_active_paths import ActivePaths
 from .p00_02_researcher_cli import ROOT, ResearcherCLI
 from .p00_03_researcher_request import ResearcherRequest
 from .feature_extraction import get_prepared_features, run_feature_extraction_flow
@@ -82,7 +83,7 @@ class ProcessAction:
     def run(self, database: Path, configuration_path: Path | None, processes: tuple[int, ...],
             execution_profile: str | None = None,
             local_heavy_exception: str | None = None) -> dict[str, Any]:
-        database = ResearcherCLI.result_path(database, database=True)
+        database = ActivePaths.from_parent(database).parent
         with research_writer_locks((database,)):
             return self._run(database, configuration_path, processes, execution_profile,
                              local_heavy_exception)
@@ -95,14 +96,14 @@ class ProcessAction:
             if configuration_path is not None:
                 raise ValueError("--configuration is only valid when creating a new database")
         elif configuration_path is None:
-            raise ValueError("--configuration is required when creating a new database")
+            configuration_path = ActivePaths.from_parent(database).configuration
+        if creating and ActivePaths.from_parent(database).child.exists():
+            raise RuntimeError("orphan windows database: clear the active experiment package explicitly")
         configuration = (
             load_experiment_configuration(configuration_path)
             if creating
             else load_database_configuration(database)
         )
-        if configuration.version >= 12 and database.stem != configuration.name:
-            raise ValueError("database filename must match the configured experiment name")
         requires_gpu = bool(
             4 in processes
             and {"chronos_2", "directional_mantis_rf"}
@@ -308,7 +309,8 @@ class ProcessAction:
                 if execution is not None and process_id != 1
                 else wrapper.run(storage.database)
             )
-            validation = storage.validate(process_id, summary)
+            # Process 01 validates external inputs and commits accepted substeps itself.
+            validation = {} if process_id == 1 else storage.validate(process_id, summary)
             if "numerical_reproducibility" in validation:
                 summary = {**summary, "numerical_reproducibility": validation["numerical_reproducibility"]}
             storage.transition(process_id, "completed", summary)
@@ -700,7 +702,7 @@ class ResearcherActions:
     def _run(self, request: ResearcherRequest, invocation: dict[str, Any]) -> dict[str, Any]:
         configuration = request.value("configuration")
         return {"invocation": invocation, "execution": self.process_action.run(
-            ResearcherCLI.result_path(request.value("database"), database=True),
+            request.database,
             configuration.resolve() if configuration else None,
             request.value("processes"), request.value("execution_profile"),
             request.value("local_heavy_exception"))}
@@ -736,10 +738,12 @@ class ResearcherActions:
             identity = None
         if identity is not None:
             status["experiment"] = experiment_status(request.database, identity)
-        if request.value("format", "json") == "human":
-            from .p00_04_progress import HumanProgress, ProgressInterpretation, ProgressReader
+        from .p00_04_progress import HumanProgress, ProgressInterpretation, ProgressReader
 
-            evidence = ProgressReader(request.database).read(status)
+        reader = ProgressReader(request.database)
+        status.update(reader.annotations(status))
+        if request.value("format", "json") == "human":
+            evidence = reader.read(status)
             return HumanProgress().render(ProgressInterpretation.interpret(status, evidence))
         return {"invocation": invocation, "status": status}
 
