@@ -50,12 +50,11 @@ scientific work.
 | 05 | 05.01 Materialise forecast combinations → 05.02 Materialise approved deployable adjustments → 05.03 Accept forecast candidates |
 | 06 | 06.01 Evaluate forecast accuracy → 06.02 Evaluate directional performance → 06.03 Materialise diagnostic surfaces → 06.04 Select and retain diagnostics → 06.05 Assemble research results → 06.06 Publish approved outputs → 06.07 Accept experiment |
 
-## Five technical layers (approved target)
+## Five technical layers
 
 ![ShapeFM technical layers](images/shapefm_technical_layers.png)
 
-The existing image is not revised in this documentation increment. The approved
-five-layer target, bottom to top, is:
+The five layers, bottom to top, are:
 
 1. **DuckDB data layer** owns scientific state and durable restart; only the
    selected coordinator writes it.
@@ -98,7 +97,8 @@ results/windows.duckdb          child: rolling/high-volume modelling inputs,
                                 transformed windows and their labels
 results/tables/                 derived human-readable tables
 results/figures/                derived figures
-models/...                      fitted DTW/Random-Forest artifacts
+models/<experiment-id>/...      fitted DTW/Random-Forest artifacts
+.runtime/mlflow/                operational tracking and published artifacts
 ```
 
 The runtime opens/creates the parent when opening an experiment; Process 03 alone
@@ -110,6 +110,10 @@ scientific identity live inside DuckDB, not in filenames.
 Configuration enters once and is stored in the parent; resume loads that record.
 Generated databases are disposable: no schema migration or historical-database
 compatibility layer is required.
+
+The normal researcher entry point writes directly to these canonical repository
+locations. Temporary test roots clean up after themselves and are not final
+researcher experiments; there is no promotion subsystem or `.amp` dependency.
 
 Generated results are disposable and untracked. Git stores code, configuration,
 locks and living documentation. External backups are optional researcher
@@ -126,10 +130,10 @@ backend are operational provenance, not identity or grounds for recalculation.
 Ordinary valid floating-point differences are accepted; no parity gate, workload
 or tolerance gate. Provider boundaries check shape and scientifically usable values.
 
-Researcher status is a read-only interpretation of stored state. It reports the
-experiment, current process/substep, completed/failed/pending counts, latest
-recorded error and known totals. It does not rerun validation or infer a live
-worker from a stale `running` row.
+Researcher `status` reads experiment/run identity, accepted process/subflow
+milestones and atomic result counts. MLflow supplies operational milestone/error
+visibility. Neither display reruns validation or infers a live worker from a
+persisted state tag.
 
 One shared executor plans missing atomic keys, divides them into bounded work
 groups and accepts pure results through coordinator transactions. A later failure
@@ -186,8 +190,7 @@ src/python/
 └── tests/
 ```
 
-This is the approved target, not a claim of completed migration. Each importable
-process folder contains its real Prefect `flow.py` and code used
+Each importable process folder contains its real Prefect `flow.py` and code used
 only by that process. Empty parent wrappers, forwarding aliases and process code
 hidden in large `shared_*` modules are not the target. `util/` is only for code
 used by at least two processes. R keeps process entry

@@ -10,6 +10,8 @@ from p03_transform.inputs import rolling_window_inputs, s1_partition
 
 
 class TransformInputTests(unittest.TestCase):
+    """Protect Process 03 window positions and deterministic cohort membership."""
+
     def test_complete_blocks_drop_partial_tail_without_padding(self):
         """Short/exact/remainder histories expose only complete W+H blocks."""
         for length, count in ((5, 0), (6, 1), (11, 1), (12, 2), (15, 2)):

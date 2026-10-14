@@ -40,10 +40,12 @@ def _matrix(profile: dict[str, Any]) -> dict[str, Any]:
 
 
 def publish_stored_outputs(root: Path, report: dict[str, Any] | None = None) -> FinalResearchSummary:
-    """Render the accepted report with historical names/styles, without science.
+    """Render the accepted report with approved names/styles, without rescoring.
 
     A standalone export opens the parent read-only. Process 06 supplies its
     already-read assembled record; only the coordinator publishes declared files.
+    Return curated metrics and file paths; docs/evaluation.md owns the descriptive
+    interpretation of ranks across dependent horizons.
     """
     if report is None:
         with duckdb.connect(str(root / "results/experiment.duckdb"), read_only=True) as connection:

@@ -1,15 +1,13 @@
 #!/usr/bin/env Rscript
-# ==============================================================================
-# 06_02_evaluate_paper_tables.R
-# Purpose: Internal JSON boundary for bounded historical Process 06 calculations.
-# Inputs: One request JSON on stdin; repository utilities and existing jsonlite.
-# Outputs: One response JSON on stdout; errors exit nonzero; no storage or fitting.
-# Run from: Rscript --vanilla src/r/06_02_evaluate_paper_tables.R < request.json
-# ==============================================================================
+# Process 06 bounded paper-table worker under docs/evaluation.md.
+# One stdin JSON cohort/candidate request -> stdout aggregate metrics, directional
+# counts, optional paths and operational provenance; errors exit nonzero.
+# The coordinator accepts candidate keys; this worker has no storage or fitting.
 source("src/r/util/forecast_adjustments.R")
 source("src/r/util/paper_table_metrics.R")
 
-# Decode without data-frame simplification; only numeric arrays become vectors.
+# Decode cohort JSON into the paper kernel's request list without data frames;
+# only numeric arrays become vectors, preserving identities and candidate settings.
 decode_paper_request <- function(input) {
   request <- jsonlite::fromJSON(input, simplifyVector = FALSE)
   for (i in seq_along(request$series)) {

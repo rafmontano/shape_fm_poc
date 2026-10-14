@@ -1,11 +1,6 @@
-# ==============================================================================
-# paper_table_metrics.R
-# Purpose: Single m4_paper_tables_v1 scientific kernel for bounded Process 06 jobs.
-# Inputs: Raw context, future actuals, stored means/directions and explicit jobs.
-# Outputs: Aggregate metrics, per-horizon counts and optional diagnostic means.
-# Run from: Imported; not run directly.
-# ==============================================================================
-# Bounded functional exception: stateless arithmetic/validation needs no classes.
+# Process 06 m4_paper_tables_v1 scoring under docs/evaluation.md.
+# Raw contexts, future actuals, stored means/directions and explicit jobs produce
+# cohort metrics, per-horizon correct counts and optional diagnostic means.
 # Adjustment functions are supplied by forecast_adjustments.R; no I/O or scheduler.
 
 # Require a finite real path, optionally with an exact horizon.
@@ -25,7 +20,10 @@ paper_mase_lag <- function(frequency) {
   switch(frequency, Hourly = 24L, Monthly = 12L, Quarterly = 4L, 1L)
 }
 
-# Calculate full-horizon historical component errors; omit only zero/zero sMAPE.
+# Raw finite context, actual and equal-length mean paths -> full-horizon sMAPE/MASE.
+# docs/evaluation.md: sMAPE averages 200*absolute error/(|actual|+|mean|), omitting
+# zero/zero; MASE divides MAE by mean absolute lagged raw-context differences.
+# A zero/nonfinite MASE denominator fails rather than substituting a score.
 calculate_paper_point_metrics <- function(context, actual, mean, frequency) {
   .paper_path(context, "context")
   .paper_path(actual, "actual")
@@ -123,6 +121,8 @@ calculate_paper_point_metrics <- function(context, actual, mean, frequency) {
     counts <- counts + as.integer(predicted == as.integer(s$actual > origin))
   }
   components <- sums / length(series)
+  # OWA averages ratios of cohort-mean sMAPE/MASE to cohort-mean Naive2 components,
+  # not per-series OWA. Direct classifiers have no point metrics (docs/evaluation.md).
   owa <- if (direct) NULL else 0.5 * sum(components / reference)
   if (!direct && any(!is.finite(c(components, owa)))) stop("nonfinite aggregate", call. = FALSE)
   result <- list(model = job$model, lambda_up = job$lambda_up, lambda_down = job$lambda_down,

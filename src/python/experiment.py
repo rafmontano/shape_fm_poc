@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from dataclasses import asdict
 from importlib import import_module
 from pathlib import Path
 from typing import Sequence
@@ -85,8 +86,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     elif args.action == "plan":
         result = {"processes": args.processes, "configuration": str(args.root / "config/experiment.json")}
     else:
-        from p06_evaluate.application import publish_stored_outputs
-        result = publish_stored_outputs(args.root)
+        from p06_evaluate.publication import publish_stored_outputs
+        result = asdict(publish_stored_outputs(args.root))
     print(json.dumps(result))
     return 0
 

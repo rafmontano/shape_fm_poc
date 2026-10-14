@@ -62,6 +62,7 @@ class WorkGroupExecutor:
     """
 
     def __init__(self, context: Any):
+        """Bind coordinator callbacks and placement profile; defer cluster startup."""
         self.context = context
         profiles = json.loads((CODE_ROOT / "config/execution_profiles.json").read_text())
         profiles.update(context.configuration.get("execution_profiles", {}))
@@ -96,6 +97,7 @@ class WorkGroupExecutor:
                 groups.append([i for i in chunk if tuple(sorted(i.resources.items())) == resource])
 
         def progress() -> None:
+            """Report accepted database counts, never uncommitted worker progress."""
             done, total = repository.counts(subflow_id)
             minutes = (time.monotonic() - started) / 60
             rate = done / minutes if minutes > 0 and done else None
@@ -103,6 +105,7 @@ class WorkGroupExecutor:
                                          (total - done) / rate if rate else None))
 
         def receive(result: GroupResult) -> None:
+            """Accept completed items before surfacing a later work-group failure."""
             if result.results:
                 accept(result.results)
                 progress()

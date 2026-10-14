@@ -245,8 +245,9 @@ validate_forecast_request <- function(request, expected_method_id = NULL) {
 # Purpose: Map central forecast intervals to ordered quantile rows.
 # Inputs: A forecast object, requested levels, and expected horizon.
 # Outputs: Mean, equal median, and quantile matrix. These adapters do not request
-#   internal Box-Cox transforms, so forecast-package intervals are symmetric on
-#   their input scale and the package point forecast is also q0.5.
+#   separate transforms here; package point forecasts supply q0.5 under
+#   docs/forecast-black-box-contract.md. TBATS may select internal Box-Cox, so
+#   mean/median equality here is an adapter policy, not a symmetry proof.
 .distribution_from_intervals <- function(predicted, quantile_levels, horizon) {
   mean <- as.numeric(predicted$mean)
   interval_levels <- as.numeric(predicted$level)

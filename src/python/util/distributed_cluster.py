@@ -77,6 +77,7 @@ class DistributedCluster:
     """Own the selected coordinator's Dask services for one experiment invocation."""
 
     def __init__(self, settings: dict[str, Any]):
+        """Resolve configured machine/service inventory without starting services."""
         self.settings = settings
         self.processes = []
         self.client = None

@@ -20,7 +20,11 @@ from gluonts.time_feature import get_seasonality
 
 
 def metrics(levels: list[float] | None) -> list:
-    """Use the accepted GIFT-Eval metric set without inventing missing quantiles."""
+    """Return native scorers for the stored forecast's quantile capability.
+
+    None selects mean-only metrics; supplied levels enable probabilistic scores
+    under docs/evaluation.md without fabricating unavailable quantiles.
+    """
     if levels is None:
         return [MSE(forecast_type="mean"), MAE(forecast_type="mean"),
                 MASE(forecast_type="mean"), MAPE(forecast_type="mean"),

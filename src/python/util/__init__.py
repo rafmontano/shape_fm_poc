@@ -1,10 +1,5 @@
-# ==============================================================================
-# __init__.py
-#
-# Purpose: Define the utility package containing configuration, persistence, execution, forecasting, and provenance services.
-# Inputs: Imports from ShapeFM coordinators, workers, and tests.
-# Outputs: The importable util namespace; no runtime side effects.
-# Run from: Imported; not run directly.
-# ==============================================================================
+"""Shared services used by two or more of Processes 01–06.
 
-"""Define the utility package containing configuration, persistence, execution, forecasting, and provenance services."""
+Coordinator/worker imports obtain the util namespace; importing this package
+alone opens no database, starts no service and performs no scientific work.
+"""

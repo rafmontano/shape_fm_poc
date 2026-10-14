@@ -129,8 +129,9 @@ curated final metrics/CSV/PNG/PDF artifacts. Failures warn and never invalidate
 science. Periodic progress/ETA is off unless a stored setting explicitly enables
 it for a named long-running subflow; no autologging/system metrics/model registry.
 
-Increments A–C retain their recorded status. Increment D (`D94e12b3`) is accepted
-by the researcher. E/F are being implemented, not accepted. This does not close X01.
+Increments A–C retain their recorded status. Increment D (`94e12b3`) is accepted
+by the researcher. E/F have completed their bounded continuations; the complete
+candidate awaits researcher review. This does not close X01.
 
 | Increment | Scope and bounded acceptance |
 | --- | --- |
@@ -146,7 +147,10 @@ retain aliases. Measure before/after production files/folders/physical lines,
 longest files, test files/lines and every direct Prefect/Dask/MLflow import
 location; include elapsed times, restart and assigned-worker evidence. Focused
 tests protect flow order/restart, shared-executor execution, scientific formulas and
-one resumable tracking run/publication. Run the bounded final suite once after F.
+one resumable tracking run/publication. The completed bounded runs below are
+sufficient: final completion checks are non-scientific compilation, mocked
+interface tests, documentation links and whitespace, not another calculation,
+restart or publication. Do not run scientific test suites to repeat accepted work.
 
 Calculate each scientific atomic item once on its assigned worker and resume
 accepted DuckDB state. Hardware/backend are operational provenance, not scientific
@@ -284,7 +288,7 @@ selection rather than only the below-cap case; evaluation inputs remain uncapped
 Database-only full requested-range restart took 4.065 seconds. A separate
 Process 03-only restart after legacy retirement took 4.893 seconds: all 996
 parent and 732 child rows and acceptance timestamps remained unchanged.
-Evidence databases are retained in the isolated review artifact workspace.
+The final canonical databases supersede intermediate isolated evidence copies.
 MLflow used one run, `4456cf7e55a14684a431c5435df278af`, with completed
 03/03.01–03.04 milestones and completion progress. No Process 04 work or
 calibration ran.
@@ -298,10 +302,10 @@ were removed. No schema bridge or wrapper was introduced.
 
 ## Increment D — Forecast accepted
 
-The researcher accepted `D94e12b3`. The five Forecast subflows use pure native
+The researcher accepted `94e12b3`. The five Forecast subflows use pure native
 R/Python calculations, coordinator-only result/artifact acceptance and cached
-foundation-model sessions. A–C retain their status; E/F are being implemented
-and are not accepted. X01 remains open.
+foundation-model sessions. A–C retain their status; E/F have completed their
+bounded continuations. X01 remains open for final researcher review.
 
 Accepted evidence is the completed 100-series distributed Process 04 run using
 Mac CPU, Ubuntu CPU and Ubuntu GPU. Required outputs are 1,600 individual
@@ -325,7 +329,7 @@ no-new-work restart 2.058 seconds. All prior atomic rows remained unchanged;
 restart preserved all accepted rows and timestamps. The focused public-flow
 combination/lineage/restart test passed. Process 06 had not run at this boundary.
 
-## Increment F — implementation paused before final delivery
+## Increment F — completed candidate for researcher review
 
 Process 06-only continuation completed the accepted 100-series experiment in
 231.647 seconds: 1,700 capability-aware forecast evaluations, 1,900 directional
@@ -334,16 +338,150 @@ outputs. It assembled and published five CSVs and three PNG/PDF figure pairs.
 The 2.051-second no-new-work restart preserved every accepted row and timestamp.
 No Process 04, scientific comparison or calibration workload ran.
 
-Accepted scientific state and published outputs remain in the isolated review
-workspace `.amp/in/artifacts/increment-d-distributed-run/`. The horizon and CD
-PNG figures were inspected: labels, legends and dependent-horizon caveat are
-readable and unclipped. This does not constitute final researcher acceptance.
+Accepted scientific state and outputs now reside at canonical root locations.
+All three PNG figures were inspected: labels, legends and dependent-horizon
+caveat are readable and unclipped. No presentation defect was found; no output
+was regenerated. This does not constitute final researcher acceptance.
 
-Implementation is paused at the researcher's request before network disconnect.
-The local checkpoint preserves the new Process 06 implementation, legacy
-retirement and code-documentation work. Remaining delivery work includes the
-moved Process 02 period-provider call path, Process 06 JSON-helper ownership,
-standalone export wiring, stale worker configuration, focused final tests and
-MLflow checks, structural measurements, living-document reconciliation and
-the five-layer image update. Do not rerun accepted scientific items when
-resuming. Final commit/push and Ubuntu synchronization remain pending; X01 is open.
+The final wiring fixes restore the process-owned period-provider CLI, move the
+unchanged JSON digest to Evaluate, serialize the standalone export summary and
+remove unused operational configuration. All retained active Python/R modules
+and public contracts were audited, including formula meaning and Prefect
+hierarchy/restart ownership. The technical illustration now shows exactly the
+five approved layers. No new scientific calculation, restart or comparison was
+performed during completion.
+
+## Canonical delivery and read-only validation
+
+The authoritative experiment is `287166f8-48ce-4bc2-b5de-584f51752775`; its
+existing MLflow run is `e73fc135fdc54cbca127dc0069ee1942`.
+
+- Both `results/experiment.duckdb` and `results/windows.duckdb` open read-only,
+  have the same single owner, and retain all atomic plans/results. All 30
+  milestones (six processes and 24 approved subflows) remain accepted.
+- All 15 relative `models/<experiment-id>/...` references resolve with their
+  stored size/SHA. Five CSVs in `results/tables/` and six PNG/PDF files in
+  `results/figures/` are byte-identical to the accepted outputs.
+- The existing MLflow run remains `FINISHED`, with 28 curated metrics, five
+  parameters, completed milestone tags and 11 published artifacts. Its old
+  `last_error` tag is operational history, not a current failure or scientific
+  state. Public read APIs resolve all artifacts under `.runtime/mlflow/`.
+- Promotion replaced, rather than merged, the stale root database. Every table
+  row was checked against the accepted package. The sole DuckDB change is the
+  operational publication-path list in `06.06/published`; accepted timestamps,
+  identities, source data and scientific values are unchanged. The windows
+  database is byte-identical.
+- MLflow has no public artifact-location setter in the installed version. One
+  bounded transaction using its installed SQLAlchemy store/ORM relocated only
+  the existing experiment `artifact_location` and run `artifact_uri`. All other
+  SQLite rows and artifact bytes are unchanged. No experiment/run was created
+  and no metric/artifact was relogged.
+- The normal researcher command defaults directly to canonical repository-root
+  paths. There are no symlinks, permanent promotion helpers or dependencies on
+  the isolated review package.
+
+The original accepted package and recoverable stale-root backup were preserved
+through validation. Removal of obsolete generated copies and scratch material
+follows the canonical checkpoint; source data, environments, package/model caches,
+Git history and IDE state are preserved. No task-owned writer/worker/service is
+left active. Ubuntu synchronization is operational only and remains the final
+delivery step when that host is available; it must not run science.
+
+## Final structural measurements
+
+Baseline is cleanup checkpoint `c498dc6`; final counts include retained active
+first-party source only. Physical lines include blank lines/comments. Folder
+counts are directories directly containing counted source; Python functions
+include nested definitions. Vendored/generated code and environments are excluded.
+
+| Measure | Before | Candidate |
+| --- | ---: | ---: |
+| Production Python files / folders | 59 / 2 | 35 / 8 |
+| Production Python lines | 26,419 | 4,442 |
+| Python functions / classes | 682 / 77 | 254 / 25 |
+| Python test files / lines | 37 / 14,776 | 13 / 1,060 |
+| Production R files / folders | 22 / 3 | 13 / 2 |
+| Production R lines | 3,582 | 1,988 |
+| R test files / lines | 9 / 1,703 | 7 / 1,122 |
+
+Longest retained Python files: `util/runtime.py` 307,
+`p04_forecast/application.py` 304, `p06_evaluate/application.py` 285,
+`p01_import/acquisition.py` 262, `p04_forecast/mantis.py` 250 lines. Longest R:
+`util/forecast_methods.R` 992, `04_01_forecast_r_methods.R` 157,
+`util/paper_table_metrics.R` 151, `06_03_plot_directional_results.R` 123,
+`util/features.R` 108 lines. Before, the longest R files were respectively
+`util/forecast_methods.R` 997, `qa/get_m4_daily_series.R` 300,
+`qa/inspect_rolling_window.R` 277, `qa/inspect_standardisation.R` 210 and
+`util/transformations.R` 188 lines; Python baseline maxima are recorded above.
+
+The active Python production tree is:
+
+```text
+src/python/
+  experiment.py
+  p01_import/       acquisition.py application.py flow.py
+  p02_preprocess/   application.py flow.py period.py
+  p03_transform/   application.py flow.py inputs.py labels.py
+  p04_forecast/    __init__.py application.py checkpoint.py chronos.py
+                   contract.py flow.py mantis.py native.py providers.py
+  p05_combine/     application.py flow.py science.py
+  p06_evaluate/    application.py flow.py gift.py publication.py reports.py
+  util/            __init__.py distributed_cluster.py distributed_execution.py
+                   providers.py research_tracking.py runtime.py
+                   shared_transformations.py
+```
+
+The old path was numbered entry scripts → generic coordinator/handler/planner
+dispatch → process adapters → repeated storage validation/custom scheduling.
+The new path is `experiment.py` → process `flow.py` meaningful subflows →
+process `application.py` and pure scientific providers → shared bounded executor
+→ coordinator repository transaction. The process owns its science and durable
+atomic result; Prefect owns attempts, Dask schedules eligible work, MLflow tracks
+one research run and DuckDB alone decides restart.
+
+Retired families include all superseded numbered Python entry scripts, generic
+experiment/workflow/execution-event/process-store infrastructure, duplicate
+provider/model-storage wrappers, window/feature orchestration, researcher CLI
+facades, DTW/seasonal/execution calibration, legacy schema QA, standalone R
+AutoARIMA, unused R label/transformation/padding/diagnostic helpers and their
+obsolete tests. Scientific parity-only diagnostics/tests were removed rather
+than retained as a second acceptance framework. Git preserves the full removal
+inventory and earlier implementations; no compatibility aliases remain.
+
+All direct production integration imports (paths relative to `src/python`;
+line numbers refer to this candidate):
+
+| Integration | Locations |
+| --- | --- |
+| Prefect | `experiment.py:18`; `p01_import/flow.py:9`; `p02_preprocess/flow.py:9`; `p03_transform/flow.py:9`; `p04_forecast/flow.py:11`; `p05_combine/flow.py:7`; `p06_evaluate/flow.py:11`; `util/distributed_cluster.py:24`; `util/distributed_execution.py:15–17`; `util/research_tracking.py:16` |
+| Dask/distributed | `util/distributed_cluster.py:22–23`; `util/distributed_execution.py:138` |
+| prefect-dask | `util/distributed_execution.py:18` |
+| MLflow | `util/research_tracking.py:15` |
+
+The sole test MLflow import is `tests/test_mvp_import.py:15`. Baseline integration
+imports were in `util/execution_calibration.py:841`, `feature_extraction.py:22,24–28`,
+`p00_01_researcher_actions.py:452,599`, `p01_01_import_flow.py:5`,
+`p04_01_forecast_flow.py:20–24`, `p04_02_forecast_provider.py:101`,
+`p04_04_seasonal_period_tuning.py:27–33`, `shared_distributed_execution.py:33–36`,
+`shared_experiment_execution.py:1558`, `shared_workflow_orchestration.py:36–42`
+and `window_preparation.py:31–36`; there were no MLflow imports.
+
+## Final non-scientific checks and review limits
+
+Three mocked researcher-interface tests and four setup-interface tests passed.
+Every retained Python file compiled in memory; all 20 retained R files parsed
+without executing expressions. Living-document relative links, source-script
+references and `git diff --check` passed. Scientific configuration sections are
+unchanged by final cleanup. Canonical `status` was read-only; no scientific suite,
+export, process, restart, calibration or parity comparison was run.
+
+Distributed evidence remains the completed D run: 2,128.915 seconds through
+Forecast only, Mac CPU plus Ubuntu CPU/GPU participation, accepted outputs and
+accepted-work restart. Its recorded task stream contained 406 scheduler events
+across six worker addresses on the two hosts. Hardware provenance does not enter
+scientific identity. This evidence is not a request for another distributed run.
+
+Final researcher review uses the canonical produced tables and figures, not a
+second workload or historical-equivalence exercise. X01 remains open; neither
+the completed candidate nor publication authorizes merging to `main` or closing
+the transformation.

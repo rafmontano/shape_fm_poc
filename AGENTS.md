@@ -31,7 +31,7 @@ changing workflow, storage or scientific behaviour, read:
 - The selected coordinator alone writes DuckDB.
 - DuckDB owns accepted scientific state and restart; Prefect history does not.
 - GIFT-Eval is the sole canonical benchmark-data authority.
-- Target entry point is `src/python/experiment.py`; process flows are importable
+- The entry point is `src/python/experiment.py`; process flows are importable
   `p01_import/flow.py` through `p06_evaluate/flow.py`. Shared adapters are
   `util/runtime.py`, `util/distributed_execution.py` and `util/research_tracking.py`.
 - Process-only Python code belongs in its owning process folder; `util/`
@@ -88,10 +88,12 @@ Validate a changed execution path with focused tests and a fresh isolated
 100-series run only through the affected process. Prove restart at the smallest
 durable unit. Do not routinely execute later processes.
 
-For X01 E/F, continue accepted 100-series Process 04 evidence through only 05/06;
-do not rerun 04 or start from zero. D (`D94e12b3`) is researcher-accepted; E/F
-are being implemented, not accepted. Final review presents produced tables and
-figures, with no automatic historical comparison or second scientific workload.
+X01 A–F execution is complete; D is researcher-accepted and the complete candidate
+awaits final researcher review. Use canonical root databases, models and outputs;
+temporary test packages are not final delivery. Do not rerun Processes 01–06,
+calculate scientific items, restart or regenerate outputs for completion/review.
+Final review presents produced tables and figures, with no automatic historical
+comparison or second scientific workload.
 Stop for a material final-result issue only when the researcher identifies it.
 
 ## Documentation

@@ -1,13 +1,9 @@
-# ==============================================================================
-# shared_labels.py
-#
-# Purpose: Calculate versioned binary directional labels in Python.
-# Inputs: Numeric future vectors or row-major matrices and explicit references.
-# Outputs: Shape-preserving arrays containing 0, 1, or unavailable values.
-# Run from: Imported; not run directly.
-# ==============================================================================
+"""Process 03 strict directional labels under docs/data-contract.md.
 
-"""Shared strict directional-label calculation."""
+Future vectors/matrices and explicit references produce shape-preserving 0/1/NaN
+labels. Strict comparison preserves missing targets; this numerical kernel
+performs no persistence or orchestration.
+"""
 
 from __future__ import annotations
 
@@ -59,27 +55,3 @@ def directional_labels(values: Any, references: Any) -> np.ndarray:
     labels = compared.astype(np.float64)
     labels[np.isnan(future)] = np.nan
     return labels
-
-
-def directional_accuracy(
-    predictions: Any, actual_labels: Any
-) -> dict[str, float | int]:
-    """Return strict binary directional accuracy for one complete horizon."""
-    predicted = np.asarray(predictions)
-    actual = np.asarray(actual_labels)
-    if (
-        predicted.ndim != 1
-        or actual.ndim != 1
-        or predicted.size == 0
-        or predicted.shape != actual.shape
-        or not np.isin(predicted, (0, 1)).all()
-        or not np.isin(actual, (0, 1)).all()
-    ):
-        raise ValueError("directional evaluation requires equal nonempty binary vectors")
-    correct = int(np.equal(predicted, actual).sum())
-    count = int(predicted.size)
-    return {
-        "correct_count": correct,
-        "evaluation_count": count,
-        "accuracy": correct / count,
-    }

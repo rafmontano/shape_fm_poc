@@ -1,19 +1,12 @@
-# ==============================================================================
-# forecast_adjustments.R
-#
-# Purpose: Provide ex-post SMYL Oracle and Mantis scalar Process 06 diagnostics;
-#   neither is a deployable forecast or combination input.
-# Inputs: Canonical realised future and stored m4_smyl mean for the same horizon.
-# Outputs: Versioned in-memory diagnostic list; no persistent or global writes.
-# Run from: Imported; not run directly.
-# ==============================================================================
+# Process 06 ex-post adjustments under docs/evaluation.md; neither is deployable.
+# Oracle consumes realised actuals and stored SMYL means, returning the selected
+# multiplier and path. Mantis consumes a stored path, raw origin, terminal binary
+# prediction and lambdas, returning one scaled path. No storage or fitting.
 
 # Code constants: fixed scientific identity and grid, not experiment settings.
 .SMYL_ORACLE_METHOD_ID <- "smyl_scalar_smape_oracle_v1"
 .SMYL_ORACLE_GRID <- seq(0.500, 1.500, by = 0.001)
 stopifnot(length(.SMYL_ORACLE_GRID) == 1001L)
-
-# Bounded functional exception: this small stateless kernel needs no class.
 
 # Require a non-empty finite numeric vector without dimensional attributes.
 .validate_oracle_path <- function(path, name) {
@@ -23,7 +16,7 @@ stopifnot(length(.SMYL_ORACLE_GRID) == 1001L)
   }
 }
 
-# Purpose: Select the historical full-horizon, first-minimum ex-post SMYL scale.
+# Select the full-horizon, first-minimum ex-post SMYL scale (docs/evaluation.md).
 # Inputs: Equal-length, non-empty finite numeric actual and stored SMYL vectors.
 # Outputs: Named list of method_id, multiplier, objective_smape, near_tie_count,
 #   and adjusted_mean. Zero-over-zero terms are omitted; any non-finite grid
@@ -35,7 +28,7 @@ calculate_smyl_oracle <- function(actual, smyl_forecast) {
     stop("actual and smyl_forecast must have the same length", call. = FALSE)
   }
 
-  # Historical Oracle-specific objective, including na.rm zero/zero omission.
+  # Oracle sMAPE omits zero/zero terms; first minimum follows ascending grid order.
   oracle_errors <- vapply(.SMYL_ORACLE_GRID, function(multiplier) {
     mean(
       200 * abs(actual - multiplier * smyl_forecast) /
@@ -60,7 +53,7 @@ calculate_smyl_oracle <- function(actual, smyl_forecast) {
   )
 }
 
-# Purpose: Scale a complete stored path using the strict terminal Mantis decision.
+# Scale the entire path, not origin-relative deviations (docs/evaluation.md).
 # Inputs: Finite numeric path, scalar raw origin, binary final prediction and lambdas.
 # Outputs: Finite adjusted numeric vector; no state, fitting or parallelism.
 calculate_mantis_adjustment <- function(base_mean, last_observed, mantis_final,

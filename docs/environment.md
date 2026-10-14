@@ -64,13 +64,14 @@ do not require experiment names or database paths. Run only the process range
 needed. A change to Process 03 is validated through Process 03, not through
 Process 06.
 
-Increment D (`D94e12b3`) is researcher-accepted through Forecast. E/F are being
-implemented, not accepted: continue their bounded 100-series evidence from
-accepted Process 04 through only Combine/Evaluate; do not rerun 04 or start from
-zero. Later processes/publication become available as their increments migrate. The
-source layout uses `experiment.py`, importable `p01_import` through
-`p06_evaluate` process packages, and shared adapters in `util/`. Later legacy
-scientific modules remain for migration, not as an alternative researcher CLI.
+Increment D (`94e12b3`) is researcher-accepted. E/F have completed their bounded
+100-series continuations; the complete X01 candidate awaits researcher review.
+Do not rerun any scientific process, restart or output regeneration for that
+review. The accepted experiment is in canonical `results/`, `models/` and
+`.runtime/mlflow/`, not a review workspace. The normal entry point defaults to
+these repository-root locations. The source layout uses `experiment.py`,
+importable `p01_import` through `p06_evaluate` process packages, and shared
+adapters in `util/`; superseded execution paths have been retired.
 Setup acquires canonical data through `p01_import.acquisition`; import execution
 itself reads the local pinned source and does not acquire a second dataset.
 MLflow records one resumable research run using operational state under

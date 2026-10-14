@@ -50,7 +50,7 @@ OOP is not mandatory when it adds ceremony without clarity or reuse.
 
 ## Workflow implementation
 
-`experiment.py` is the target researcher entry point. Prefect owns experiment,
+`experiment.py` is the researcher entry point. Prefect owns experiment,
 process and meaningful-subflow orchestration. The mandatory hierarchy is
 Experiment → Process → meaningful subflow → work group → atomic item; preserve
 the exact subflows/order in [architecture](architecture.md). Use the supported
@@ -81,8 +81,8 @@ Use descriptive `snake_case` names. A `shared_` prefix is unnecessary inside
 ## R ownership
 
 Process-facing R workers use `<NN>_<action>.R`. Reusable numerical functions live
-under `src/r/util/`; tests under `src/r/tests/`; manual inspection helpers under
-`src/r/qa/`. R workers read one request and return one response; they do not
+under `src/r/util/`; tests under `src/r/tests/`. R workers read one request and
+return one response; they do not
 write DuckDB or start nested parallel execution.
 
 ## Configuration and globals
@@ -145,8 +145,11 @@ Use the smallest test that proves the changed behaviour:
 2. a fresh isolated 100-series run only through the affected process; and
 3. interruption/restart at the smallest durable boundary when execution changed.
 
-X01 E/F are an exception to fresh-from-zero execution: continue accepted
-100-series Process 04 evidence through only Combine/Evaluate; do not rerun 04.
+The completed X01 experiment is authoritative in the canonical root locations.
+Completion checks are non-scientific: compilation, mocked interfaces and read-only
+inspection. Do not rerun processes, scientific calculations, no-new-work restarts
+or output generation for final review. Temporary test roots must clean up and
+must never be presented as the final researcher experiment.
 Calculate each scientific atomic item once on its assigned worker and resume
 accepted DuckDB state. Final review uses produced tables/figures, not automatic
 historical comparison or a second scientific workload; stop for a material

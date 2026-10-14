@@ -21,11 +21,10 @@ STANDARDISATION_STATE_KEYS = frozenset(
 
 @dataclass(frozen=True)
 class TransformationResult:
-    """Purpose: Carry transformed observations and the state required for inversion.
+    """Carry transformed values and portable fitted state for later inversion.
 
-    Inputs: ``values`` are immutable transformed observations; ``parameters`` holds
-    fitted portable state or an empty mapping for identity.
-    Outputs: Worker-owned, immutable transformation state on the transformed scale.
+    Values are an immutable tuple; parameters are a dictionary (empty for
+    identity), not an immutable state object.
     """
     values: tuple[float, ...]
     parameters: dict[str, Any]
@@ -90,6 +89,7 @@ def fit_transformation(values: Iterable[float], recipe: str) -> dict[str, Any]:
 
     Exactly constant histories, including one observation, use centre=x[0] and
     effective scale 1. Nonconstant histories use sample SD with denominator n-1.
+    The leakage-safe fit and portable state are defined in docs/data-contract.md.
     """
     source = _finite_values(values, "transformation fit")
     if recipe == "identity":
@@ -195,7 +195,7 @@ def transform(values: Iterable[float], method: str) -> TransformationResult:
 
 
 def inverse(values: Iterable[float], method: str, parameters: dict) -> tuple[float, ...]:
-    """Purpose: Restore transformed forecasts to the observations' original units.
+    """Restore transformed forecasts to the observations' original units.
 
     Inputs: Forecast ``values``, the fitted method name, and parameters returned by
     :func:`transform` for the corresponding context.

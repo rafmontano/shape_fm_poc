@@ -43,8 +43,8 @@ def resolve_r_period(configuration: dict[str, Any], frequency: str) -> dict[str,
     """
     environment = configuration["evaluation"]["gift_eval"]["environment"]
     command = [str(CODE_ROOT / environment / "bin/python"),
-               str(CODE_ROOT / "src/python/06_01_evaluate_gift_eval.py"),
-               "resolve-period", "--frequency", frequency]
+               str(CODE_ROOT / "src/python/p02_preprocess/period.py"),
+               "--frequency", frequency]
     override = configuration["pipeline"]["r_period_override"]
     if override is not None:
         command.extend(["--override", str(override)])

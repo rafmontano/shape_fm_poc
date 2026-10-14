@@ -1,4 +1,4 @@
-"""Focused Gate 2 tests for standard and robust R preprocessing."""
+"""Process 02 worker contract: raw/missing histories to prepared finite values."""
 
 from __future__ import annotations
 
@@ -33,6 +33,7 @@ class PreprocessingTests(unittest.TestCase):
     """Verify mode semantics, dimensions, finite outputs, and visible provenance."""
 
     def test_standard_preserves_finite_values_and_only_fills_missing_positions(self):
+        """Standard mode fills gaps without changing observed finite values."""
         jobs = [
             {
                 "id": "complete",
@@ -61,6 +62,7 @@ class PreprocessingTests(unittest.TestCase):
         self.assertTrue(missing["values_changed"])
 
     def test_robust_returns_finite_same_length_values_and_provenance(self):
+        """Robust cleaning preserves history length and reports usable output."""
         context = [1.0, 2.0, 100.0, 4.0, 5.0, None, 7.0, 8.0]
         result = run_worker([
             {
@@ -79,6 +81,7 @@ class PreprocessingTests(unittest.TestCase):
         self.assertEqual(result["missing_count_after"], 0)
 
     def test_infinity_and_unrecoverable_series_fail_clearly(self):
+        """Malformed or wholly missing histories fail at the provider boundary."""
         for context in ([1.0, float("inf"), 3.0], [None, None, None]):
             with self.subTest(context=context):
                 completed = subprocess.run(

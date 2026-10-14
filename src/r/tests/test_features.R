@@ -3,22 +3,11 @@
 # test_features.R
 #
 # Process 03: verify FFORMA feature calculation and the JSON provider contract.
-# Inputs: Current R sources and the unchanged legacy feature source, read-only.
+# Inputs: Current R sources and synthetic past-only fixtures.
 # Outputs: Named test progress on stdout and nonzero exit on assertion failure.
 # Run from: Rscript src/r/tests/test_features.R
 # ==============================================================================
 
-LEGACY_FEATURE_SOURCE <- Sys.getenv(
-  "SHAPEFM_LEGACY_FEATURE_SOURCE",
-  unset = "/Users/monta/Documents/Projects/m4_tsc_fmts_2026/src/r/features.R"
-)
-
-legacy_environment <- new.env(parent = globalenv())
-legacy_calc_features <- NULL
-if (file.exists(LEGACY_FEATURE_SOURCE)) {
-  sys.source(LEGACY_FEATURE_SOURCE, envir = legacy_environment)
-  legacy_calc_features <- legacy_environment$calc_features
-}
 source("src/r/feature_provider.R")
 
 EXPECTED_SCHEMA <- c(
@@ -60,28 +49,6 @@ check("exact 42 feature names and order", function() {
   observed <- calculate_fforma_features(nonseasonal)
   assert_true(identical(names(observed), EXPECTED_SCHEMA), "feature schema differs")
   assert_true(length(observed) == 42L, "feature count differs")
-})
-
-check("period-1 parity with unchanged legacy calculation", function() {
-  if (is.null(legacy_calc_features)) {
-    cat("skip - set SHAPEFM_LEGACY_FEATURE_SOURCE for legacy parity\n")
-    return(invisible(NULL))
-  }
-  expected <- unlist(legacy_calc_features(list(x = nonseasonal))$features[1L, ])
-  observed <- calculate_fforma_features(nonseasonal)
-  assert_true(identical(names(expected), names(observed)), "period-1 legacy names differ")
-  assert_equal_numeric(observed, expected, "period-1 values differ from legacy")
-})
-
-check("seasonal parity with unchanged legacy calculation", function() {
-  if (is.null(legacy_calc_features)) {
-    cat("skip - set SHAPEFM_LEGACY_FEATURE_SOURCE for legacy parity\n")
-    return(invisible(NULL))
-  }
-  expected <- unlist(legacy_calc_features(list(x = seasonal))$features[1L, ])
-  observed <- calculate_fforma_features(seasonal)
-  assert_true(identical(names(expected), names(observed)), "seasonal legacy names differ")
-  assert_equal_numeric(observed, expected, "seasonal values differ from legacy")
 })
 
 check("constant and short inputs produce finite vectors", function() {

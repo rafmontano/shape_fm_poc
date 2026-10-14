@@ -13,9 +13,9 @@ import math
 from typing import Any
 
 from p03_transform.inputs import rolling_window_inputs, s1_partition
+from p03_transform.labels import directional_labels
 from util.providers import run_r
 from util.runtime import DataRef, WorkItem
-from util.shared_labels import directional_labels
 from util.shared_transformations import transform
 
 

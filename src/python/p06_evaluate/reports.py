@@ -6,17 +6,23 @@ table/figure data under docs/evaluation.md; no fitting or scientific execution.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 from collections import defaultdict
 from typing import Any
 
-from util.shared_configuration import json_fingerprint
-
-# Code constants: historical point-row order and complete M4 aggregation boundary.
+# Approved point-row order and complete M4 aggregation boundary.
 POINT_MODELS = ("naive2", "chronos_2", "m4_fforma", "m4_smyl",
                 "m4_smyl_mantis", "chronos_2_mantis", "m4_smyl_oracle")
 M4_FREQUENCIES = ("Hourly", "Daily", "Weekly", "Monthly", "Quarterly", "Yearly")
 SELECTION_REASON = "owa,total_departure,up_departure,down_departure,lambda_up,lambda_down"
+
+
+def json_fingerprint(value: Any) -> str:
+    """Identify report inputs/results by SHA-256 of sorted compact ASCII JSON."""
+    encoded = json.dumps(value, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 class TableReports:

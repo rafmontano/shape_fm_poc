@@ -49,12 +49,21 @@ results/
 └── figures/
 
 models/
-└── <model>/<frequency>/<horizon-or-model-scope>/...
+└── <experiment-id>/<frequency>-<directional-model>-<horizon-or-all>.pickle
+
+.runtime/mlflow/
+├── tracking.sqlite            operational tracking, not scientific authority
+└── artifacts/<run-id>/artifacts/
 ```
 
 There is no experiment name, date or retry number in generated filenames. Those
 details live inside DuckDB. No third research database or sibling evidence tree
 is authorised. Logs/caches are runtime material and remain untracked.
+
+Normal researcher commands write directly to the repository's canonical paths,
+not a review workspace. Temporary test roots clean up after themselves. Fitted
+paths stored in DuckDB are relative to this root; MLflow local artifact URIs
+resolve under canonical `.runtime/mlflow/`. No symlink or `.amp` copy is needed.
 
 The parent owns resolved configuration, canonical series, process/item state,
 forecasts, combinations and evaluations. The child owns high-volume preparation
@@ -89,8 +98,7 @@ overwrite replaces only the selected scope after the new artifact is valid.
 
 ## Researcher status
 
-Status reads DuckDB without modification. It shows the experiment, six processes
-in order, meaningful substeps when persisted, completed/failed/pending item
-counts, latest recorded failure and known total work. It does not validate
-scientific outputs, repair state, contact workers or infer an ETA that was not
-recorded.
+Status reads DuckDB without modification. It shows experiment/run identity,
+accepted process/subflow milestones and atomic result counts. MLflow supplies
+operational milestone/error visibility. Status does not validate scientific
+outputs, repair state, contact workers or infer an unrecorded ETA.

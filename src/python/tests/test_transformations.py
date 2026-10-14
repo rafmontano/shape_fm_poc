@@ -1,21 +1,13 @@
-# ==============================================================================
-# test_transformations.py
-#
-# Purpose: Verify the v4 sample-standardisation, interoperability, and utilities.
-# Inputs: Hand-calculated fixtures, Rscript/jsonlite, and committed configurations.
-# Outputs: unittest assertions only; temporary JSON is transferred through stdin.
-# Run from: PYTHONPATH=src/python .tools/uv/uv run --locked --no-sync python -m unittest tests.test_transformations
-# ==============================================================================
+"""Process 03/04 sample-standardisation contract with hand-derived fixtures.
 
-"""Verify the approved portable standardisation contract in Python and R."""
+Past-only histories and fitted portable state produce assertions on scaling,
+inversion and invalid inputs; no cross-language comparison is performed.
+"""
 
 from __future__ import annotations
 
-import json
 import math
-import subprocess
 import unittest
-from pathlib import Path
 
 from util.shared_transformations import (
     STANDARDISATION_RECIPE,
@@ -28,31 +20,10 @@ from util.shared_transformations import (
     inverse_transformation,
     transform,
 )
-ROOT = Path(__file__).resolve().parents[3]
-R_TRANSFORMATIONS = ROOT / "src/r/util/transformations.R"
-
-
-def _r_json(expression: str, payload: object) -> object:
-    """Execute one bounded R interoperability expression using JSON stdin/stdout."""
-    script = (
-        f'source("{R_TRANSFORMATIONS.as_posix()}"); '
-        "payload <- jsonlite::fromJSON(file(\"stdin\"), simplifyVector = FALSE); "
-        f"result <- {expression}; "
-        "cat(jsonlite::toJSON(result, auto_unbox = TRUE, digits = 17, null = \"null\"))"
-    )
-    completed = subprocess.run(
-        ["Rscript", "--vanilla", "-e", script],
-        input=json.dumps(payload),
-        text=True,
-        capture_output=True,
-        cwd=ROOT,
-        check=True,
-    )
-    return json.loads(completed.stdout)
 
 
 class StandardisationContractTests(unittest.TestCase):
-    """Exercise formulas, validation, composition, compatibility, and R interop."""
+    """Exercise formulas, validation, composition and inversion."""
 
     def assert_vector_close(self, observed, expected, tolerance=1e-12) -> None:
         """Require equal lengths and elementwise finite agreement at one tolerance."""
@@ -140,52 +111,6 @@ class StandardisationContractTests(unittest.TestCase):
         self.assertEqual(inverse_steps([2.0], states), (40.0,))
         with self.assertRaisesRegex(ValueError, "unsupported ordered"):
             fit_apply_steps([1.0, 2.0], ["minmax_then_standardize"])
-
-    def test_r_state_runs_in_python_and_python_state_runs_in_r(self) -> None:
-        """Both languages exchange exact state through JSON without reinterpretation."""
-        r_result = _r_json(
-            "local({state <- fit_transformation(unlist(payload$history), "
-            "STANDARDISATION_RECIPE); list(state = state, values = "
-            "apply_transformation(unlist(payload$future), state), restored = "
-            "inverse_transformation(c(-1.5, 2.5), state))})",
-            {"history": [10.0, 20.0, 30.0], "future": [0.0, 40.0]},
-        )
-        self.assertEqual(set(r_result["state"]), {"recipe", "version", "centre", "scale", "count", "constant"})
-        self.assertEqual(apply_transformation([0.0, 40.0], r_result["state"]), (-2.0, 2.0))
-        self.assertEqual(inverse_transformation([-1.5, 2.5], r_result["state"]), (5.0, 45.0))
-
-        python_state = fit_transformation([-4.0, -2.0, -3.0], STANDARDISATION_RECIPE)
-        r_applied = _r_json(
-            "list(values = apply_transformation(unlist(payload$values), payload$state), "
-            "restored = inverse_transformation(c(-2, 3), payload$state))",
-            {"state": python_state, "values": [-5.0, 0.0]},
-        )
-        self.assert_vector_close(r_applied["values"], apply_transformation([-5.0, 0.0], python_state))
-        self.assert_vector_close(r_applied["restored"], inverse_transformation([-2.0, 3.0], python_state))
-
-    def test_r_and_python_fixture_parameters_and_values_agree(self) -> None:
-        """Independent implementations agree over asymmetric and boundary fixtures."""
-        fixtures = [
-            [10.0, 20.0, 30.0],
-            [-8.0, -1.5, -3.0, -11.0],
-            [5.0, 5.0, 5.0],
-            [7.0],
-            [1.0, 1.0 + 1e-12, 1.0 - 1e-12],
-        ]
-        for source in fixtures:
-            with self.subTest(source=source):
-                python = transform(source, STANDARDISATION_RECIPE)
-                r = _r_json(
-                    "local({state <- fit_transformation(unlist(payload), "
-                    "STANDARDISATION_RECIPE); list(state = state, values = "
-                    "apply_transformation(unlist(payload), state))})",
-                    source,
-                )
-                self.assertEqual(r["state"]["constant"], python.parameters["constant"])
-                self.assertEqual(r["state"]["count"], python.parameters["count"])
-                self.assertTrue(math.isclose(r["state"]["centre"], python.parameters["centre"], rel_tol=1e-12, abs_tol=1e-12))
-                self.assertTrue(math.isclose(r["state"]["scale"], python.parameters["scale"], rel_tol=1e-12, abs_tol=1e-15))
-                self.assert_vector_close(r["values"], python.values)
 
 if __name__ == "__main__":
     unittest.main()

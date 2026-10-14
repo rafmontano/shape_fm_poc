@@ -2,6 +2,8 @@
 
 Seven approved subflows restart on parent metric/candidate/selected-output keys
 and durable assembled/published references. Evaluation never refits forecasts.
+ProcessContext and accepted candidate references enter; the process returns the
+stored research-results reference after publication and experiment acceptance.
 """
 
 from typing import Callable
@@ -74,7 +76,11 @@ def assemble_research_results(context: ProcessContext, candidates: DataRef) -> D
 
 @flow(name="06.06 Publish approved outputs")
 def publish_approved_outputs(context: ProcessContext, results: DataRef) -> FinalResearchSummary:
-    """Subflow level: register declared final files and publish curated MLflow artifacts."""
+    """Subflow level: publish stored results and return registered file references.
+
+    Accepted 06.06 resumes the stored summary without rendering; before milestone
+    acceptance, files may be rendered again. MLflow does not own this boundary.
+    """
     with context.tracking.subflow("06.06", "Publish approved outputs"):
         if context.state.is_subflow_accepted("06.06"):
             return context.evaluate.published_summary()

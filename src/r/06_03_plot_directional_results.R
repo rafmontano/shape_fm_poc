@@ -1,14 +1,10 @@
 #!/usr/bin/env Rscript
-# ==============================================================================
-# 06_03_plot_directional_results.R
-# Purpose: Render selective IDs 058/062 figures from explicit stored result matrices.
-# Inputs: JSON stdin, locked installed scmamp/jsonlite and a staging output directory.
-# Outputs: Three PDF/PNG figure pairs and runtime JSON; no scientific evaluation.
-# Run from: Internal Rscript --vanilla subprocess of the export action.
-# ==============================================================================
-# Bounded functional exception: stateless rendering uses native graphics objects.
+# Process 06 publication renderer under docs/evaluation.md.
+# Stdin JSON supplies stored accuracy matrices, locked package identity, approved
+# styles and staging directory; output is three PDF/PNG pairs and provenance JSON.
+# No fitting/scoring or DuckDB writes; publication acceptance belongs to Python.
 
-# Code constants: stable historical presentation, not model selection or calculations.
+# Approved presentation, not model selection or calculations.
 labels <- c(directional_mantis_rf = "Mantis", chronos_2 = "Chronos-2",
             directional_dtw = "1-NN DTW", m4_smyl = "SMYL", m4_fforma = "FFORMA")
 colours <- c(directional_mantis_rf = "#D7191C", chronos_2 = "#7B61FF",
@@ -74,7 +70,9 @@ plot_horizons <- function(input) {
   }
 }
 
-# Delegate CD mathematics and visual structure to the locked historical scmamp API.
+# Matrix and configured settings -> scmamp CD drawing on the current device.
+# Dependent Daily horizons make ranks descriptive, not independent-sample
+# significance evidence; docs/evaluation.md owns that interpretation.
 plot_cd <- function(input, settings) {
   graphics::par(oma = c(2, 0, 0, 0), xpd = NA)
   scmamp::plotCD(results.matrix = input$matrix, alpha = settings$alpha,
@@ -96,7 +94,8 @@ render_device <- function(path, format, draw, width, height, settings) {
   draw()
 }
 
-# Render both formats; disabling PDF timestamps makes regeneration byte-reproducible.
+# Render named PNG/PDF files from a drawing callback; suppress PDF timestamps
+# to avoid time-only differences (other rendering dependencies may still differ).
 render_pair <- function(output, name, draw, width, height, settings) {
   for (format in c("pdf", "png")) {
     render_device(file.path(output, paste0(name, ".", format)), format,

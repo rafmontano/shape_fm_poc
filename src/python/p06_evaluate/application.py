@@ -13,10 +13,9 @@ import os
 import subprocess
 from typing import Any
 
-from p06_evaluate.reports import TableReports
+from p06_evaluate.reports import TableReports, json_fingerprint
 from util.providers import run_r
 from util.runtime import CODE_ROOT, DataRef, FinalResearchSummary, WorkItem
-from util.shared_configuration import json_fingerprint
 
 
 def calculate_forecast_evaluation(item: WorkItem) -> dict[str, Any]:
@@ -62,7 +61,11 @@ def calculate_directional_evaluation(item: WorkItem) -> dict[str, Any]:
 
 
 def calculate_diagnostic_candidate(item: WorkItem) -> dict[str, Any]:
-    """Calculate one configured aggregate sensitivity/baseline candidate once."""
+    """Return one aggregate sensitivity/baseline record, without persistence.
+
+    Stored raw cohort and candidate settings follow docs/evaluation.md; realized
+    actuals are allowed here because adjustment selection is ex-post diagnostic.
+    """
     return calculate_diagnostic_batch([item])[0][1]
 
 
@@ -113,6 +116,7 @@ class Application:
     calculate_selected_diagnostic = staticmethod(calculate_selected_diagnostic)
 
     def __init__(self, context: Any):
+        """Bind accepted-result storage and the stored diagnostic/publication settings."""
         self.context, self.store = context, context.repository
         self.science = context.configuration["evaluation"]["table_reproduction"]
 
@@ -191,6 +195,7 @@ class Application:
                 for model in ("naive2", "m4_fforma", "m4_smyl", "chronos_2", "smyl_oracle",
                               "directional_dtw", "directional_mantis_rf")]
         axes = []
+        # Inclusive configured axes define the ex-post surface in docs/evaluation.md.
         for name in ("lambda_up", "lambda_down"):
             axis = self.science["grid"][name]
             count = round((axis["stop"] - axis["start"]) / axis["step"]) + 1
@@ -208,7 +213,10 @@ class Application:
         self.store.accept("06.03", results)
 
     def select_diagnostic_settings(self, candidates: DataRef) -> dict[str, dict[str, Any]]:
-        """Select stored OWA minima by the approved exact deterministic tie order."""
+        """Select stored OWA minima using the tie order in docs/evaluation.md.
+
+        Require the full accepted surface; return settings, not deployable models.
+        """
         self.store.require_complete("06.03")
         rows = list(self.store.rows("06.03").values())
         selected = {"m4_smyl_oracle" if r["model"] == "smyl_oracle" else r["model"]: r

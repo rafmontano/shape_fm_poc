@@ -47,7 +47,10 @@ def shell(command: str) -> subprocess.CompletedProcess[str]:
 
 
 class SetupInterfaceTests(unittest.TestCase):
+    """Protect shared environment setup arguments and read-only verification."""
+
     def test_supported_operations(self):
+        """Only the documented default, verification and help operations resolve."""
         for arguments, expected in (("", "install"), ("verify", "verify"), ("--help", "help")):
             with self.subTest(arguments=arguments):
                 result = shell(f'parse_arguments {arguments}; echo "$OPERATION"')
@@ -55,17 +58,20 @@ class SetupInterfaceTests(unittest.TestCase):
                 self.assertEqual(result.stdout.strip(), expected)
 
     def test_aliases_and_extra_arguments_rejected(self):
+        """Reject obsolete aliases rather than invoking an unintended setup action."""
         for arguments in ("install all", "rebuild all --confirm-delete", "install", "verify all", "--help extra"):
             with self.subTest(arguments=arguments):
                 self.assertNotEqual(shell(f"parse_arguments {arguments}").returncode, 0)
 
     def test_verify_never_enters_installation(self):
+        """The verification command must never invoke the installation path."""
         result = shell('validate_repository_root(){ :; }; validate_settings(){ :; }; '
                        'install_all(){ echo forbidden; }; verify_installation(){ echo offline; }; main verify')
         self.assertEqual(result.returncode, 0)
         self.assertEqual(result.stdout.strip(), "offline")
 
     def test_dynamic_locked_projects(self):
+        """Discover only environment projects with both manifest and lockfile."""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             for name, files in (("future", ("pyproject.toml", "uv.lock")),
@@ -78,7 +84,10 @@ class SetupInterfaceTests(unittest.TestCase):
 
 
 class AcquisitionTests(unittest.TestCase):
+    """Protect shared asset acquisition using isolated mocked downloads/caches."""
+
     def test_download_retries_and_reuses_valid_asset(self):
+        """Transient transport failures retry; a published valid asset is reused."""
         with tempfile.TemporaryDirectory() as directory:
             destination = Path(directory) / "asset"
             responses = [OSError("temporary"), OSError("temporary"), io.BytesIO(b"valid")]
@@ -93,6 +102,7 @@ class AcquisitionTests(unittest.TestCase):
                 opener=lambda *a, **k: self.fail("network on reuse")), "reused")
 
     def test_invalid_download_not_published(self):
+        """Rejected downloads must not leave a visible destination or debris."""
         with tempfile.TemporaryDirectory() as directory:
             destination = Path(directory) / "asset"
             with self.assertRaisesRegex(setup_support.SetupError, "after 3 attempts"):
@@ -101,6 +111,7 @@ class AcquisitionTests(unittest.TestCase):
             self.assertEqual(list(Path(directory).iterdir()), [])
 
     def test_model_offline_reuse_and_shared_cache(self):
+        """Pinned model acquisition checks the shared cache before downloading."""
         with tempfile.TemporaryDirectory() as directory:
             root = make_repository(Path(directory) / "project").resolve()
             snapshot = root / "snapshot"
@@ -126,6 +137,7 @@ class SourceAcquisitionTests(unittest.TestCase):
     """Verify source-only acquisition and reuse without network or model execution."""
 
     def test_verified_download_cleans_local_metadata_and_reuses_source(self):
+        """Process 01 acquisition preserves verified source bytes and shared cache."""
         import pyarrow as pa
         import pyarrow.ipc as ipc
         from p01_import import acquisition
@@ -151,6 +163,7 @@ class SourceAcquisitionTests(unittest.TestCase):
             (shared_cache / "retained").write_bytes(b"existing shared cache")
 
             def download(**arguments):
+                """Emulate repository download metadata without network access."""
                 self.assertEqual(arguments["cache_dir"], shared_cache)
                 shutil.copytree(fixture, arguments["local_dir"] / "m4_daily")
                 metadata = arguments["local_dir"] / ".cache/huggingface/download"
@@ -176,7 +189,10 @@ class SourceAcquisitionTests(unittest.TestCase):
 
 
 class VerificationTests(unittest.TestCase):
+    """Readiness checks inspect shared prerequisites without modifying assets."""
+
     def test_child_offline_settings(self):
+        """Read-only child probes inherit offline settings and the shared cache."""
         with patch.object(setup_support.subprocess, "run") as run:
             setup_support.run_read_only(["python", "-B", "-c", "import duckdb"], ROOT)
         environment = run.call_args.kwargs["env"]
@@ -185,6 +201,7 @@ class VerificationTests(unittest.TestCase):
         self.assertEqual(environment["HF_HOME"], str(ROOT / ".cache/huggingface"))
 
     def test_readiness_is_read_only_and_does_not_hash_assets(self):
+        """Missing assets are reported without downloads, deep hashing or writes."""
         with tempfile.TemporaryDirectory() as directory:
             root = make_repository(Path(directory) / "project")
             manifests = root / "config/dependencies"

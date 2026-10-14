@@ -28,6 +28,7 @@ class MLflowResearchTracking:
     """
 
     def __init__(self, context: Any):
+        """Bind coordinator state; defer tracking connection until experiment entry."""
         self.context = context
         self.client = None
         self.run_id = None

@@ -42,14 +42,14 @@ use fixed paths:
 ```
 
 Use only the process range needed. Existing accepted items are skipped on
-restart. Increment D (`D94e12b3`) is researcher-accepted through Process 04;
-E/F are being implemented, not accepted. Their bounded acceptance continues
-accepted 100-series 04 evidence through only Combine/Evaluate, without rerunning
-Forecast or starting from zero. Do not request the default full range yet.
+restart. The completed 100-series experiment is delivered at the canonical root
+paths below. Inspect it with `status` or open its existing tables/figures; do not
+rerun, restart or regenerate it for X01 review. Increment D is researcher-accepted;
+the complete A–F candidate awaits final researcher review, not another workload.
 
-## Target repository layout
+## Repository layout
 
-POC2-X01 is transforming the active source tree toward this structure:
+The six-process implementation uses this structure:
 
 ```text
 config/                         active experiment, machines and execution profiles
@@ -62,20 +62,21 @@ src/python/p04_forecast/        Process 04
 src/python/p05_combine/         Process 05
 src/python/p06_evaluate/        Process 06
 src/python/util/                code used by two or more processes
-src/r/                          R workers, utilities, tests and QA
+src/r/                          R workers, utilities and tests
 results/experiment.duckdb       parent scientific store
 results/windows.duckdb          Process 03 high-volume child store
 results/tables/                 derived tables
 results/figures/                derived figures
-models/                         fitted directional meta-learners
+models/<experiment-id>/         fifteen fitted directional artifacts
+.runtime/mlflow/                one resumable run and published artifacts
 docs/                           living documentation only
 ```
 
 Generated data, models, results, caches and runtime logs are untracked. Git holds
 source, configuration, dependency locks and living documentation.
-Unmigrated later processes retain their legacy scientific modules until bounded
-acceptance of their replacements; the retired import/control-plane path is not
-a second researcher entry point.
+Normal commands resolve these paths against the repository root, independently
+of the current shell directory. Focused tests use self-cleaning temporary roots;
+no review workspace or symlink is needed by the delivered experiment.
 
 ## Current work
 

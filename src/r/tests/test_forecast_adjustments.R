@@ -2,13 +2,12 @@
 # ==============================================================================
 # test_forecast_adjustments.R
 #
-# Purpose: Verify historical SMYL Oracle parity, invalid inputs and dormant isolation.
-# Inputs: Frozen historical fixtures and repository source; no legacy runtime.
+# Process 06: verify Oracle scalar-objective fixtures, invalid inputs and isolation.
+# Inputs: Fixed synthetic paths and repository source; no historical runtime.
 # Outputs: Named assertions on stdout; failures exit nonzero; writes nothing.
 # Run from: Rscript --vanilla src/r/tests/test_forecast_adjustments.R
 # ==============================================================================
 
-# Bounded functional exception: deterministic assertions need no stateful classes.
 packages_before <- loadedNamespaces()
 source("src/r/util/forecast_adjustments.R")
 stopifnot(identical(loadedNamespaces(), packages_before))
@@ -45,11 +44,7 @@ expect_result <- function(actual, forecast, multiplier, objective, ties, adjuste
   expect_numeric(result$adjusted_mean, adjusted)
 }
 
-# Frozen test values obtained by parsing the unchanged historical
-# m4_tsc_fmts_2026/src/r/sensitivity/04a_add_smyl_oracle.R and evaluating only
-# oracle_grid, calc_smape_oracle and add_smyl_oracle_one in an isolated environment.
-# Neither the historical common script nor its top-level runner was sourced.
-check("complete asymmetric historical parity", function() {
+check("asymmetric scalar-objective fixtures", function() {
   expect_result(c(9, 21, 8, 37), c(8, 17, 11, 29),
                 1.235, 16.0873924561231, 1L, c(9.88, 20.995, 13.585, 35.815))
   expect_result(c(-8, 13, 0, 27), c(-11, 10, 0, 22),

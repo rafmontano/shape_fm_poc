@@ -46,10 +46,12 @@ backlog. Execution logs are not living documentation.
 
 The cleanup checkpoint `c498dc6` and its recorded structural baseline are
 preserved in [X01](poc2-x01-architecture-transformation.md). Increments A–C retain
-their recorded status; D (`D94e12b3`) is researcher-accepted. E/F are being
-implemented, not accepted; continue only 05/06 from accepted 04 evidence without
-rerunning Forecast. Do not rerun cleanup.
-Approval of the five-layer design does not close X01.
+their recorded status; D (`94e12b3`) is researcher-accepted. E/F have completed
+their process-bounded continuations and the complete candidate is ready for
+researcher review. Canonical DuckDB state, fitted artifacts, tables, figures and
+the existing MLflow run are delivered at the repository root. Do not rerun
+science, restart, regenerate outputs or compare executions for this review.
+Approval of the five-layer design does not close X01 or POC2.
 
 ## Exit criteria
 

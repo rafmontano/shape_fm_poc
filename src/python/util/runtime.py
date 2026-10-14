@@ -89,11 +89,12 @@ class Repository:
     """Coordinator-owned scientific storage shared by all six process services.
 
     Plans and accepted results are keyed by subflow and atomic scientific key.
-    Each result and its accepted identity are one DuckDB transaction. The child
-    repository is opened only by Process 03, with experiment ownership recorded.
+    Each acceptance call commits its complete results and keys in one transaction.
+    Process 03 creates the child; downstream services reuse its recorded ownership.
     """
 
     def __init__(self, path: Path, experiment_id: str):
+        """Open a coordinator writer and establish store ownership/result tables."""
         self.path = path
         self.experiment_id = experiment_id
         self.connection = duckdb.connect(str(path))
@@ -168,6 +169,7 @@ class ExperimentState:
     """
 
     def __init__(self, repository: Repository):
+        """Bind parent storage and establish durable process/subflow milestones."""
         self.repository = repository
         repository.connection.execute("""CREATE TABLE IF NOT EXISTS milestones (
             milestone_id VARCHAR PRIMARY KEY, accepted_at TIMESTAMP DEFAULT current_timestamp)""")
@@ -217,6 +219,7 @@ class ProcessContext:
     """
 
     def __init__(self, request: ExperimentRequest, repository: Repository, configuration: dict[str, Any]):
+        """Bind stored configuration and requested process services to one writer."""
         self.request, self.repository, self.configuration = request, repository, configuration
         self.experiment_ref = ExperimentRef(repository.experiment_id)
         self.state = ExperimentState(repository)
@@ -249,7 +252,11 @@ class ProcessContext:
         return {"experiment_ref": self.experiment_ref}
 
     def windows(self) -> Repository:
-        """Open the fixed child on first Process03 use; never create it at import."""
+        """Lazily open the child writer for Process 03 outputs/downstream reads.
+
+        Process 03 first creates it; later process services reuse the same stored
+        experiment identity. Merely importing runtime never opens the child.
+        """
         if self.child is None:
             self.child = Repository(self.request.root / "results/windows.duckdb", self.experiment_ref.experiment_id)
         return self.child
@@ -272,7 +279,8 @@ def open_experiment(request: ExperimentRequest) -> ProcessContext:
     """Open/resume the experiment-level DuckDB boundary using configuration once.
 
     A new experiment reads config/experiment.json. Subsequent requests read only
-    its stored document. Existing generated schemas are disposable, not migrated.
+    its stored document. This opener assumes the current schema; it performs no
+    migration or deletion of an existing experiment.
     """
     path = request.root / "results/experiment.duckdb"
     path.parent.mkdir(parents=True, exist_ok=True)
