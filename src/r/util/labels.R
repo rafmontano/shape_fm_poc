@@ -1,13 +1,9 @@
-# ==============================================================================
-# labels.R
-#
-# Purpose: Compute versioned direction labels independently of transformations.
-# Inputs: Numeric future vectors/matrices and explicit finite references.
-# Outputs: Shape-preserving integer labels with unavailable targets retained as NA.
-# Run from: Imported with source(); not run directly.
-# ==============================================================================
+# Process 03 direction labels under docs/data-contract.md, independent of scaling.
+# Numeric future vectors/matrices and finite references produce shape-preserving
+# integer labels: 1(value > reference), otherwise 0; missing targets remain NA.
+# Sourced numerical utility; no storage or orchestration.
 
-# Code constants: persisted label identity and exact scientific definition.
+# Persisted label identity and exact scientific definition.
 DIRECTIONAL_LABEL_DEFINITION_ID <- "directional_strict_v1"
 DIRECTIONAL_LABEL_VERSION <- 1L
 DIRECTIONAL_LABEL_RULE <- paste(
@@ -56,7 +52,7 @@ directional_labels <- function(values, references) {
   labels
 }
 
-# Purpose: Preserve the previous history/future interface as a delegating adapter.
+# Purpose: Label future values against the final historical observation.
 # Inputs: Nonempty finite history x and numeric future vector xx.
 # Outputs: directional_labels(xx, final history value).
 compute_label_vector <- function(x, xx) {

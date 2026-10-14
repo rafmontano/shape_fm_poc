@@ -2,7 +2,8 @@
 # ==============================================================================
 # inspect_standardisation.R
 #
-# Purpose: Inspect one series' raw, preprocessed, transformed, and restored values.
+# Process 03 manual QA for the forecast_instances/preprocessed_series schema.
+# Inspect raw, prepared, transformed and restored values in a compatible database.
 # Inputs: Read-only experiment DuckDB plus optional STANDARDISATION_QA_* selectors.
 # Outputs: Inspectable selected_standardisation and named vectors/state in R session.
 # Run from: source("src/r/qa/inspect_standardisation.R") in repository-root R.
@@ -21,7 +22,7 @@ source("src/r/util/transformations.R")
   value
 }
 
-# Purpose: Read and locally verify one Gate 3 standardisation without writes.
+# Purpose: Read one stored standardisation and check its local inverse without writes.
 # Inputs: Database, series, preprocessing mode, and optional experiment identity.
 # Outputs: Raw/model histories, stored state when available, local state, and checks.
 get_standardisation_qa <- function(

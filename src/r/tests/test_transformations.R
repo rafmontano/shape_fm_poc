@@ -2,7 +2,7 @@
 # ==============================================================================
 # test_transformations.R
 #
-# Purpose: Verify R sample standardisation, selected labels, and context windows.
+# Process 03: verify R sample standardisation, direction labels and context windows.
 # Inputs: Shared R utilities and deterministic hand-calculated fixtures.
 # Outputs: Concise test progress; exits nonzero on any contract violation.
 # Run from: Rscript --vanilla src/r/tests/test_transformations.R

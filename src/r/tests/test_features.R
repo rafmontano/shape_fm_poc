@@ -2,7 +2,7 @@
 # ==============================================================================
 # test_features.R
 #
-# Purpose: Verify the isolated ID 014 FFORMA feature calculation and worker contract.
+# Process 03: verify FFORMA feature calculation and the JSON provider contract.
 # Inputs: Current R sources and the unchanged legacy feature source, read-only.
 # Outputs: Named test progress on stdout and nonzero exit on assertion failure.
 # Run from: Rscript src/r/tests/test_features.R
@@ -13,8 +13,6 @@ LEGACY_FEATURE_SOURCE <- Sys.getenv(
   unset = "/Users/monta/Documents/Projects/m4_tsc_fmts_2026/src/r/features.R"
 )
 
-# The small assertion-oriented test script uses the code standard's practical
-# functional exception: test classes would add structure without reusable state.
 legacy_environment <- new.env(parent = globalenv())
 legacy_calc_features <- NULL
 if (file.exists(LEGACY_FEATURE_SOURCE)) {
@@ -34,15 +32,18 @@ EXPECTED_SCHEMA <- c(
   "hw_beta", "hw_gamma", "unitroot_kpss", "unitroot_pp", "series_length"
 )
 
+# Run a zero-argument assertion and print its name only on success; errors propagate.
 check <- function(name, assertion) {
   assertion()
   cat(sprintf("ok - %s\n", name))
 }
 
+# Require one nonmissing TRUE condition, otherwise raise the supplied diagnostic.
 assert_true <- function(condition, message) {
   if (length(condition) != 1L || is.na(condition) || !condition) stop(message, call. = FALSE)
 }
 
+# Compare numeric values with all.equal's explicit tolerance; mismatch raises.
 assert_equal_numeric <- function(observed, expected, message, tolerance = 1e-10) {
   if (!isTRUE(all.equal(as.numeric(observed), as.numeric(expected), tolerance = tolerance))) {
     stop(message, call. = FALSE)

@@ -2,7 +2,8 @@
 # ==============================================================================
 # get_m4_daily_series.R
 #
-# Purpose: Retrieve one canonical M4 Daily time series from ShapeFM's DuckDB.
+# Process 01 manual QA for the datasets/series/evaluation_windows schema.
+# Retrieve one canonical M4 Daily series from an existing compatible DuckDB.
 # Inputs: A ShapeFM series ID, DuckDB path, and optional exact dataset ID.
 # Outputs: selected_m4_series with the exact ten M4comp2018 element components.
 #   M4 metadata/forecasts come from the package; x and xx come from DuckDB.
@@ -41,8 +42,8 @@
 # Outputs: One exact M4comp2018 element structure. Package metadata and submitted
 #   forecasts are retained; package x/xx are replaced by the matching canonical
 #   observations read from DuckDB. ShapeFM provenance is attached as an attribute.
-# Notes: Gate 1 imported the canonical series through GIFT-Eval. This QA function
-#   independently validates its identity and values against M4comp2018 before use.
+# This manual helper independently compares GIFT-Eval observations with
+# M4comp2018; it is not a canonical importer or part of process acceptance.
 get_m4_daily_series <- function(
     series_id = "0",
     database_path = "data/shapefm.duckdb",

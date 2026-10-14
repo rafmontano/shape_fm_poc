@@ -2,7 +2,7 @@
 # ==============================================================================
 # test_forecast_methods.R
 #
-# Purpose: Verify the registered R forecast pool, unregistered M4 point methods,
+# Process 04: verify the registered R forecast pool, separate M4 point methods,
 #   scientific parity, and fallback contract.
 # Inputs: Project R library plus src/r/util/forecast_methods.R.
 # Outputs: Test progress on stdout and nonzero exit on assertion failure; writes nothing.

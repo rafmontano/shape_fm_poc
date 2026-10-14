@@ -1,13 +1,10 @@
-# ==============================================================================
-# transformations.R
-#
-# Purpose: Fit, apply, compose, and invert the approved portable transformation.
-# Inputs: Finite numeric values, registered recipe names, and fitted state lists.
-# Outputs: Transformed/restored numeric vectors and JSON-serialisable fitted state.
-# Run from: Imported with source(); not run directly.
-# ==============================================================================
+# Process 03 portable transformations under docs/data-contract.md.
+# Finite histories, recipe names and fitted states produce transformed/restored
+# vectors and JSON-serialisable state. Fit only on history: z = (x - mean) / s,
+# with sample s (n - 1 denominator); constant/singleton histories use scale 1.
+# Inversion is x = z * s + mean. Sourced utility; no persistence or scheduling.
 
-# Code constants shared with the Python implementation and persisted state.
+# Recipe identity and portable state fields shared with Python.
 REGISTERED_TRANSFORMATION_STEPS <- c("identity", "standardise_sample_v1")
 STANDARDISATION_RECIPE <- "standardise_sample_v1"
 STANDARDISATION_VERSION <- 1L

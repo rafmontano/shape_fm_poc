@@ -1,6 +1,8 @@
-"""Resolve preprocessing periods in the isolated, pinned GluonTS environment.
+"""Process 02 frequency-to-period boundary in the pinned GluonTS environment.
 
-Run with the GIFT-Eval environment's Python and ``--frequency``; stdout is JSON.
+Stored frequency and an optional override produce JSON period/provenance fields.
+Run with the GIFT-Eval environment's Python and ``--frequency``; no data is read
+and no period is estimated from observations.
 """
 
 from __future__ import annotations

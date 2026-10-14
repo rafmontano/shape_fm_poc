@@ -1,11 +1,7 @@
-# ==============================================================================
-# window_preparation.R
-#
-# Purpose: Prepare explicitly configured trailing contexts without horizon rules.
-# Inputs: Finite observations and a positive configured context length.
-# Outputs: Fixed-length numeric context preserving the legacy padding rule.
-# Run from: Imported with source(); not run directly.
-# ==============================================================================
+# Process 03 trailing-context utility, sourced by transformation contract tests.
+# Finite observations and an explicit positive length produce a fixed-length
+# vector: retain the trailing values or left-pad with the first observation.
+# This helper does not define canonical rolling origins or infer horizon rules.
 
 # Purpose: Select a configured trailing context and left-pad short histories.
 # Inputs: Nonempty finite values and a positive integer context_length.

@@ -13,7 +13,13 @@ from typing import Any
 def combine_m4_point(
     components: dict[str, dict[str, Any]], weights: dict[str, float]
 ) -> dict[str, Any]:
-    """Calculate official M4 Comb from stored SES, Holt, and Damped means only."""
+    """Return mean-only M4 Comb from stored SES, Holt and Damped horizons.
+
+    At each step, mean = (SES + Holt + Damped) / 3, as specified in
+    docs/forecast-black-box-contract.md. Require ordered, finite, equal-length
+    mean-only components and exact one-third weights; invalid inputs raise.
+    No fitting or persistence occurs and probabilistic fields remain absent.
+    """
     names = ("ses", "holt", "damped")
     expected = {name: 1.0 / 3.0 for name in names}
     if tuple(components) != names or weights != expected:

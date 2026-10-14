@@ -1,11 +1,8 @@
-# ==============================================================================
-# seasonal_period.R
-#
-# Purpose: Estimate and diagnose one forecasting period without changing values.
-# Inputs: A finite prepared numeric series, baseline period, model ID, and minimum cycles.
-# Outputs: JSON-safe period, seasonal-strength, eligibility, and reason fields.
-# Run from: Sourced by the bounded generic R forecast worker.
-# ==============================================================================
+# Process 04 diagnostic utility, currently sourced only by forecast-method tests.
+# Finite prepared values, baseline period, model and minimum cycles produce
+# estimated-period, seasonal-strength, eligibility and reason fields.
+# This is not the active provider's period policy: production requests use the
+# coordinator-resolved period under docs/forecast-black-box-contract.md.
 
 # Purpose: State whether a registered model can represent a proposed period.
 # Inputs: Internal model ID and positive integer period.

@@ -2,7 +2,8 @@
 # ==============================================================================
 # inspect_rolling_window.R
 #
-# Purpose: Inspect one persisted S1 rolling window without modifying either database.
+# Process 03 manual QA for the preparation_metadata/prepared_windows schema.
+# Inspect one compatible persisted S1 window without modifying either database.
 # Inputs: Parent/child DuckDB paths, dataset ID, series ID and zero-based ordinal.
 # Outputs: selected_rolling_window plus convenient raw/transformed/state objects in R.
 # Run from: source("src/r/qa/inspect_rolling_window.R") in repository-root R.

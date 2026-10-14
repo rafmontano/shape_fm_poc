@@ -1,6 +1,6 @@
-# Purpose: Focused public stateless-kernel parity and RNG tests.
+# Process 03 cohort contract tests: fixed labels, cap and seed -> assertions
+# on selected membership, quotas and RNG preservation; no database or outputs.
 # Run: Rscript src/r/tests/test_training_cohort.R
-# Bounded OOP exception: direct assertions around a stateless scientific kernel.
 source("src/r/03_02_select_training_cohort.R")
 
 labels <- rep(c(-1L, 0L, 1L), c(11000L, 5000L, 2001L))
