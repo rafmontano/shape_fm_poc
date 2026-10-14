@@ -313,3 +313,14 @@ Targeted TF32 tests support the retained correction: CUDA matmul/convolution
 TF32 is disabled to preserve the specified Mantis float32 calculation. Ordinary
 valid backend floating-point differences are accepted without parity comparison
 or tolerance gates. Continue E/F from this accepted evidence without rerunning 04.
+
+## Increment E — Combine
+
+Process 05 continued the accepted distributed 100-series experiment with no
+Process 04 invocation. It accepted 100 complete M4 Comb horizons from stored
+SES/Holt/Damped means at equal thirds, preserving component keys and weights.
+The configured identity adjustment creates no extra candidates; Oracle and
+sensitivity remain Process 06 diagnostics. The run took 8.608 seconds and the
+no-new-work restart 2.058 seconds. All prior atomic rows remained unchanged;
+restart preserved all accepted rows and timestamps. The focused public-flow
+combination/lineage/restart test passed. Process 06 had not run at this boundary.
