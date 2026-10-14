@@ -1,14 +1,8 @@
 #!/usr/bin/env Rscript
-# ==============================================================================
-# 02_01_preprocess_series.R
-#
-# Purpose: Serve the bounded R subprocess that preprocesses model-training contexts.
-# Inputs: JSON on stdin: action="preprocess" and jobs with id, numeric/missing
-#   context, mode, and positive official seasonality; Python supplies the request.
-# Outputs: JSON with finite same-scale vectors, change/missingness metadata, and versions;
-#   invalid actions, methods, or series terminate the subprocess with an R error.
-# Run from: printf '%s' '{"action":"preprocess","jobs":[]}' | Rscript src/r/02_01_preprocess_series.R
-# ==============================================================================
+# Process 02 provider: read historical-context jobs from stdin JSON and return
+# same-scale prepared vectors, missing/change metadata and package versions.
+# Each job supplies id, context, mode and the coordinator-resolved R period
+# (seasonality); future observations are excluded. Invalid requests fail.
 
 suppressPackageStartupMessages({
   library(forecast)
@@ -17,15 +11,11 @@ suppressPackageStartupMessages({
 
 source("src/r/util/time_series_input.R")
 
-# Execution global: payload is the coordinator-authored request for this subprocess;
-# scientific and execution values remain authoritative from DuckDB and have no local override.
 payload <- jsonlite::fromJSON(file("stdin"), simplifyVector = FALSE)
 
-# Purpose: Prepare one context using the approved standard or robust mode.
-# Inputs: job with id, numeric/missing context of length n, official seasonality,
-#   and mode "standard" or "robust". No future observations are accepted.
-# Outputs: Finite length-n values plus missingness/change provenance. Standard uses
-#   na.interp only; robust intentionally reproduces forecast::tsclean exactly.
+# Prepare one historical job under docs/data-contract.md: standard uses
+# forecast::na.interp; robust uses forecast::tsclean without altered settings.
+# Return finite length-n values and provenance; no rescaling or future input.
 preprocess_one <- function(job) {
   input <- time_series_input(job)
   mode <- job$mode
@@ -56,16 +46,12 @@ preprocess_one <- function(job) {
   )
 }
 
-# Execution global: results preserves coordinator job order for this invocation;
-# it is derived from stdin and has no independent override.
 if (identical(payload$action, "preprocess")) {
   results <- lapply(payload$jobs, preprocess_one)
 } else {
   stop("Unsupported preprocessing worker action", call. = FALSE)
 }
 
-# Code constant: JSON encoding is the worker protocol—scalar unboxing, 17-digit
-# numeric precision, and JSON null spelling are fixed by this implementation.
 cat(jsonlite::toJSON(
   list(
     results = results,

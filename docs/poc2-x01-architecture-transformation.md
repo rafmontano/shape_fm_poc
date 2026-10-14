@@ -128,8 +128,8 @@ curated final metrics/CSV/PNG/PDF artifacts. Failures warn and never invalidate
 science. Periodic progress/ETA is off unless a stored setting explicitly enables
 it for a named long-running subflow; no autologging/system metrics/model registry.
 
-Increment A has passed bounded developer acceptance and is submitted for
-researcher review; B–F remain planned. This does not close X01.
+Increments A–B have passed bounded developer acceptance and are submitted for
+researcher review; C–F remain planned. This does not close X01.
 
 | Increment | Scope and bounded acceptance |
 | --- | --- |
@@ -228,3 +228,32 @@ Retained legacy storage/table/export tests passed (28); five focused
 feature/manifest tests passed. Acquisition verified the real pinned source;
 syntax, lock consistency and whitespace checks passed. No calibration or
 later-process acceptance run was performed.
+
+## Increment B — Preprocess
+
+The active path is `02 Preprocess → 02.01 Materialise prepared histories →
+02.02 Accept prepared dataset`. Prepared histories exclude the official test
+future, preserve original scale and record native method/package provenance.
+Daily's modelling period resolves to 1 from the pinned GluonTS adapter; no
+statistical seasonality inference or scientific override was introduced.
+
+The shared executor supports the native provider's bounded batch interface,
+avoiding one R startup per series. Initial per-series startup took 148.372
+seconds; the accepted fresh 100-series run through Process 02 took 31.530
+seconds including experiment startup (the preparation calculation/acceptance
+portion was 18.113 seconds). All 100 histories matched an independent direct
+`forecast::tsclean(stats::ts(history, frequency=1))` calculation. No child or
+later-process output was created. Database-only restart took 3.066 seconds,
+with all 300 population/canonical/prepared rows and timestamps unchanged.
+MLflow retained one run, `d21a6dc047894a11a473104133e6cfa0`, with completed
+02/02.01/02.02 milestones and 100/100 completion progress; periodic tracking
+remained disabled.
+
+Six focused tests passed, including native standard/robust formulas, distinct
+held-out futures, canonical preservation, no-work restart and local-Dask native
+batch execution. Legacy planning/storage/native-R checks passed (62), retained
+workflow tests passed (10), and legacy Process 03 fixture tests passed (6).
+The old Process 02 wrapper, coordinator handler/planning/dispatch, Prefect
+cleaning task, repeated storage validation and obsolete orchestration tests
+were removed. R documentation changed without changing parsed scientific
+expressions. No new/old schema compatibility bridge was added.

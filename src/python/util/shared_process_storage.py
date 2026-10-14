@@ -83,6 +83,8 @@ class ProcessStorage:
 
     def validate(self, process_id: int, summary: dict[str, Any] | None = None) -> dict[str, Any]:
         """Compare authoritative planned identities with tasks and accepted outputs."""
+        if process_id not in {1, 3, 4, 5, 6}:
+            raise ValueError("legacy validation supports Processes 01 and 03–06 only")
         connection = duckdb.connect(str(self.database), read_only=True)
         numerical = None
         try:
@@ -136,9 +138,7 @@ class ProcessStorage:
                 incomplete = abs(expected - task_count) + abs(expected - total_tasks)
                 missing = abs(expected - stored)
                 if not incomplete and not missing:
-                    if process_id == 2:
-                        self._validate_preprocessed(connection)
-                    elif process_id == 3:
+                    if process_id == 3:
                         numerical = self._validate_transformed(connection)
                     elif process_id == 4:
                         self._validate_forecasts(connection)
@@ -413,41 +413,6 @@ class ProcessStorage:
             raise RuntimeError("stored import output fingerprint mismatch")
 
     @staticmethod
-    def _validate_preprocessed(connection: duckdb.DuckDBPyConnection) -> None:
-        """Validate Gate 2 values and hashes against forecast contexts and variant contracts."""
-        rows = connection.execute(
-            """SELECT r.cleaning_method,v.cleaning_method,i.context_target,r.context_target,
-                      r.input_hash,r.output_hash,r.preprocessing_status,
-                      r.missing_count_before,r.missing_count_after,r.parent_result_id
-               FROM experiment_tasks t
-               JOIN preprocessed_series r ON r.experiment_id=t.experiment_id
-                 AND r.forecast_instance_id=t.forecast_instance_id AND r.cleaning_method=t.candidate
-               JOIN forecast_instances i ON i.forecast_instance_id=t.forecast_instance_id
-               JOIN experiment_variants v ON v.experiment_id=t.experiment_id
-                 AND v.cleaning_method=t.candidate
-               WHERE t.stage=2"""
-        ).fetchall()
-        for method, expected_method, source, output, input_hash, output_hash, status, before, after, parent in rows:
-            missing_before = sum(value is None or math.isnan(value) for value in source)
-            missing_after = sum(value is None or math.isnan(value) for value in output)
-            # R/jsonlite emits integral numbers without a decimal; historical
-            # hashes precede DuckDB's DOUBLE[] conversion. Accept either existing
-            # numeric encoding, never rewrite those historical fingerprints.
-            native_json = [int(value) if value is not None and float(value).is_integer()
-                           else value for value in output]
-            if (method != expected_method or status != "success" or parent is not None
-                    or input_hash != json_fingerprint(source)
-                    or output_hash not in {json_fingerprint(output), json_fingerprint(native_json)}
-                    or before != missing_before or after != missing_after or missing_after
-                    or len(source) != len(output)
-                    or any(not math.isfinite(value) for value in output)
-                    or (method == "standard" and any(
-                        original is not None and math.isfinite(original) and original != cleaned
-                        for original, cleaned in zip(source, output)
-                    ))):
-                raise RuntimeError("stored preprocessing failed value, hash or lineage validation")
-
-    @staticmethod
     def compare_float64(stored, calculated) -> dict:
         """Measure finite binary64 differences without an absolute tolerance or mutation."""
         if len(stored) != len(calculated) or not stored:
@@ -588,8 +553,6 @@ class ProcessStorage:
         if process_id == 6:
             return common + " AND t.variant_id=e.variant_id AND t.candidate=e.candidate"
         value = common + " AND t.forecast_instance_id=e.forecast_instance_id"
-        if process_id == 2:
-            return value + " AND t.candidate=e.candidate"
         value += " AND t.variant_id=e.variant_id"
         return value if process_id == 3 else value + " AND t.candidate=e.candidate"
 
@@ -598,10 +561,7 @@ class ProcessStorage:
         """Derive required work from experiment inputs, variants and model settings."""
         instances = "experiments x JOIN forecast_instances i ON i.benchmark_configuration_id=x.benchmark_configuration_id"
         variants = instances + " JOIN experiment_variants v ON v.experiment_id=x.experiment_id"
-        if process_id == 2:
-            expected = f"SELECT DISTINCT x.experiment_id,i.forecast_instance_id,v.cleaning_method candidate FROM {variants}"
-            output = expected + " JOIN preprocessed_series r ON r.experiment_id=x.experiment_id AND r.forecast_instance_id=i.forecast_instance_id AND r.cleaning_method=v.cleaning_method"
-        elif process_id == 3:
+        if process_id == 3:
             expected = f"SELECT x.experiment_id,i.forecast_instance_id,v.variant_id FROM {variants}"
             output = expected + " JOIN transformed_series r ON r.experiment_id=x.experiment_id AND r.forecast_instance_id=i.forecast_instance_id AND r.variant_id=v.variant_id"
         else:

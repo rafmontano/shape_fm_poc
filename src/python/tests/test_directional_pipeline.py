@@ -38,7 +38,7 @@ class DirectionalPipelineTests(unittest.TestCase):
     def test_directional_task_cardinalities_have_no_forecast_combination_rows(self):
         self.assertEqual(
             expected_task_counts(100, self.configuration.workflow),
-            {2: 100, 3: 100, 4: 1401, 5: 1, 6: 14},
+            {3: 100, 4: 1401, 5: 1, 6: 14},
         )
 
     def test_fixed_dtw_checkpoints_success_before_failure_and_resumes_missing_only(self):
@@ -364,7 +364,18 @@ class DirectionalPipelineTests(unittest.TestCase):
                 ),
             ):
                 plan = coordinator.plan()
-            coordinator.run_process(plan.experiment_id, 2)
+            # Process 03 still consumes the legacy prepared schema until migration.
+            # These finite fixture histories are already prepared; never run old P02.
+            for instance_id, context in coordinator.connection.execute(
+                "SELECT forecast_instance_id, context_target FROM forecast_instances"
+            ).fetchall():
+                coordinator.connection.execute(
+                    """INSERT INTO preprocessed_series VALUES
+                       (?, ?, ?, 'robust', ?, ?, ?, '{}', '{}', NULL,
+                        'D', 1, 'success', 0, 0, false, current_timestamp)""",
+                    [f"prepared/{instance_id}", plan.experiment_id, instance_id,
+                     json_fingerprint(context), json_fingerprint(context), context],
+                )
             try:
                 result = coordinator.run_process(plan.experiment_id, 3)
             except RuntimeError as error:

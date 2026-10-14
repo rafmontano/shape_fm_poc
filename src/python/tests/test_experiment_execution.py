@@ -32,7 +32,7 @@ from util.shared_transformations import inverse, transform
 
 # Test/calibration value: expected rows derived from the committed 100-series fixture;
 # it is an assertion oracle, not a production execution or experiment global.
-EXPECTED_100_TASK_COUNTS = {2: 200, 3: 400, 4: 800, 5: 1_200, 6: 12}
+EXPECTED_100_TASK_COUNTS = {3: 400, 4: 800, 5: 1_200, 6: 12}
 
 
 def forecast_result(job, mean, *, fallback=False, executed_model=None, quantiles=None):
@@ -315,9 +315,9 @@ class TransactionTests(unittest.TestCase):
         connection = self.coordinator.connection
         connection.execute(
             """INSERT INTO experiment_tasks
-            (task_id, experiment_id, stage, status) VALUES ('task', 'experiment', 2, 'pending')"""
+            (task_id, experiment_id, stage, status) VALUES ('task', 'experiment', 3, 'pending')"""
         )
-        invocation = self.coordinator._begin_invocation("experiment", 2, 1, "cpu", 1)
+        invocation = self.coordinator._begin_invocation("experiment", 3, 1, "cpu", 1)
         attempt = self.coordinator._start_tasks([("task", None, None, None)], invocation)["task"]
 
         def invalid_insert():
@@ -341,7 +341,7 @@ class TransactionTests(unittest.TestCase):
             connection.execute("SELECT count(*) FROM submission_exports").fetchone()[0], 0
         )
         second_invocation = self.coordinator._begin_invocation(
-            "experiment", 2, 1, "cpu", 1
+            "experiment", 3, 1, "cpu", 1
         )
         self.assertEqual(
             connection.execute(
@@ -369,133 +369,6 @@ class TransactionTests(unittest.TestCase):
                 "SELECT status FROM experiment_task_attempts ORDER BY attempt_number"
             ).fetchall(),
             [("failed",), ("completed",)],
-        )
-
-    def test_process_02_batched_failure_preserves_completed_batch_and_retries_rest(self):
-        """Process 02 retains its first batch and retries only the failed preprocessing task."""
-        self._insert_benchmark_and_instances()
-        connection = self.coordinator.connection
-        for index in range(2):
-            connection.execute(
-                """INSERT INTO experiment_tasks
-                (task_id, experiment_id, stage, forecast_instance_id, candidate, status)
-                VALUES (?, 'experiment', 2, ?, 'robust', 'pending')""",
-                [f"task-{index}", f"instance-{index}"],
-            )
-        calls = 0
-
-        def failing_worker(payload):
-            """Purpose: Emulate preprocessing success followed by a batch failure.
-
-            Inputs: A worker payload mapping containing one job with ID and context.
-            Outputs: A results/packages mapping or RuntimeError; increments the enclosing call count.
-            """
-            nonlocal calls
-            calls += 1
-            if calls == 2:
-                raise RuntimeError("second external batch failed")
-            job = payload["jobs"][0]
-            return {
-                "results": [{
-                    "id": job["id"],
-                    "values": job["context"],
-                    "preprocessing_mode": job["mode"],
-                    "status": "success",
-                    "missing_count_before": 0,
-                    "missing_count_after": 0,
-                    "values_changed": False,
-                }],
-                "packages": {},
-            }
-
-        def compute_flow(**kwargs):
-            """Adapt the deterministic worker double to the Prefect batch contract."""
-            outcomes = []
-            for batch in kwargs["batches"]:
-                try:
-                    response = failing_worker({"jobs": batch})
-                    outcomes.append({"batch": batch, "response": {
-                        **response, "runtime_seconds": 0.0, "worker": {}}})
-                except RuntimeError as exc:
-                    outcomes.append({"batch": batch, "error": str(exc)})
-            return outcomes
-
-        with patch("util.shared_workflow_orchestration.run_gate_compute_flow", side_effect=compute_flow):
-            with self.assertRaisesRegex(RuntimeError, "Process 2 failed"):
-                self.coordinator.run_process("experiment", 2, workers=1, batch_size=1)
-        self.assertEqual(
-            connection.execute(
-                "SELECT status FROM experiment_tasks ORDER BY task_id"
-            ).fetchall(),
-            [("completed",), ("failed",)],
-        )
-        self.assertEqual(connection.execute("SELECT count(*) FROM preprocessed_series").fetchone()[0], 1)
-
-        successful_worker = lambda payload: {
-            "results": [
-                {
-                    "id": job["id"],
-                    "values": job["context"],
-                    "preprocessing_mode": job["mode"],
-                    "status": "success",
-                    "missing_count_before": 0,
-                    "missing_count_after": 0,
-                    "values_changed": False,
-                }
-                for job in payload["jobs"]
-            ],
-            "packages": {},
-        }
-        def successful_flow(**kwargs):
-            return [{"batch": batch, "response": {
-                **successful_worker({"jobs": batch}), "runtime_seconds": 0.0,
-                "worker": {}}} for batch in kwargs["batches"]]
-
-        with patch("util.shared_workflow_orchestration.run_gate_compute_flow", side_effect=successful_flow):
-            result = self.coordinator.run_process(
-                "experiment",
-                2,
-                execution=resolve_execution_profile(
-                    "sequential_safe", {"cleaning_workers": 2}
-                ),
-            )
-        self.assertEqual(result["selected"], 1)
-        self.assertEqual(connection.execute("SELECT count(*) FROM preprocessed_series").fetchone()[0], 2)
-        provenance = connection.execute(
-            """SELECT DISTINCT cleaning_method, official_frequency,
-                      official_seasonality, preprocessing_status,
-                      missing_count_before, missing_count_after, values_changed
-               FROM preprocessed_series"""
-        ).fetchall()
-        self.assertEqual(
-            provenance,
-            [("robust", "D", 7, "success", 0, 0, False)],
-        )
-        self.assertEqual(
-            connection.execute(
-                "SELECT attempt_count FROM experiment_tasks ORDER BY task_id"
-            ).fetchall(),
-            [(1,), (2,)],
-        )
-        invocations = connection.execute(
-            """SELECT execution_profile, resolved_execution, execution_overrides, hardware
-            FROM experiment_invocations
-            WHERE CAST(execution_overrides AS VARCHAR) != '{}'"""
-        ).fetchall()
-        invocation = next(
-            row for row in invocations
-            if json.loads(row[2]).get("cleaning_workers") == 2
-        )
-        self.assertEqual(invocation[0], "sequential_safe")
-        self.assertEqual(json.loads(invocation[1])["cleaning_workers"], 2)
-        self.assertEqual(json.loads(invocation[2])["cleaning_workers"], 2)
-        self.assertEqual(
-            json.loads(invocation[2])["selection"]["count"], 100
-        )
-        self.assertIn("logical_cpu_count", json.loads(invocation[3]))
-        self.assertEqual(
-            connection.execute("SELECT task_id FROM experiment_tasks ORDER BY task_id").fetchall(),
-            [("task-0",), ("task-1",)],
         )
 
     def test_process_04_batched_failure_preserves_forecast_and_retries_rest(self):
@@ -983,7 +856,7 @@ class ConfiguredPlanningTests(unittest.TestCase):
         self.assertEqual(plan["official_evaluation_rows"], 12)
         self.assertEqual(
             plan["task_counts"],
-            {"2": 200, "3": 400, "4": 800, "5": 1_200, "6": 12},
+            {"3": 400, "4": 800, "5": 1_200, "6": 12},
         )
 
     def test_plan_rejects_duplicate_official_series(self):

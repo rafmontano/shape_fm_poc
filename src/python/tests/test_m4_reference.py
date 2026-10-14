@@ -374,7 +374,7 @@ class M4ReferenceTests(unittest.TestCase):
             """INSERT INTO experiment_tasks
             (task_id, experiment_id, stage, forecast_instance_id, variant_id,
              candidate, status)
-            VALUES ('stage2', 'experiment', 2, 'instance', NULL, 'identity', 'completed')"""
+            VALUES ('stage3', 'experiment', 3, 'instance', NULL, 'identity', 'completed')"""
         )
         connection.execute(
             """INSERT INTO forecasts

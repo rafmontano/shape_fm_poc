@@ -49,7 +49,7 @@ class WorkflowOrchestrationTests(unittest.TestCase):
 
         with prefect_test_harness():
             result = workflows.experiment_flow(
-                (1, 2, 3),
+                (1, 3, 4),
                 (1,),
                 self._inspect,
                 runner,
@@ -59,7 +59,7 @@ class WorkflowOrchestrationTests(unittest.TestCase):
                 import_process=lambda: {"process_id": 1, "status": "skipped_completed"},
             )
 
-        self.assertEqual(calls, [2, 3])
+        self.assertEqual(calls, [3, 4])
         self.assertEqual(
             [item["status"] for item in result["processes"]],
             ["skipped_completed", "completed", "completed"],
@@ -75,12 +75,12 @@ class WorkflowOrchestrationTests(unittest.TestCase):
 
     def test_compute_owned_gate_failure_is_not_retried_by_outer_writer(self):
         """An outer writer gate is never repeated after compute owns retries."""
-        attempts = {2: 0, 3: 0}
+        attempts = {3: 0, 4: 0}
 
         def runner(process_id: int) -> dict:
-            """Fail Process 02 once, then return successful gate summaries."""
+            """Fail Process 03 once, then return successful gate summaries."""
             attempts[process_id] += 1
-            if process_id == 2 and attempts[process_id] == 1:
+            if process_id == 3 and attempts[process_id] == 1:
                 raise RuntimeError("transient test fault")
             return {"process_id": process_id, "status": "completed"}
 
@@ -88,10 +88,10 @@ class WorkflowOrchestrationTests(unittest.TestCase):
             RuntimeError, "transient test fault"
         ):
             workflows.experiment_flow(
-                (2, 3), (), self._inspect, runner, self._validate, retries=1
+                (3, 4), (), self._inspect, runner, self._validate, retries=1
             )
 
-        self.assertEqual(attempts, {2: 1, 3: 0})
+        self.assertEqual(attempts, {3: 1, 4: 0})
 
     def test_permanent_gate_failure_blocks_downstream_and_parent_success(self):
         """An exhausted required gate prevents its dependant from starting."""
@@ -106,10 +106,10 @@ class WorkflowOrchestrationTests(unittest.TestCase):
             RuntimeError, "permanent test fault"
         ):
             workflows.experiment_flow(
-                (2, 3), (), self._inspect, runner, self._validate, retries=1
+                (3, 4), (), self._inspect, runner, self._validate, retries=1
             )
 
-        self.assertEqual(calls, [2])
+        self.assertEqual(calls, [3])
 
     def test_bounded_compute_flow_drains_success_and_failure_results(self):
         """Named framework tasks retain successful batches when another batch fails."""
@@ -152,7 +152,7 @@ class WorkflowOrchestrationTests(unittest.TestCase):
 
         def validator(process_id: int, _result: dict) -> dict:
             """Reject the first gate as if its stored output were mismatched."""
-            if process_id == 2:
+            if process_id == 3:
                 raise RuntimeError("stored output mismatch")
             return {"process_id": process_id, "output_validated": True}
 
@@ -160,10 +160,10 @@ class WorkflowOrchestrationTests(unittest.TestCase):
             RuntimeError, "stored output mismatch"
         ):
             workflows.experiment_flow(
-                (2, 3), (), self._inspect, runner, validator, retries=0
+                (3, 4), (), self._inspect, runner, validator, retries=0
             )
 
-        self.assertEqual(calls, [2])
+        self.assertEqual(calls, [3])
 
     def test_resume_skips_commit_when_acknowledgement_was_lost(self):
         """DuckDB completion remains authoritative after post-commit flow failure."""
@@ -185,12 +185,12 @@ class WorkflowOrchestrationTests(unittest.TestCase):
             RuntimeError, "acknowledgement lost"
         ):
             workflows.experiment_flow(
-                (2,), (), self._inspect, runner, lost_acknowledgement, retries=0
+                (3,), (), self._inspect, runner, lost_acknowledgement, retries=0
             )
 
         with prefect_test_harness():
             resumed = workflows.experiment_flow(
-                (2,), tuple(committed), self._inspect, runner, self._validate, retries=0
+                (3,), tuple(committed), self._inspect, runner, self._validate, retries=0
             )
 
         self.assertEqual(calls, 1)
@@ -240,7 +240,6 @@ class WorkflowOrchestrationTests(unittest.TestCase):
             workflows.inspect_gate,
             workflows.execute_gate,
             workflows.validate_gate,
-            workflows.compute_clean_batch,
             workflows.compute_transform_batch,
             workflows.compute_combine_batch,
             workflows.compute_evaluation,

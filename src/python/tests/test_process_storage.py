@@ -87,7 +87,7 @@ class ProcessStorageTests(unittest.TestCase):
         self.assertTrue(storage.forecast_requires_gpu(False))
 
     def _insert_gate_fixture(self) -> None:
-        """Insert one valid Gate 2/3 chain; a class would add no value to this test fixture."""
+        """Install legacy prepared input and accepted Process 03 output."""
         connection = duckdb.connect(str(self.database))
         source = [1.0, 2.0, 3.0]
         transformed = transform(source, "identity")
@@ -95,42 +95,20 @@ class ProcessStorageTests(unittest.TestCase):
             connection.execute("INSERT INTO experiments (experiment_id,benchmark_configuration_id,dataset_id,name,scientific_configuration,configuration_hash,scope,status) VALUES ('e','b','d','n','{}','h','s','planned')")
             connection.execute("INSERT INTO experiment_variants VALUES ('v','e','standard','identity','none','{}',current_timestamp)")
             connection.execute("INSERT INTO forecast_instances VALUES ('i','b','d','s','0','w',0,0,3,3,6,3,?,[4.0,5.0,6.0],'{}',current_timestamp)", [source])
-            connection.execute("INSERT INTO experiment_tasks (task_id,experiment_id,stage,forecast_instance_id,variant_id,candidate,status) VALUES ('t2','e',2,'i',NULL,'standard','completed'),('t3','e',3,'i','v',NULL,'completed')")
+            connection.execute("INSERT INTO experiment_tasks (task_id,experiment_id,stage,forecast_instance_id,variant_id,candidate,status) VALUES ('t3','e',3,'i','v',NULL,'completed')")
             connection.execute("INSERT INTO preprocessed_series VALUES ('p','e','i','standard',?,?,?,'{}','{}',NULL,'D',1,'success',0,0,false,current_timestamp)", [json_fingerprint(source), json_fingerprint(source), source])
             connection.execute("INSERT INTO transformed_series VALUES ('x','e','v','i','p','identity',?,?,?,?,? ,current_timestamp)", [json_fingerprint(source), json_fingerprint(transformed.values), list(transformed.values), canonical_json(transformed.parameters), 'p'])
         finally:
             connection.close()
 
-    def test_gate2_altered_value_with_historical_hash_is_rejected(self):
-        self._insert_gate_fixture()
-        connection = duckdb.connect(str(self.database))
-        connection.execute("UPDATE preprocessed_series SET context_target=[1.0,9.0,3.0]")
-        connection.close()
-        with self.assertRaisesRegex(RuntimeError, "preprocessing"):
-            ProcessStorage(self.database).validate(2)
-
-    def test_gate2_native_integer_hash_is_preserved(self):
-        """Historical R JSON integer encoding survives DuckDB DOUBLE conversion."""
-        self._insert_gate_fixture()
-        fingerprint = json_fingerprint([1, 2, 3])
-        connection = duckdb.connect(str(self.database))
-        connection.execute("UPDATE preprocessed_series SET output_hash=?", [fingerprint])
-        connection.close()
-        self.assertTrue(ProcessStorage(self.database).validate(2)["output_validated"])
-        connection = duckdb.connect(str(self.database), read_only=True)
-        self.assertEqual(connection.execute("SELECT output_hash FROM preprocessed_series").fetchone()[0], fingerprint)
-        connection.close()
-
-    def test_gate2_wrong_parent_and_gate3_values_are_rejected(self):
+    def test_gate3_altered_values_are_rejected(self):
         """Matching counts cannot mask wrong lineage or changed transformed values."""
         self._insert_gate_fixture()
         connection = duckdb.connect(str(self.database))
-        connection.execute("UPDATE preprocessed_series SET parent_result_id='wrong'")
         connection.execute("UPDATE transformed_series SET transformed_target=[1,9,3]")
         connection.close()
-        for stage, message in ((2, "preprocessing"), (3, "transformation")):
-            with self.assertRaisesRegex(RuntimeError, message):
-                ProcessStorage(self.database).validate(stage)
+        with self.assertRaisesRegex(RuntimeError, "transformation"):
+            ProcessStorage(self.database).validate(3)
 
     def test_gate3_wrong_lineage_is_rejected(self):
         self._insert_gate_fixture()

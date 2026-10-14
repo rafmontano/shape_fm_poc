@@ -667,9 +667,9 @@ class ExecutionProfileTests(unittest.TestCase):
         counts = expected_task_counts(4_227, workflow)
         self.assertEqual(
             counts,
-            {2: 8_454, 3: 16_908, 4: 33_816, 5: 50_724, 6: 12},
+            {3: 16_908, 4: 33_816, 5: 50_724, 6: 12},
         )
-        self.assertEqual(sum(counts.values()), 109_914)
+        self.assertEqual(sum(counts.values()), 101_460)
 
     def test_unknown_and_invalid_overrides_fail(self) -> None:
         """Profile resolution rejects unknown names and unsafe concurrency overrides."""

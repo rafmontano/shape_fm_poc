@@ -79,7 +79,7 @@ class TableConfigurationTests(unittest.TestCase):
         full = resolve_experiment_configuration(table_document(full=True))
         self.assertEqual(full.series_count, 4227)
         self.assertEqual(expected_task_counts(100, config.workflow),
-                         {2: 100, 3: 100, 4: 2830, 5: 1500, 6: 46})
+                         {3: 100, 4: 2830, 5: 1500, 6: 46})
 
     def test_historical_reconciliation_metadata_is_inert(self):
         """Preserve historical documents without imposing their retired import gate."""
@@ -184,7 +184,7 @@ class TableConfigurationTests(unittest.TestCase):
                     coordinator.plan()
                 counts = dict(coordinator.connection.execute(
                     "SELECT stage,count(*) FROM experiment_tasks GROUP BY stage").fetchall())
-                self.assertEqual(counts, {2: 100, 3: 100, 4: 2830, 5: 1500, 6: 46})
+                self.assertEqual(counts, {3: 100, 4: 2830, 5: 1500, 6: 46})
                 candidates = dict(coordinator.connection.execute(
                     "SELECT candidate,count(*) FROM experiment_tasks WHERE stage=5 GROUP BY candidate").fetchall())
                 self.assertEqual(candidates, {**{model: 100 for model in

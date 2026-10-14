@@ -33,7 +33,7 @@ class DirectionalComparisonPipelineTests(unittest.TestCase):
         )
         self.assertEqual(
             expected_task_counts(100, configuration.workflow),
-            {2: 100, 3: 100, 4: 1401, 5: 1, 6: 14},
+            {3: 100, 4: 1401, 5: 1, 6: 14},
         )
 
     def test_v11_resolves_two_reusable_components_and_independent_horizons(self):
@@ -45,7 +45,7 @@ class DirectionalComparisonPipelineTests(unittest.TestCase):
         )
         self.assertEqual(
             expected_task_counts(100, configuration.workflow),
-            {2: 100, 3: 100, 4: 1430, 5: 1, 6: 28},
+            {3: 100, 4: 1430, 5: 1, 6: 28},
         )
         self.assertEqual(
             configuration.resolved["derived"]["expected_directional_prediction_rows"],
@@ -216,7 +216,7 @@ class DirectionalComparisonPipelineTests(unittest.TestCase):
                         [plan.experiment_id],
                     ).fetchall()
                 }
-            self.assertEqual(counts, {2: 100, 3: 100, 4: 1430, 5: 1, 6: 28})
+            self.assertEqual(counts, {3: 100, 4: 1430, 5: 1, 6: 28})
             self.assertEqual(process_4["directional_mantis_rf:representations"], 1)
             self.assertEqual(
                 sum(count for candidate, count in process_4.items()

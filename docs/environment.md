@@ -54,8 +54,8 @@ complete pinned local checkpoint; ordinary execution is offline.
 ## Normal researcher commands
 
 ```sh
-.venv/bin/python src/python/experiment.py plan --processes 1
-.venv/bin/python src/python/experiment.py run --processes 1
+.venv/bin/python src/python/experiment.py plan --processes 1-2
+.venv/bin/python src/python/experiment.py run --processes 1-2
 .venv/bin/python src/python/experiment.py status
 ```
 
@@ -64,7 +64,7 @@ do not require experiment names or database paths. Run only the process range
 needed. A change to Process 03 is validated through Process 03, not through
 Process 06.
 
-During Increment A, request Process 01 explicitly: the new flow path for later
+Through Increment B, request Processes 01–02 explicitly: the new flow path for later
 processes and `export` is not available until those increments migrate. The
 source layout uses `experiment.py`, importable `p01_import` through
 `p06_evaluate` process packages, and shared adapters in `util/`. Later legacy

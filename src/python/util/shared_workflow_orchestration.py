@@ -60,19 +60,6 @@ def _local_worker() -> dict[str, Any]:
     }
 
 
-@task(name="Gate 02 clean batch", persist_result=False, cache_policy=NO_CACHE)
-def compute_clean_batch(
-    batch: list[dict[str, Any]], options: dict[str, Any], distributed: bool
-) -> dict[str, Any]:
-    """Clean one serializable batch locally or on the selected Dask worker."""
-    from .shared_distributed_execution import clean_batch
-
-    return clean_batch(
-        batch, options["script"], options["timeout"], options["threads"],
-        get_run_context().task_run.run_count - 1,
-    )
-
-
 @task(name="Gate 03 transform batch", persist_result=False, cache_policy=NO_CACHE)
 def compute_transform_batch(
     batch: list[dict[str, Any]], options: dict[str, Any], distributed: bool
@@ -181,7 +168,6 @@ def compute_evaluation(
 
 
 COMPUTE_TASKS = {
-    2: compute_clean_batch,
     3: compute_transform_batch,
     4: compute_directional_dtw_batch,
     5: compute_combine_batch,
@@ -244,7 +230,7 @@ def run_gate_compute_flow(
     max_in_flight: int, local_workers: int,
 ) -> Iterator[dict[str, Any]]:
     """Bind eligible gates to existing Dask or explicit bounded local task workers."""
-    eligible = process_id in {2, 3, 4, 5} or process_id == 6 and options.get("paper_tables")
+    eligible = process_id in {3, 4, 5} or process_id == 6 and options.get("paper_tables")
     distributed = scheduler_address is not None and eligible
     if distributed:
         selected = gate_compute_flow.with_options(
@@ -369,8 +355,8 @@ def gate_flow(
     retries: int,
 ) -> dict[str, Any]:
     """Inspect, execute, and validate one restartable gate as a named child flow."""
-    if process_id not in range(1, 7):
-        raise ValueError("ShapeFM process_id must be within 1-6")
+    if process_id not in {3, 4, 5, 6}:
+        raise ValueError("legacy gates support Processes 03–06 only")
     if retries < 0:
         raise ValueError("Prefect gate retries cannot be negative")
     inspected = inspect_gate.with_options(name=f"Inspect Process {process_id:02d}")(
@@ -379,7 +365,7 @@ def gate_flow(
     result = execute_gate.with_options(
         # Gate compute tasks own retries; repeating a writer gate would duplicate
         # invocation/attempt bookkeeping after partially committed results.
-        name=f"Process {process_id:02d}", retries=0 if process_id in {2, 3, 4, 5, 6} else retries
+        name=f"Process {process_id:02d}", retries=0
     )(process_id, inspected, runner)
     validated = validate_gate.with_options(name=f"Validate Process {process_id:02d}")(
         process_id, result, validator
@@ -415,8 +401,8 @@ def experiment_flow(
     selected = tuple(processes)
     if not selected or tuple(sorted(set(selected))) != selected:
         raise ValueError("ShapeFM processes must be unique and in ascending order")
-    if any(process_id not in range(1, 7) for process_id in selected):
-        raise ValueError("ShapeFM processes must be within 1-6")
+    if any(process_id not in {1, 3, 4, 5, 6} for process_id in selected):
+        raise ValueError("legacy workflow supports Processes 01 and 03–06 only")
     prefect_flow_run_id = _flow_run_id()
     if selected == (1,):
         record_workflow_identity.fn(prefect_flow_run_id, recorder)

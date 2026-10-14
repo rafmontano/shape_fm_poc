@@ -29,12 +29,18 @@ class GroupResult:
 
 
 @task(name="Calculate scientific work group", cache_policy=NO_CACHE, persist_result=False)
-def calculate_group(items: list[WorkItem], calculate: Callable[[WorkItem], dict[str, Any]]) -> GroupResult:
+def calculate_group(items: list[WorkItem], calculate: Callable[[WorkItem], dict[str, Any]],
+                    calculate_batch: Callable | None = None) -> GroupResult:
     """Work-group task: calculate atomic items without scientific persistence.
 
     The coordinator commits each returned completed item before surfacing a later
     failure. DuckDB atomic keys, not this task's operational state, own restart.
     """
+    if calculate_batch is not None:
+        try:
+            return GroupResult(calculate_batch(items))
+        except Exception as error:
+            return GroupResult([], error)
     results = []
     for item in items:
         try:
@@ -55,7 +61,7 @@ class WorkGroupExecutor:
         self.context = context
 
     def run(self, *, subflow_id: str, items: list[WorkItem], calculate: Callable,
-            accept: Callable, on_progress: Callable) -> None:
+            accept: Callable, on_progress: Callable, calculate_batch: Callable | None = None) -> None:
         """Execute only pending atomic keys and preserve commits across failure.
 
         Completion progress is derived from the owning database after commits.
@@ -90,7 +96,7 @@ class WorkGroupExecutor:
         profile = self.context.request.execution_profile
         if profile == "sequential_safe":
             for group in groups:
-                receive(calculate_group.fn(group, calculate))
+                receive(calculate_group.fn(group, calculate, calculate_batch))
         elif groups:
             profiles = self.context.configuration.get("execution_profiles", {})
             settings = profiles[profile]
@@ -106,7 +112,8 @@ class WorkGroupExecutor:
                         import dask
                         with dask.annotate(resources=group[0].resources):
                             futures.append(runner.submit(calculate_group,
-                                parameters={"items": group, "calculate": calculate}))
+                                parameters={"items": group, "calculate": calculate,
+                                            "calculate_batch": calculate_batch}))
                     for future in as_completed(futures):
                         receive(future.result())
         repository.require_complete(subflow_id)
