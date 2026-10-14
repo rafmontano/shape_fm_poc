@@ -4,8 +4,7 @@
 # Quotas start at max(floor(class_count / total * cap), 1); adjust the remainder
 # in descending class-count order, sample within classes, then shuffle membership.
 # Uncapped inputs retain their order without consuming RNG; docs/directional-models.md.
-# Source: rafmontano/m4_tsc_fmts_2026@839b5b6dc4334b5f088adce610f6d35935cbbca1,
-# src/r/08_split_index.R cap_train_indices_stratified. Seed is caller-owned.
+# Seed is caller-owned.
 select_training_cohort <- function(labels, cap, seed) {
   stopifnot(length(cap) == 1L, cap >= 1L, cap == as.integer(cap),
             length(seed) == 1L, seed >= 0, seed <= .Machine$integer.max,

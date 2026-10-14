@@ -9,9 +9,11 @@ import subprocess
 import unittest
 from pathlib import Path
 
+from util.providers import PREPROCESS_WORKER
+
 
 ROOT = Path(__file__).resolve().parents[3]
-WORKER = ROOT / "src/r/p02_preprocess/preprocess_worker.R"
+WORKER = ROOT / PREPROCESS_WORKER
 
 
 def run_worker(jobs: list[dict]) -> dict:

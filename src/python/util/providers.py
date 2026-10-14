@@ -14,6 +14,9 @@ from typing import Any
 from util.runtime import CODE_ROOT
 
 
+PREPROCESS_WORKER = "src/r/util/preprocess_worker.R"
+
+
 def run_r(script: str, payload: dict[str, Any], *, timeout: float, threads: int) -> dict[str, Any]:
     """Call a native R provider with explicit scientific input and bounded execution.
 

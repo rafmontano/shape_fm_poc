@@ -12,10 +12,9 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from p02_preprocess.application import PREPROCESS_WORKER
 from p03_transform.inputs import rolling_window_inputs, s1_partition
 from p03_transform.labels import directional_labels
-from util.providers import run_r
+from util.providers import PREPROCESS_WORKER, run_r
 from util.runtime import DataRef, WorkItem
 from util.transformations import transform
 
