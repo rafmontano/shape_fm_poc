@@ -14,6 +14,7 @@ import json
 import tempfile
 import unittest
 from contextlib import redirect_stdout, redirect_stderr
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -24,7 +25,7 @@ from tests.test_import import write_source
 from util.shared_active_paths import ActivePaths
 from util.shared_database import initialize_experiment_database
 from util.p00_02_researcher_cli import ResearcherCLI
-from util.p01_02_import_execution import compute_series
+from util.p01_02_import_execution import convert_series
 from util.p01_03_gift_eval_source import source_fingerprint
 from util.shared_process_storage import ProcessStorage
 
@@ -79,13 +80,19 @@ class ActiveImportTests(unittest.TestCase):
 
     def test_bootstrap_resume_without_json_and_no_overwrite(self):
         """Real bootstrap stores both documents; restart does no provider/item work."""
-        first = json.loads(self.command("run", "--processes", "1"))
+        with (patch("util.shared_distributed_cluster.ManagedTuningCluster", side_effect=AssertionError("remote cluster")),
+              patch("distributed.LocalCluster", side_effect=AssertionError("local Dask cluster")),
+              patch("util.p00_01_researcher_actions.ProcessAction._execute", side_effect=AssertionError("generic execute"))):
+            first = json.loads(self.command("run", "--processes", "1"))
         self.assertEqual(first["execution"]["processes"][0]["status"], "completed")
         self.assertEqual(self.rows("SELECT count(*) FROM series"), [(3,)])
+        self.assertEqual(self.rows("SELECT status FROM execution_events"), [("completed",)])
+        self.assertTrue(self.rows("SELECT repository_revision FROM execution_events")[0][0])
         self.assertEqual(self.rows("SELECT count(*) FROM reference_forecasts"), [(0,)])
         self.assertFalse(self.paths.child.exists())
-        steps = self.rows("SELECT substep_id,status,planned_items,completed_items,failed_items,attempt_count FROM process_substeps ORDER BY substep_id")
-        self.assertEqual(steps, [("01.01", "completed", 3, 3, 0, 1), ("01.02", "completed", 3, 3, 0, 1)])
+        self.assertEqual(self.rows("SELECT status,attempt_count FROM tasks ORDER BY series_id"),
+                         [("completed", 1)] * 3)
+        self.assertEqual(self.rows("SELECT count(*) FROM information_schema.tables WHERE table_name='process_substeps'"), [(0,)])
         stored = self.rows("SELECT original_configuration,resolved_configuration FROM experiment_configuration")[0]
         self.assertEqual(json.loads(stored[0]), json.loads(self.paths.configuration.read_text()))
         self.assertEqual(json.loads(stored[1])["data"]["selection"]["count"], 3)
@@ -95,47 +102,80 @@ class ActiveImportTests(unittest.TestCase):
         self.assertEqual(self.paths.parent.read_bytes(), before)
         attempts = self.rows("SELECT * FROM task_attempts ORDER BY attempt_id")
         self.paths.configuration.unlink()
-        with (patch("util.p01_03_gift_eval_source.ConfiguredGiftEvalSource.records", side_effect=AssertionError("source reread")),
-              patch("util.p01_01_import_flow.compute_import_series", side_effect=AssertionError("recomputed"))):
+        with (patch("util.p01_03_gift_eval_source.GiftEvalSource.records", side_effect=AssertionError("source reread")),
+              patch("util.p01_03_gift_eval_source.GiftEvalSource.fingerprint", side_effect=AssertionError("source rehashed")),
+              patch("util.p01_05_import_store.ImportStore.fingerprint", side_effect=AssertionError("table rehashed")),
+              patch("util.p01_01_import_flow.convert_series", side_effect=AssertionError("recomputed")),
+              patch("util.p00_01_researcher_actions.ProcessAction._inspect", side_effect=AssertionError("generic inspect")),
+              patch("util.p00_01_researcher_actions.ProcessAction._execute", side_effect=AssertionError("generic execute")),
+              patch("util.p00_01_researcher_actions.ProcessAction._validate", side_effect=AssertionError("generic validate"))):
             restart = json.loads(self.command("run", "--processes", "1"))
         self.assertEqual(restart["execution"]["processes"][0]["status"], "skipped_completed")
         self.assertEqual(self.rows("SELECT * FROM task_attempts ORDER BY attempt_id"), attempts)
-        self.assertEqual(self.rows("SELECT substep_id,status,planned_items,completed_items,failed_items,attempt_count FROM process_substeps ORDER BY substep_id"), steps)
+        self.assertEqual(restart["execution"]["processes"][0]["summary"], first["execution"]["processes"][0]["summary"])
         status = json.loads(self.command("status"))["status"]
         self.assertEqual([row["status"] for row in status["processes"]], ["completed"] + ["pending"] * 5)
         self.assertEqual(sorted(path.name for path in self.paths.parent.parent.iterdir()), ["experiment.duckdb"])
         with duckdb.connect(str(self.paths.parent)) as connection:
             connection.execute("UPDATE series SET target=[99.0] WHERE series_id='0'")
-        with self.assertRaisesRegex(RuntimeError, "01.01.*mismatch"):
+        with self.assertRaisesRegex(RuntimeError, "fingerprint mismatch"):
             ProcessStorage(self.paths.parent).validate(1)
 
     def test_item_failure_resumes_only_missing_items(self):
         """One injected item failure reports its location and preserves the earlier item."""
-        def fail_second(job):
+        converted = []
+        def fail_second(record, settings):
             """Keep the first real calculation; fail the asymmetric second source item."""
-            if job.series_id == "1":
+            converted.append(record.source_series_id)
+            if record.source_series_id == "1":
                 raise RuntimeError("injected item failure")
-            return compute_series(job)
+            return convert_series(record, settings)
 
-        with patch("util.p01_01_import_flow.compute_import_series", side_effect=fail_second):
+        with patch("util.p01_01_import_flow.convert_series", side_effect=fail_second):
             self.command("run", "--processes", "1", expected=1)
-        self.assertEqual(self.rows("SELECT status,completed_items,failed_items,failure_item FROM process_substeps WHERE substep_id='01.01'"), [("failed", 1, 1, "1")])
-        self.assertIn("Process 01 substep 01.01 item 1", self.command("status", "--format", "human"))
-        self.command("run", "--processes", "1")
+        self.assertEqual(converted, ["0", "1"])
+        self.assertEqual(self.rows("SELECT series_id FROM series"), [("0",)])
+        self.assertEqual(self.rows("SELECT status FROM execution_events"), [("failed",)])
+        human = self.command("status", "--format", "human")
+        for text in ("Process 01 Import: failed", "Items: 1 / 3", "Failed items: 1",
+                     "Failed item 1:", "injected item failure", "Restart: continues remaining/failed items"):
+            self.assertIn(text, human)
+        converted.clear()
+        def remaining(record, settings):
+            converted.append(record.source_series_id)
+            return convert_series(record, settings)
+        with patch("util.p01_01_import_flow.convert_series", side_effect=remaining):
+            self.command("run", "--processes", "1")
+        self.assertEqual(converted, ["1", "2"])
         self.assertEqual(self.rows("SELECT series_id,attempt_count,status FROM tasks ORDER BY series_id"),
                          [("0", 1, "completed"), ("1", 2, "completed"), ("2", 1, "completed")])
 
-    def test_acceptance_failure_preserves_canonical_boundary(self):
-        """Acceptance retry skips completed canonical computation and records its own attempt."""
-        with patch("util.p01_02_import_execution.ImportCoordinator.finish_configured_import",
+    def test_finalization_failure_preserves_committed_items(self):
+        """Finalization is internal; retry performs no conversion of accepted items."""
+        with patch("util.p01_05_import_store.ImportStore.finish",
                    side_effect=RuntimeError("injected acceptance failure")):
             self.command("run", "--processes", "1", expected=1)
-        self.assertEqual(self.rows("SELECT substep_id,status FROM process_substeps ORDER BY substep_id"),
-                         [("01.01", "completed"), ("01.02", "failed")])
-        self.assertIn("Process 01 substep 01.02", self.command("status", "--format", "human"))
-        with patch("util.p01_01_import_flow.compute_import_series", side_effect=AssertionError("canonical repeated")):
+        self.assertEqual(self.rows("SELECT status FROM experiment_processes WHERE process_id=1"), [("failed",)])
+        self.assertIn("injected acceptance failure", self.command("status", "--format", "human"))
+        with patch("util.p01_01_import_flow.convert_series", side_effect=AssertionError("canonical repeated")):
             self.command("run", "--processes", "1")
-        self.assertEqual(self.rows("SELECT attempt_count FROM process_substeps ORDER BY substep_id"), [(1,), (2,)])
+        self.assertEqual(self.rows("SELECT attempt_count FROM tasks ORDER BY series_id"), [(1,)] * 3)
+
+    def test_failed_window_insert_rolls_back_series_and_item_completion(self):
+        """A storage failure cannot leave half of the atomic item committed."""
+        def invalid_window(record, settings):
+            result = convert_series(record, settings)
+            if record.source_series_id == "1":
+                return replace(result, window={**result.window, "horizon": None})
+            return result
+        with patch("util.p01_01_import_flow.convert_series", side_effect=invalid_window):
+            self.command("run", "--processes", "1", expected=1)
+        self.assertEqual(self.rows("SELECT series_id FROM series"), [("0",)])
+        self.assertEqual(self.rows("SELECT series_id FROM evaluation_windows"), [("0",)])
+        self.assertEqual(self.rows("SELECT series_id,status FROM tasks ORDER BY series_id"),
+                         [("0", "completed"), ("1", "failed")])
+        self.command("run", "--processes", "1")
+        self.assertEqual(self.rows("SELECT count(*) FROM series"), [(3,)])
 
     def test_database_roles_and_status_preserve_both_files(self):
         """Pending child, missing-required child, and incompatible child are distinct."""

@@ -164,6 +164,9 @@ class ProcessAction:
                     else int(configuration.execution["dask_retries"])
                 ),
                 recorder=partial(events.record_prefect_identity, execution_id),
+                import_process=(partial(self.registry.load(1).run.with_options(
+                    retries=int(configuration.execution["dask_retries"])), database, configuration)
+                    if 1 in processes else None),
             )
             events.finish(
                 execution_id,
@@ -306,11 +309,10 @@ class ProcessAction:
             wrapper = self.registry.load(process_id)
             summary = (
                 wrapper.run(storage.database, execution=execution, execution_settings=settings)
-                if execution is not None and process_id != 1
+                if execution is not None
                 else wrapper.run(storage.database)
             )
-            # Process 01 validates external inputs and commits accepted substeps itself.
-            validation = {} if process_id == 1 else storage.validate(process_id, summary)
+            validation = storage.validate(process_id, summary)
             if "numerical_reproducibility" in validation:
                 summary = {**summary, "numerical_reproducibility": validation["numerical_reproducibility"]}
             storage.transition(process_id, "completed", summary)

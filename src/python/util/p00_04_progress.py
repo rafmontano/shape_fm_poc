@@ -28,15 +28,22 @@ class ProgressReader:
         self.database = database
 
     def annotations(self, status: dict[str, Any]) -> dict[str, Any]:
-        """Read substeps and logical database roles without revalidating science."""
+        """Read item progress and logical database roles without revalidating science."""
         paths = ActivePaths.from_parent(self.database)
         with duckdb.connect(str(self.database), read_only=True) as connection:
             tables = {row[0] for row in connection.execute("SHOW TABLES").fetchall()}
-            substeps = []
-            if "process_substeps" in tables:
-                result = connection.execute("SELECT * FROM process_substeps ORDER BY substep_id")
-                names = [column[0] for column in result.description]
-                substeps = [dict(zip(names, row)) for row in result.fetchall()]
+            items = connection.execute(
+                """SELECT series_id,status,last_error FROM tasks
+                   WHERE run_id=(SELECT run_id FROM runs ORDER BY started_at DESC LIMIT 1)
+                   ORDER BY updated_at DESC,series_id"""
+            ).fetchall()
+            import_progress = {
+                "completed": sum(row[1] == "completed" for row in items),
+                "expected": status["resolved_configuration"]["data"]["selection"]["count"],
+                "failed": sum(row[1] == "failed" for row in items),
+                "last_item": items[0][0] if items else None,
+                "errors": [{"item": row[0], "error": row[2]} for row in items if row[1] == "failed"],
+            }
             links = connection.execute(
                 "SELECT preparation_id,definition_hash,status FROM window_preparation_runs"
             ).fetchall() if "window_preparation_runs" in tables else []
@@ -60,7 +67,7 @@ class ProgressReader:
                 child_state = "available (stored linkage matches)" if compatible else "recovery error: incompatible child linkage"
             except duckdb.Error as error:
                 child_state = f"recovery error: child unreadable ({type(error).__name__})"
-        return {"substeps": substeps, "database_roles": {
+        return {"import_progress": import_progress, "database_roles": {
             "main": {"path": "results/experiment.duckdb", "state": "available"},
             "windows": {"path": "results/windows.duckdb", "state": child_state},
         }}
@@ -128,8 +135,6 @@ class ProgressReader:
         """Select timestamped state and error evidence, retaining its known context."""
         # Code constants: existing table/column contracts, not new restart state.
         sources = [
-            ("process_substeps", "'Process ' || process_id || ' substep ' || substep_id || coalesce(' item ' || failure_item,'')",
-             "last_progress_at", "error", "", []),
             ("experiment_processes", "'Process ' || process_id", "updated_at", "last_error", "", []),
             ("execution_events", "'execution ' || execution_id || ' processes=' || requested_processes",
              "coalesce(completed_at, started_at)", "error", "", []),
@@ -225,18 +230,23 @@ class HumanProgress:
         for row in progress["processes"]:
             counts = [f"{task['status']}={task['count']}" for task in evidence["tasks"]
                       if task["stage"] == row["process_id"]]
-            substeps = [step for step in config["substeps"] if step["process_id"] == row["process_id"]]
             name = "Transform/window preparation" if row["process_id"] == 3 else row["name"].capitalize()
+            if row["process_id"] == 1:
+                items = config["import_progress"]
+                lines += [f"Process 01 Import: {row['status']}",
+                          f"  Items: {items['completed']} / {items['expected']}",
+                          f"  Failed items: {items['failed']}"]
+                if row["status"] != "completed":
+                    lines.append(f"  Current/last attempted item: {self._value(items['last_item'])}")
+                    for failure in items["errors"]:
+                        lines.append(f"  Failed item {failure['item']}: {failure['error']}")
+                    if row.get("error"):
+                        lines.append(f"  Error: {row['error']}")
+                    lines.append("  Restart: continues remaining/failed items after resolving any reported error")
+                continue
             lines += [f"Process {row['process_id']:02d} {name}: {row['status']}",
                       f"  started: {self._value(row.get('started_at'))}; completed: {self._value(row.get('completed_at'))}",
-                      f"  tasks: {', '.join(sorted(counts)) if counts else 'not recorded'}" +
-                      ("" if substeps else "; substeps: not recorded")]
-            for step in substeps:
-                lines += [f"  {step['substep_id']} {step['name']}: {step['status']}",
-                          f"    items planned={step['planned_items']}, completed={step['completed_items']}, failed={step['failed_items']}; attempts={step['attempt_count']}",
-                          f"    started: {self._value(step['started_at'])}; last progress: {self._value(step['last_progress_at'])}; completed: {self._value(step['completed_at'])}"]
-                if step["error"]:
-                    lines.append(f"    failure: {step['error']}")
+                      f"  tasks: {', '.join(sorted(counts)) if counts else 'not recorded'}; substeps: not recorded"]
         active = ", ".join(f"{number:02d}" for number in progress["active"])
         lines += ["", f"Active process (recorded): {active or 'none recorded'}"]
         for key, label in (("activity", "Latest committed activity (record timestamp)"),

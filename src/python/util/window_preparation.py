@@ -45,7 +45,7 @@ from .shared_labels import (
     DIRECTIONAL_LABEL_VERSION,
     directional_labels,
 )
-from .p01_02_import_execution import repository_root
+from .shared_active_paths import repository_root
 
 
 # Code constant: child schema is independent of the parent DuckDB migration number.

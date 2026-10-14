@@ -41,7 +41,7 @@ from util.shared_execution_profiles import (
     resolve_execution_profile,
 )
 from util.shared_experiment_execution import ExperimentCoordinator
-from util.p01_02_import_execution import ImportCoordinator
+from util.p01_01_import_flow import import_flow
 from util.shared_workflow_orchestration import gate_flow, research_writer_locks
 
 
@@ -1602,27 +1602,7 @@ def _run_acceptance(
                 "output_validated": True,
             }
 
-        def run_import_gate(process_id: int) -> dict[str, Any]:
-            """Run acceptance Process 01 with existing durable state transitions."""
-            if process_id != 1:
-                raise ValueError("acceptance import runner only supports Process 01")
-            with ImportCoordinator(database) as coordinator:
-                _mark_process(coordinator.connection, 1, "running")
-                try:
-                    result = coordinator.import_configured()
-                except BaseException as exc:
-                    _mark_process(coordinator.connection, 1, "failed", error=str(exc))
-                    raise
-                _mark_process(coordinator.connection, 1, "completed", result)
-                return result
-
-        imported = gate_flow.with_options(name="ShapeFM Process 01")(
-            1,
-            inspect_gate_state,
-            run_import_gate,
-            validate_gate_state,
-            int(configuration.execution["dask_retries"]),
-        )
+        imported = import_flow(database)["summary"]
         if (
             imported["selected_series"] != SERIES_LIMIT
             or imported["series_count"] != SERIES_LIMIT

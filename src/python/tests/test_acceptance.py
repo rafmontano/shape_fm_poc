@@ -235,13 +235,9 @@ class AcceptanceReadinessTests(unittest.TestCase):
                 "repository_revision": "revision",
                 "gift_eval_revision": "gift",
             }
-            coordinator = MagicMock()
-            coordinator.__enter__.return_value.import_configured.side_effect = RuntimeError(
-                "synthetic import failure"
-            )
             with (
                 patch("tests.acceptance._TwoMachineCluster", return_value=cluster),
-                patch("tests.acceptance.ImportCoordinator", return_value=coordinator),
+                patch("tests.acceptance.import_flow", side_effect=RuntimeError("synthetic import failure")),
                 self.assertRaisesRegex(RuntimeError, "synthetic import failure"),
             ):
                 run_acceptance(
@@ -322,13 +318,9 @@ class AcceptanceReadinessTests(unittest.TestCase):
             )
             cluster = MagicMock()
             cluster.preflight.return_value = {"repository_revision": "revision"}
-            coordinator = MagicMock()
-            coordinator.__enter__.return_value.import_configured.side_effect = RuntimeError(
-                "resumed import reached"
-            )
             with (
                 patch("tests.acceptance._TwoMachineCluster", return_value=cluster),
-                patch("tests.acceptance.ImportCoordinator", return_value=coordinator),
+                patch("tests.acceptance.import_flow", side_effect=RuntimeError("resumed import reached")),
                 self.assertRaisesRegex(RuntimeError, "resumed import reached"),
             ):
                 run_acceptance(

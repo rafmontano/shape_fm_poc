@@ -16,6 +16,11 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[3]
 
 
+def repository_root() -> Path:
+    """Shared repository location, independent of any scientific process."""
+    return ROOT
+
+
 @dataclass(frozen=True)
 class ActivePaths:
     """Fixed parent/child/bootstrap paths; alternate roots are test-only."""

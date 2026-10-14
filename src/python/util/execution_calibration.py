@@ -35,7 +35,7 @@ from .shared_execution_profiles import (
     PersistentChronosWorker,
     system_memory,
 )
-from .p01_02_import_execution import repository_root
+from .shared_active_paths import repository_root
 
 
 # Test/calibration value: developer-owned search grids; calibration code changes them,

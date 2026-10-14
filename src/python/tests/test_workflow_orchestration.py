@@ -56,6 +56,7 @@ class WorkflowOrchestrationTests(unittest.TestCase):
                 self._validate,
                 retries=0,
                 recorder=recorded.append,
+                import_process=lambda: {"process_id": 1, "status": "skipped_completed"},
             )
 
         self.assertEqual(calls, [2, 3])

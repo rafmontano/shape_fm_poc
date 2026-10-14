@@ -18,6 +18,14 @@ the reviewed Stage 1 GitHub checkpoint.
 
 ## Pragmatic Stage 2 amendment
 
+X01 Increment 3 supersedes the generic inspect → execute → validate recipe for
+Process 01 and rejects its artificial import/acceptance subflows. Apply the
+[meaningful hierarchy standard](code-standards.md#meaningful-workflow-hierarchy-x01-increment-3):
+objects need not be workflow nodes, execution placement stays behind an interface,
+and DuckDB rather than Prefect determines scientific restart. Only Experiment and
+Process 01 Import are Prefect flows on this path. Existing later-process
+orchestration is outside this bounded increment; historical acceptance is retained.
+
 Approved by the researcher on 3 October 2026: close Stage 1 with its documented
 limitations and move the remaining CPU-overlap and scheduler-loss checks into
 Stage 2. These are outstanding checks, not failed implementation claims or
@@ -69,6 +77,9 @@ not in the approval itself.
 The diagram shows the approved target architecture, not completed migration. Arrows show
 responsibility and data hand-offs, not six additional scientific gates. The
 numbered gates and optional preparation workflows remain unchanged.
+The [four-layer conceptual figure](architecture.md#technical-layers) summarises
+the same ownership boundary: Prefect/process orchestration above transparent
+parallel execution, Python/R application objects and DuckDB research data.
 
 ```mermaid
 flowchart TB

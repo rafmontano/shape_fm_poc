@@ -147,7 +147,7 @@ class TableConfigurationTests(unittest.TestCase):
         """A shortened or enlarged source fails even when a bounded reader could succeed."""
         import pyarrow as pa
         import pyarrow.ipc as ipc
-        from util.p01_03_gift_eval_source import ConfiguredGiftEvalSource, SOURCE_ARROW_NAME
+        from util.p01_03_gift_eval_source import GiftEvalSource, SOURCE_ARROW_NAME
         from util.shared_configuration import ImportValidationError
 
         with tempfile.TemporaryDirectory() as directory:
@@ -156,7 +156,7 @@ class TableConfigurationTests(unittest.TestCase):
             configuration = SimpleNamespace(source_directory=Path("."),
                 resolved={"data": {"dataset_name": "daily", "selection": {"expected_source_total": 3}}},
                 import_settings={"benchmark": {"frequency": "D"}, "max_series": 3})
-            source = ConfiguredGiftEvalSource(configuration, root)
+            source = GiftEvalSource(configuration, root)
             for count in (2, 3, 4):
                 table = pa.table({"value": list(range(count))})
                 with pa.OSFile(str(source.path / SOURCE_ARROW_NAME), "wb") as stream:

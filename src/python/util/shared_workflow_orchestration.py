@@ -409,6 +409,7 @@ def experiment_flow(
     validator: GateValidator,
     retries: int,
     recorder: IdentityRecorder | None = None,
+    import_process: PreparationRunner | None = None,
 ) -> dict[str, Any]:
     """Run selected gates in dependency order and collect every child result."""
     selected = tuple(processes)
@@ -417,10 +418,18 @@ def experiment_flow(
     if any(process_id not in range(1, 7) for process_id in selected):
         raise ValueError("ShapeFM processes must be within 1-6")
     prefect_flow_run_id = _flow_run_id()
-    record_workflow_identity(prefect_flow_run_id, recorder)
+    if selected == (1,):
+        record_workflow_identity.fn(prefect_flow_run_id, recorder)
+    else:
+        record_workflow_identity(prefect_flow_run_id, recorder)
     completed = set(completed_processes)
     summaries: list[dict[str, Any]] = []
     for process_id in selected:
+        if process_id == 1:
+            if import_process is None:
+                raise ValueError("Process 01 requires its import process boundary")
+            summaries.append(import_process())
+            continue
         if process_id in completed:
             inspected = inspect_gate.with_options(
                 name=f"Inspect completed Process {process_id:02d}"

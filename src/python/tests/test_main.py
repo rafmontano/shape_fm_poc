@@ -442,16 +442,6 @@ class RestoredProcessActionTests(unittest.TestCase):
             ProcessAction(registry).run(database, None, (4,))
         registry.load.assert_not_called()
 
-    def test_profile_import_keeps_gate_one_local_contract(self):
-        """A multi-gate profile must not pass compute-only arguments to import."""
-        registry = MagicMock()
-        registry.load.return_value.run = MagicMock(return_value={"series_count": 100})
-        storage = MagicMock()
-        storage.database = Path("bounded.duckdb")
-        ProcessAction(registry)._execute(storage, (object(), {}), object(), 1)
-        registry.load.return_value.run.assert_called_once_with(storage.database)
-        storage.validate.assert_called_once_with(1, {"series_count": 100})
-
     def test_profile_action_propagates_resolved_gpu_topology(self):
         """The normal action starts the approved GPU topology and propagates exact counts."""
         configuration = SimpleNamespace(
@@ -501,29 +491,8 @@ class RestoredProcessActionTests(unittest.TestCase):
         self.assertEqual(settings.dask_expected_gpu_workers, 1)
         self.assertEqual(evidence["resolved_topology"]["total_workers"], 24)
 
-    def test_process_one_records_event_revision_and_completion(self):
-        """A bounded Gate 1 run records repository revision and completed lifecycle."""
-        database = self.root / "run.duckdb"
-        registry = MagicMock()
-        registry.load.return_value = SimpleNamespace(
-            run=MagicMock(return_value={"series_count": 0})
-        )
-        with patch.object(action_module.ProcessStorage, "validate",
-                          return_value={"output_validated": True, "stored_task_count": 0}):
-            result = ProcessAction(registry).run(database, self.configuration, (1,))
-        self.assertEqual(result["processes"][0]["status"], "completed")
-        connection = duckdb.connect(str(database), read_only=True)
-        try:
-            row = connection.execute(
-                "SELECT status, repository_revision FROM execution_events"
-            ).fetchone()
-        finally:
-            connection.close()
-        self.assertEqual(row[0], "completed")
-        self.assertTrue(row[1])
-
     def test_resume_skips_completed_processes_without_creation_json(self):
-        """Resume reads DuckDB and skips all accepted gates after JSON removal."""
+        """Later-process resume retains its generic path; import is tested in test_active_import."""
         creation = self.root / "creation.json"
         creation.write_bytes(self.configuration.read_bytes())
         database = self.root / "resume.duckdb"
@@ -537,24 +506,10 @@ class RestoredProcessActionTests(unittest.TestCase):
         registry = MagicMock()
         with patch.object(action_module.ProcessStorage, "validate",
                           return_value={"output_validated": True, "stored_task_count": 0}):
-            result = ProcessAction(registry).run(database, None, tuple(range(1, 7)))
+            result = ProcessAction(registry).run(database, None, tuple(range(2, 7)))
         self.assertEqual([row["status"] for row in result["processes"]],
-                         ["skipped_completed"] * 6)
+                         ["skipped_completed"] * 5)
         registry.load.assert_not_called()
-
-    def test_completed_process_rejects_missing_output_contract(self):
-        """A completed process cannot bypass authoritative output validation."""
-        database = self.root / "missing-output.duckdb"
-        initialize_experiment_database(database, self.configuration)
-        connection = duckdb.connect(str(database))
-        try:
-            connection.execute("UPDATE experiment_processes SET status='completed' WHERE process_id=1")
-        finally:
-            connection.close()
-        with patch.object(action_module.ProcessStorage, "validate",
-                          side_effect=RuntimeError("missing stored output")):
-            with self.assertRaisesRegex(RuntimeError, "missing stored output"):
-                ProcessAction().run(database, None, (1,))
 
     def test_interrupted_execution_and_invocation_are_recovered(self):
         """A later sole coordinator closes both stale parent record kinds."""
@@ -588,8 +543,11 @@ class RestoredProcessActionTests(unittest.TestCase):
             connection.close()
 
     def test_selected_wrappers_run_in_order_and_prerequisite_is_enforced(self):
-        """Selected gates run in order while an omitted incomplete predecessor blocks."""
+        """Later generic gates run in order; import restart is covered through its real entry."""
         database = self.root / "ordered.duckdb"
+        initialize_experiment_database(database, self.configuration)
+        with duckdb.connect(str(database)) as connection:
+            connection.execute("UPDATE experiment_processes SET status='completed' WHERE process_id=1")
         calls = []
         registry = MagicMock()
         registry.load.side_effect = lambda process_id: SimpleNamespace(
@@ -597,32 +555,12 @@ class RestoredProcessActionTests(unittest.TestCase):
         )
         with patch.object(action_module.ProcessStorage, "validate",
                           return_value={"output_validated": True}):
-            ProcessAction(registry).run(database, self.configuration, (1, 2, 3))
-        self.assertEqual(calls, [1, 2, 3])
+            ProcessAction(registry).run(database, None, (2, 3))
+        self.assertEqual(calls, [2, 3])
         blocked = self.root / "blocked.duckdb"
         initialize_experiment_database(blocked, self.configuration)
         with self.assertRaisesRegex(RuntimeError, "requires completed Processes 01, 02, 03"):
             ProcessAction().run(blocked, None, (4,))
-
-    def test_failed_gate_records_retryable_process_and_event(self):
-        """A wrapper failure leaves failed gate and execution evidence for resume."""
-        database = self.root / "failed.duckdb"
-        registry = MagicMock()
-        registry.load.return_value = SimpleNamespace(
-            run=MagicMock(side_effect=RuntimeError("synthetic import failure"))
-        )
-        with self.assertRaisesRegex(RuntimeError, "synthetic import failure"):
-            ProcessAction(registry).run(database, self.configuration, (1,))
-        connection = duckdb.connect(str(database), read_only=True)
-        try:
-            self.assertEqual(connection.execute(
-                "SELECT status FROM experiment_processes WHERE process_id=1"
-            ).fetchone(), ("failed",))
-            self.assertEqual(connection.execute(
-                "SELECT status FROM execution_events"
-            ).fetchone(), ("failed",))
-        finally:
-            connection.close()
 
     def test_process_03_failure_closes_database_and_allows_resume(self):
         """A controlled preparation failure preserves prior gates and reopens cleanly."""

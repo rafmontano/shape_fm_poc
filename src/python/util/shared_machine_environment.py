@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import urlparse
 
-from .p01_02_import_execution import repository_root
+from .shared_active_paths import repository_root
 
 
 _MACHINE_ID = re.compile(r"^[a-z][a-z0-9_]*$")

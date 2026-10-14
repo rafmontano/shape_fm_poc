@@ -44,6 +44,34 @@ unperformed tests passed.
 
 ## Mandatory object oriented implementation
 
+### Meaningful workflow hierarchy (X01 Increment 3)
+
+This is a permanent ShapeFM research-architecture principle, not a temporary
+POC2 convention. Carry it into later POCs and use it as the starting standard
+for future research projects unless the researcher explicitly supersedes it.
+
+![Research workflow hierarchy](images/shapefm_research_workflow_hierarchy.png)
+
+Represent complexity as experiment → process → meaningful substep (when justified)
+→ batch/work group → atomic item. A substep needs a meaningful scientific or
+operational responsibility, independently useful output/restart boundary, distinct
+recovery action, or progress the researcher needs to see. A class, method,
+validation or transaction is not automatically a workflow node; objects and nodes
+need not map one-to-one. Prefect coordinates and observes this hierarchy; it is
+not the application architecture. Hide local/Dask dispatch behind a small execution
+interface so domain objects know no hosts, workers or schedulers. DuckDB owns
+scientific state, item completion and restart; Prefect records operational evidence.
+Validate at real trust boundaries, not every internal handoff. Remove superseded
+active APIs and tests that only preserve them rather than retaining rejected paths.
+
+For Process 01 there are no justified independent substeps: acceptance is one
+internal finalization transaction. Its hierarchy is Experiment → Process 01 Import,
+with durable DuckDB item state and no per-item Prefect tasks. Keep the process
+`run()` understandable on one screen; justify any method approaching 100 lines.
+Measure all process-specific code and separately disclose shared modules entered;
+the expected process-specific budget is 300–600 lines, with review required before
+commit at 700 or more. These are complexity triggers, not formatting targets.
+
 Researcher direction clarified on 2 October 2026: object-oriented design, with
 small reusable methods and functions, is the standing code standard for the
 entire ShapeFM project and all future projects, not only POC2. Apply it using
@@ -636,7 +664,7 @@ object responsibilities in the map below.
 
 | Process | Python wrapper | Specialised substep | Shared coordinator/utility | Principal DuckDB input → output |
 |---|---|---|---|---|
-| 01 import | `src/python/01_import.py` | — | `ImportCoordinator`, configuration, database, GIFT-Eval source, provenance | stored configuration → datasets, series, windows, import task state |
+| 01 import | `src/python/01_import.py` | — | `ImportProcess`, `GiftEvalSource`, pure conversion/execution callable, `ImportStore`; shared configuration/bootstrap | stored configuration → datasets, canonical series, evaluation-window boundaries, atomic item state in the parent only |
 | 02 preprocess | `src/python/02_preprocess.py` | `src/r/02_01_preprocess_series.R` | `ExperimentCoordinator`, distributed execution | forecast instances and benchmark metadata → preprocessed series and task state |
 | 03 transform | `src/python/03_transform.py` | — | `ExperimentCoordinator`, transformations, distributed execution | preprocessed series and variants → transformed series and task state |
 | 04 forecast | `src/python/04_forecast.py` | `src/r/04_01_forecast_auto_arima.R`; `src/python/04_02_forecast_chronos.py` | `ExperimentCoordinator`, execution profiles, transformations, distributed execution | transformed series and model settings → base forecasts and task state |

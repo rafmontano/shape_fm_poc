@@ -27,7 +27,7 @@ from prefect.context import get_run_context
 from prefect.futures import as_completed
 from prefect_dask import DaskTaskRunner
 
-from .p01_02_import_execution import repository_root
+from .shared_active_paths import repository_root
 from .shared_configuration import canonical_json, json_fingerprint
 from .shared_database import load_database_configuration
 from .shared_distributed_execution import feature_extraction_batch

@@ -24,7 +24,7 @@ results, configured execution, and the 100-series acceptance workflow.
 
 ## Planning and inspection
 
-X01 Increment 2 normal workflow (supersedes historical path-taking examples):
+X01 normal workflow (supersedes historical path-taking examples):
 
 ```sh
 .venv/bin/python src/python/00_main.py run --processes 1
@@ -40,7 +40,16 @@ The required Process 03 child is `results/windows.duckdb`; before Process 03 it 
 `not created (Process 03 pending)`. Both stores are one experiment, linked by
 stable fingerprints. Missing/incompatible child state after its creation boundary
 is a recovery error, not permission to rebuild implicitly. Process 03 fixed-path
-execution wiring is deferred; do not run Processes 02–06 for Increment 2.
+execution wiring is deferred; do not run Processes 02–06 for Increment 3.
+
+Process 01 now exposes one process, not artificial import/acceptance substeps.
+Status reports completed/expected items, failed identities and concise errors.
+Each series and its evaluation-window boundaries commit atomically. A partial
+restart processes only remaining/failed identities; a completed restart returns
+the stored summary without reading the source or recalculating completed items.
+The [Increment 3 evidence](poc2-x01-increment3-evidence.md) records the bounded
+100-series comparison and recovery proof. Pinned source snapshots must not be
+modified during execution. Status remains read-only and does not verify science.
 
 For a new experiment, stop all writers and let databases/WALs close, archive any
 required result, then explicitly clear both databases and generated outputs/fitted
@@ -49,7 +58,7 @@ Follow the [fixed active layout](experiment-configuration.md#active-experiment-s
 no experiment-named files/folders or researcher-facing evidence directories.
 
 Historical pre-X01 commands and acceptance contracts follow; they are not the
-current Increment 2 workflow:
+current X01 workflow:
 
 ```sh
 .tools/uv/uv run --locked --no-sync python src/python/00_main.py plan \

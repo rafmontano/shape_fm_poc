@@ -41,7 +41,7 @@ from .shared_execution_profiles import (
     validate_system_memory,
 )
 from .p05_01_forecast_combination import combine_equal_weight, combine_m4_point
-from .p01_02_import_execution import repository_root
+from .shared_active_paths import repository_root
 from .shared_transformations import TransformationResult, inverse
 from .shared_provenance import utc_now
 

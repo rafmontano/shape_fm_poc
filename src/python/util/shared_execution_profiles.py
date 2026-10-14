@@ -24,7 +24,7 @@ from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
 
-from .p01_02_import_execution import repository_root
+from .shared_active_paths import repository_root
 from .shared_machine_environment import MachineEnvironment, resolve_machine_environment
 
 

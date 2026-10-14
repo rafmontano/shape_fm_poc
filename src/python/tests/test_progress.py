@@ -36,7 +36,6 @@ class ProgressTests(unittest.TestCase):
         )
         with duckdb.connect(str(self.database)) as connection:
             connection.execute("UPDATE experiment_processes SET updated_at='2026-01-01'")
-            connection.execute("DROP TABLE process_substeps")  # Legacy fixture: no substep records.
 
     def status(self, format=None, identity=None):
         """Invoke the actual entry point and capture terminal presentation."""
@@ -100,7 +99,7 @@ class ProgressTests(unittest.TestCase):
                 text = self.status("human")
                 for number, name in enumerate(("Import", "Preprocess", "Transform/window preparation", "Forecast", "Combine", "Evaluate"), 1):
                     self.assertIn(f"Process {number:02d} {name}: {state}", text)
-                self.assertEqual(text.count("substeps: not recorded"), 6)
+                self.assertEqual(text.count("substeps: not recorded"), 5)
                 self.assertIn("ETA: not recorded", text)
                 self.assertIn("does not prove live work", text)
                 self.assertIn(f"processes): {state}", text)
@@ -118,7 +117,7 @@ class ProgressTests(unittest.TestCase):
         self.populated()
         text = self.status("human", "selected")
         self.assertIn("Imported series: 2", text)
-        self.assertIn("tasks: completed=2;", text)
+        self.assertIn("Items: 2 / 100", text)
         self.assertIn("tasks: completed=1, failed=2;", text)
         self.assertIn("Source revision (latest execution): fixture-revision", text)
         self.assertIn("execution exec processes=[1] | completed", text)
@@ -148,7 +147,7 @@ class ProgressTests(unittest.TestCase):
         self.assertEqual(set(default["status"]), {
             "configuration_version", "name", "date", "description", "seed",
             "scientific_hash", "configuration_integrity_hash", "resolved_configuration", "processes",
-            "database_roles", "substeps",
+            "database_roles", "import_progress",
         })
         self.assertEqual(default["status"]["configuration_version"], 12)
         self.assertEqual([row["process_id"] for row in default["status"]["processes"]], list(range(1, 7)))

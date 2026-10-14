@@ -49,7 +49,7 @@ class SourceSeries:
     target: tuple[float | None, ...]
 
 
-class ConfiguredGiftEvalSource:
+class GiftEvalSource:
     """Own the read-only GIFT-Eval source contract for one stored experiment.
 
     Construction resolves no JSON and performs no I/O.  The configuration supplied
@@ -94,7 +94,7 @@ class ConfiguredGiftEvalSource:
         """Return pinned descriptive metadata without interpreting it as configuration."""
         return source_metadata(self.path)
 
-    def records(self) -> Iterator[SourceSeries]:
+    def records(self, exclude=frozenset()) -> Iterator[SourceSeries]:
         """Stream the configured bounded records in authoritative source order."""
         settings = self.settings
         expected = self.configuration.resolved["data"]["selection"].get("expected_source_total")
@@ -107,6 +107,7 @@ class ConfiguredGiftEvalSource:
             self.path,
             settings["benchmark"]["frequency"],
             settings["max_series"],
+            exclude=exclude,
         )
 
 
@@ -162,7 +163,8 @@ def _validate_schema(schema: pa.Schema) -> None:
 
 
 def iter_source_series(
-    source_dir: Path, expected_frequency: str, max_series: int | None
+    source_dir: Path, expected_frequency: str, max_series: int | None,
+    *, exclude=frozenset(),
 ) -> Iterator[SourceSeries]:
     """Purpose: Stream validated univariate series from the pinned Arrow snapshot.
 
@@ -182,6 +184,10 @@ def iter_source_series(
             for batch_row in range(batch.num_rows):
                 if max_series is not None and source_row >= max_series:
                     return
+                identity = batch.column(0)[batch_row].as_py()
+                if identity in exclude:
+                    source_row += 1
+                    continue
                 values = [batch.column(index)[batch_row].as_py() for index in range(4)]
                 item_id, start, frequency, target_values = values
                 if any(value is None for value in values[:3]) or target_values is None:

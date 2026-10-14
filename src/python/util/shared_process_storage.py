@@ -90,18 +90,6 @@ class ProcessStorage:
 
                 configuration = load_database_configuration(self.database, connection)
                 expected = configuration.series_count
-                tables = {row[0] for row in connection.execute("SHOW TABLES").fetchall()}
-                if "process_substeps" in tables and connection.execute(
-                    "SELECT count(*) FROM process_substeps WHERE process_id=1"
-                ).fetchone()[0]:
-                    from .p01_04_import_state import ImportState
-
-                    state = ImportState(connection, configuration)
-                    for identity in state.definitions:
-                        if not state.accepted(identity):
-                            raise RuntimeError(f"Process 01 substep {identity} is not completed")
-                    return {"output_validated": True, "expected_task_count": expected,
-                            "stored_task_count": expected}
                 stored = int(connection.execute("SELECT count(*) FROM series").fetchone()[0])
                 incomplete = int(connection.execute("SELECT count(*) FROM tasks WHERE status!='completed'").fetchone()[0])
                 tasks = int(connection.execute("SELECT count(*) FROM tasks").fetchone()[0])
@@ -401,64 +389,14 @@ class ProcessStorage:
 
     @staticmethod
     def _validate_import(connection: duckdb.DuckDBPyConnection, configuration: Any) -> None:
-        """Validate Gate 1 identities, values, hashes and window lineage from configuration."""
-        from .p01_03_gift_eval_source import ConfiguredGiftEvalSource
-        from .p01_02_import_execution import SeriesTask, compute_series, repository_root
-        from .shared_configuration import dataset_identity
+        """Later consumers may verify the import digest; Process 01 never enters here."""
+        from .p01_05_import_store import ImportStore
 
-        settings = configuration.import_settings
-        horizon = int(settings["benchmark"]["prediction_length"])
-        expected_window = f"{settings['benchmark']['term']}/000"
-        source = ConfiguredGiftEvalSource(configuration, repository_root())
-        snapshot = source.fingerprint()
-        expected_dataset, _ = dataset_identity(settings, source.revision, snapshot["files"])
-        authoritative = {}
-        for record in source.records():
-            task = SeriesTask(
-                "validation", "validation", record.source_series_id,
-                record.source_series_id, record.source_row, record.frequency,
-                record.start_timestamp, record.target, horizon, expected_window,
-                settings["benchmark"]["boundary_convention"],
-            )
-            authoritative[record.source_series_id] = (record, compute_series(task))
-        rows = connection.execute(
-            """SELECT t.dataset_id,t.series_id,s.source_series_id,s.source_row,s.frequency,
-                      s.target,s.observation_count,s.content_hash,w.window_id,w.train_start,
-                      w.train_end,w.validation_start,w.validation_end,w.test_start,w.test_end,
-                      w.horizon,w.boundary_convention,s.start_timestamp,w.split_name
-               FROM tasks t
-               LEFT JOIN series s ON s.dataset_id=t.dataset_id AND s.series_id=t.series_id
-               LEFT JOIN evaluation_windows w ON w.dataset_id=t.dataset_id
-                 AND w.series_id=t.series_id AND w.window_id=?
-               WHERE t.stage='import' AND t.status='completed'""",
-            [expected_window],
-        ).fetchall()
-        for row in rows:
-            (dataset_id, series_id, source_id, source_row, frequency, target, count,
-             fingerprint, window_id, train_start, train_end, validation_start,
-             validation_end, test_start, test_end, stored_horizon, boundary, start, split) = row
-            length = len(target) if target is not None else -1
-            expected = authoritative.get(series_id)
-            values_match = (expected is not None and target is not None
-                            and len(target) == len(expected[0].target)) and all(
-                stored == raw or (stored is None and raw is not None and math.isnan(raw))
-                for stored, raw in zip(target, expected[0].target, strict=True)
-            )
-            if (dataset_id != expected_dataset or expected is None or source_id != series_id
-                    or source_row != expected[0].source_row or frequency != expected[0].frequency
-                    or count != length or not values_match
-                    or fingerprint != expected[1].content_hash
-                    or start != expected[0].start_timestamp or split != "validation_and_test"
-                    or window_id != expected_window or train_start != 0
-                    or train_end != length - 2 * horizon
-                    or validation_start != train_end
-                    or validation_end != length - horizon
-                    or test_start != validation_end or test_end != length
-                    or stored_horizon != horizon
-                    or boundary != settings["benchmark"]["boundary_convention"]):
-                raise RuntimeError("stored import output failed identity, value, hash or lineage validation")
-        if len(rows) != len(authoritative) or {row[1] for row in rows} != set(authoritative):
-            raise RuntimeError("stored import membership differs from authoritative source")
+        summary = json.loads(connection.execute(
+            "SELECT summary FROM experiment_processes WHERE process_id=1"
+        ).fetchone()[0])
+        if summary.get("output_fingerprint") != ImportStore.fingerprint(connection):
+            raise RuntimeError("stored import output fingerprint mismatch")
 
     @staticmethod
     def _validate_preprocessed(connection: duckdb.DuckDBPyConnection) -> None:

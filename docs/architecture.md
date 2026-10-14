@@ -1,9 +1,31 @@
 # ShapeFM architecture
 
-POC2-X01 architecture transformation is **in progress, Increment 2 authorised**. Its
+POC2-X01 architecture transformation is **in progress, Increment 3 authorised**. Its
 [governing target and incremental validation rule](poc2-x01-architecture-transformation.md)
 preserve scientific contracts and add fixed paths and Process 01 restart state; they do
 not authorise a wholesale rewrite or later increments.
+
+Increment 3 replaces Process 01 with the approved hierarchy and responsibility
+rules in [the code standard](code-standards.md#meaningful-workflow-hierarchy-x01-increment-3).
+The application map, implemented and boundedly verified in the
+[Increment 3 evidence](poc2-x01-increment3-evidence.md), is:
+
+```text
+researcher command → experiment → ImportProcess.run()
+  → GiftEvalSource → pure canonical conversion via execution interface
+  → ImportStore → results/experiment.duckdb
+```
+
+Prefect exposes only Experiment → Process 01 Import. DuckDB item commits determine
+restart; import acceptance is internal finalization, not an independent substep.
+Completed restart reads the stored summary without source access or recalculation.
+Partial restart converts incomplete/failed identities only. One source-boundary
+pin check per incomplete invocation and one final stored scientific fingerprint
+replace repeated whole-source/table checks. Source snapshots are immutable inputs;
+concurrent external mutation is unsupported, not guarded by a second full hash.
+Generic inspect/execute/validate orchestration remains for later processes only.
+The obsolete ImportCoordinator/ImportState and multiprocessing APIs are removed,
+not wrapped. Fixed parent/child ownership and scientific content remain unchanged.
 
 The [active two-DuckDB contract](experiment-configuration.md#active-experiment-storage)
 supersedes experiment-named output paths below. `config/experiment.json` bootstraps
@@ -56,9 +78,8 @@ language and isolated-subprocess boundary, not a second state store. The
 coordinator is the sole DuckDB writer.
 
 GIFT-Eval is the sole canonical time-series authority. Process 01 imports its
-configured records and persists acceptance through two durable substeps:
-`01.01 Import canonical GIFT-Eval dataset` and
-`01.02 Persist and accept canonical import`. It never compares histories with
+configured records into atomic item commits and internally finalizes acceptance.
+The Increment 2 artificial substeps are superseded. It never compares histories with
 M4comp2018 to accept, reject, warn about or modify import. The former
 [cross-source policy](experiment-configuration.md#cross-source-reconciliation-approved-8-october-2026)
 is superseded for production. Historical adapters in `tmp/inactive/` are for
@@ -181,7 +202,7 @@ records retained calibration, setup, compatibility and QA paths.
 | Owner | Current modules under `src/python/util/` |
 | --- | --- |
 | 00 entry | `p00_01_researcher_actions.py`, `p00_02_researcher_cli.py`, `p00_03_researcher_request.py` |
-| 01 import | `p01_01_import_flow.py`, `p01_02_import_execution.py`, `p01_03_gift_eval_source.py`, `p01_04_gift_eval_acquisition.py` |
+| 01 import | `p01_01_import_flow.py`, `p01_02_import_execution.py`, `p01_03_gift_eval_source.py`, `p01_05_import_store.py`; `p01_04_gift_eval_acquisition.py` is acquisition-only, not entered by import |
 | 04 forecast | `p04_01_forecast_flow.py`, `p04_02_forecast_provider.py`, `p04_03_forecast_storage.py`, `p04_04_seasonal_period_tuning.py`, `p04_05_m4_submission.py` |
 | 05 combine | `p05_01_forecast_combination.py` |
 | Cross-gate coordination | `shared_experiment_execution.py`, `shared_workflow_orchestration.py`; these retain Gates 2/3/5/6 coordination without artificial per-gate extraction |
@@ -280,6 +301,8 @@ The acceptance record distinguishes test evidence and remaining research choices
 The accepted Stage 1 snapshot uses these responsibilities. Verification gaps
 carried into Stage 2 remain in the acceptance record; acceptance is not a claim
 that all workflows or capability tests are complete.
+This is a historical snapshot: X01 Increment 3 supersedes its import owners,
+direct-import compatibility API and repeated import validation, as described above.
 
 | Responsibility | Object and operations | Execution owner / tests |
 | --- | --- | --- |

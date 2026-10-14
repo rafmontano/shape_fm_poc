@@ -1,12 +1,76 @@
 # POC2-X01 architecture transformation
 
-Status: **in progress — Increment 2 authorised**, by the researcher on
+Status: **in progress — Increment 3 authorised**, by the researcher on
 14 October 2026. Increment 1 is the published starting point. Implementation and evidence remain subject to ChatGPT technical
 review and independent researcher approval under the
 [working agreement](working-agreement.md). This target does **not** authorise a
 wholesale rewrite, scientific changes, or starting another increment.
 
-## Increment 2: active experiment and Process 01
+## Increment 3: Process 01 simplification
+
+The approved [meaningful hierarchy standard](code-standards.md#meaningful-workflow-hierarchy-x01-increment-3)
+supersedes Increment 2's artificial substeps. The pre-edit inventory and target
+are recorded below. [Increment 3 evidence](poc2-x01-increment3-evidence.md) records
+the implemented candidate, bounded validation and remaining review boundary.
+No later process, Ubuntu operation, dependency change or new storage is authorised.
+
+Before: `00_main.main → ResearcherActions.dispatch/_run → ProcessAction.run/_run
+→ experiment_flow → gate_flow → execute_gate → ProcessAction._execute
+→ 01_import.run → gate1_import_flow → canonical_import/reference acceptance
+→ ImportCoordinator → DuckDB`. This is 14 named application frames to storage
+(count dispatch and public/private run separately; omit Prefect internals).
+
+Active import modules at the starting revision: `01_import.py` (30 lines),
+`p01_01_import_flow.py` (98), `p01_02_import_execution.py` (958),
+`p01_03_gift_eval_source.py` (215), `p01_04_import_state.py` (121): 1,422 physical
+lines including comments/blank lines. Process-specific branches also live in
+`shared_process_storage.py` and bootstrap; the after report must disclose them.
+The acquisition helper is a planning/source-download facility, not entered by import.
+Largest retained legacy method: `import_m4_daily`, 165 lines.
+
+Responsibilities: `ConfiguredGiftEvalSource` parses Arrow/pins source;
+`ImportCoordinator` mixes source sequencing, legacy worker pools, provenance,
+item storage and validation; `ImportState` duplicates completion/fingerprints;
+generic `ProcessStorage` also validates and transitions import. Three domain
+owners plus a generic state owner; three transport dataclasses carry source/task/
+result (plus legacy WorkerOutcome). Prefect has Experiment, generic gate, nested
+import and two subflows (five flows), inspect/execute/validate task types, one
+per-series task type and the workflow-identity task (104 application task
+executions for a fresh 100-item run; framework subflow markers excluded).
+
+Full-data passes: source pin before and after import; canonical membership scan;
+two substep output fingerprints, then two more in the generic final validator.
+Completed restart rehashes both outputs. Partial item restart additionally
+recalculates completed records. Legacy generic fallback reopens source, hashes it
+and recalculates every stored item. Legacy `import_m4_daily`, ProcessPool dispatch
+and `import_configured` are exercised only by historical tests/acceptance harness;
+they must not remain active compatibility APIs. Restart levels are process,
+artificial substep and atomic item. Human status exposes both artificial substeps.
+
+Shared call-path modules: researcher CLI/request/actions, active paths,
+configuration, database/bootstrap, workflow orchestration/writer locks,
+execution-event storage, process storage, provenance, plus their import-time
+dependencies (later coordinators/providers are imported but not executed).
+The evidence report will distinguish whole-module size from executed functions.
+
+Target prepared before production edits:
+
+```text
+researcher command → experiment → ImportProcess.run()
+  → GiftEvalSource → canonical conversion → execution interface
+  → ImportStore → experiment.duckdb
+```
+
+One Process 01 flow, zero import tasks/substeps. Store owns all import SQL and
+atomic item completion; finalization confirms count and computes one final
+scientific fingerprint using the Increment 2 serialization. Completed restart
+returns stored summary without opening the source or rehashing tables. Partial
+restart filters completed identities before conversion. Local callable execution
+implements the small interface without adding an execution framework. A genuine
+need for another substep, changed science/later-process execution, or 700+ active
+process-specific lines requires review before committing.
+
+## Increment 2: historical implementation boundary
 
 The [Increment 2 implementation evidence](poc2-x01-increment2-evidence.md)
 records the focused checks, fresh Process 01 run, restart, cleanup and limitations.
