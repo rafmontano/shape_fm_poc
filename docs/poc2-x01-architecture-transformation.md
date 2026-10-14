@@ -362,8 +362,9 @@ existing MLflow run is `e73fc135fdc54cbca127dc0069ee1942`.
 - All 15 relative `models/<experiment-id>/...` references resolve with their
   stored size/SHA. Five CSVs in `results/tables/` and six PNG/PDF files in
   `results/figures/` are byte-identical to the accepted outputs.
-- The existing MLflow run remains `FINISHED`, with 28 curated metrics, five
-  parameters, completed milestone tags and 11 published artifacts. Its old
+- The existing MLflow run remains `FINISHED`, with 28 curated scientific metrics
+  plus 60 operational completion/progress fields, five parameters, completed
+  milestone tags and 11 published artifacts. Its old
   `last_error` tag is operational history, not a current failure or scientific
   state. Public read APIs resolve all artifacts under `.runtime/mlflow/`.
 - Promotion replaced, rather than merged, the stale root database. Every table
@@ -381,9 +382,13 @@ existing MLflow run is `e73fc135fdc54cbca127dc0069ee1942`.
   the isolated review package.
 
 The original accepted package and recoverable stale-root backup were preserved
-through validation. Removal of obsolete generated copies and scratch material
-follows the canonical checkpoint; source data, environments, package/model caches,
-Git history and IDE state are preserved. No task-owned writer/worker/service is
+through validation and the published canonical checkpoint. They and the obsolete
+generated experiment/parity copies, one-off scripts and scratch material have
+now been removed. Project bytecode and stale package-build metadata were removed;
+Numba caches were preserved under `.cache/`. Source data, environments, package/
+model caches, Git history and IDE state are preserved. Post-cleanup read-only
+checks confirmed both stores, fitted references and all MLflow artifact links
+remain usable without the review package. No task-owned writer/worker/service is
 left active. Ubuntu synchronization is operational only and remains the final
 delivery step when that host is available; it must not run science.
 
