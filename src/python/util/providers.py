@@ -23,10 +23,15 @@ def run_r(script: str, payload: dict[str, Any], *, timeout: float, threads: int)
     """
     completed = subprocess.run(
         ["Rscript", str(CODE_ROOT / script)], input=json.dumps(payload),
-        cwd=CODE_ROOT, check=True, capture_output=True, text=True, timeout=timeout,
+        cwd=CODE_ROOT, capture_output=True, text=True, timeout=timeout,
         env={**os.environ, "OMP_NUM_THREADS": str(threads), "OPENBLAS_NUM_THREADS": str(threads),
              "RENV_CONFIG_SYNCHRONIZED_CHECK": "false"},
     )
+    try:
+        completed.check_returncode()
+    except subprocess.CalledProcessError as error:
+        error.add_note(completed.stderr)
+        raise
     return json.loads(completed.stdout)
 
 

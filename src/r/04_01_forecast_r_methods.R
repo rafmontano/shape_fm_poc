@@ -1,12 +1,7 @@
 #!/usr/bin/env Rscript
-# ==============================================================================
-# 04_01_forecast_r_methods.R
-#
-# Purpose: Serve the capability-aware R pool and shared period diagnostics.
-# Inputs: JSON stdin with action forecast or diagnose_period and versioned jobs.
-# Outputs: Common forecast result/error envelopes and package versions; no DuckDB.
-# Run from: Invoked by the Python Gate 4 coordinator.
-# ==============================================================================
+# Process 04 capability-aware R pool (docs/forecast-black-box-contract.md).
+# Input: past-only forecast-v1 JSON jobs with settings, period and seed.
+# Output: complete point/probabilistic horizons or explicit errors; no storage.
 
 suppressPackageStartupMessages({
   library(forecast)
@@ -15,7 +10,6 @@ suppressPackageStartupMessages({
 })
 
 source("src/r/util/forecast_methods.R")
-source("src/r/util/seasonal_period.R")
 
 payload <- jsonlite::fromJSON(file("stdin"), simplifyVector = FALSE)
 
@@ -139,27 +133,10 @@ forecast_error <- function(job, error) {
   )
 }
 
-# Purpose: Diagnose one model-specific estimated-period candidate.
-# Inputs: Job with prepared context, baseline period, model, and minimum cycles.
-# Outputs: Candidate evidence carrying the original job identity.
-diagnose_one <- function(job) {
-  c(
-    list(id = job$id, model = job$model),
-    diagnose_seasonal_period(
-      job$context,
-      job$baseline_period,
-      job$model,
-      job$minimum_cycles
-    )
-  )
-}
-
 if (identical(payload$action, "forecast")) {
   results <- lapply(payload$jobs, function(job) {
     tryCatch(forecast_one(job), error = function(error) forecast_error(job, error))
   })
-} else if (identical(payload$action, "diagnose_period")) {
-  results <- lapply(payload$jobs, diagnose_one)
 } else {
   stop("Unsupported R methods worker action", call. = FALSE)
 }

@@ -23,16 +23,7 @@ def calculate_canonical_series(item: WorkItem) -> dict[str, Any]:
     GIFT-Eval is the data authority (docs/data-contract.md). Targets are not
     cleaned; null/NaN observations remain missing. Boundaries are end-exclusive.
     """
-    population = item.payload
-    position = population["source_row"]
-    with pa.memory_map(population["source_path"], "r") as source:
-        for batch in ipc.open_stream(source):
-            if position < batch.num_rows:
-                record = batch.slice(position, 1).to_pylist()[0]
-                break
-            position -= batch.num_rows
-        else:
-            raise ValueError(f"GIFT-Eval source row is missing: {item.key}")
+    population, record = item.payload["population"], item.payload["record"]
     target = record["target"]
     if (record["item_id"] != population["series_id"] or record["freq"] != population["frequency"]
             or not target or any(v is not None and math.isinf(v) for v in target)):
@@ -91,8 +82,29 @@ class ImportApplication:
         return self.context.ref("01.01")
 
     def pending_canonical_series(self, population: DataRef) -> list[WorkItem]:
-        """Plan only registered series absent from accepted canonical results."""
-        return self.store.plan("01.02", [WorkItem(key, record) for key, record in self.store.rows("01.01").items()])
+        """Plan missing records with portable values, not coordinator-only paths.
+
+        The source is read only by the coordinator; workers validate and return
+        selected canonical records without needing a shared source filesystem.
+        Accepted series are excluded before reading any observation values.
+        """
+        accepted = self.store.keys("01.02")
+        selected = {key: record for key, record in self.store.rows("01.01").items() if key not in accepted}
+        items = []
+        for source_path in sorted({record["source_path"] for record in selected.values()}):
+            by_position = {record["source_row"]: (key, record) for key, record in selected.items()
+                           if record["source_path"] == source_path}
+            offset = 0
+            with pa.memory_map(source_path, "r") as source:
+                for batch in ipc.open_stream(source):
+                    for position, (key, record) in by_position.items():
+                        if offset <= position < offset + batch.num_rows:
+                            items.append(WorkItem(key, {"population": record,
+                                "record": batch.slice(position - offset, 1).to_pylist()[0]}))
+                    offset += batch.num_rows
+        if len(items) != len(selected):
+            raise ValueError("registered GIFT-Eval source rows are missing")
+        return self.store.plan("01.02", sorted(items, key=lambda item: item.key))
 
     def accept_canonical_series(self, results: list[tuple[str, dict[str, Any]]]) -> None:
         """Commit returned canonical series on the coordinator, atomically by group."""

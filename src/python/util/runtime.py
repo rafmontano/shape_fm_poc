@@ -260,9 +260,12 @@ class ProcessContext:
 
     def close(self) -> None:
         """Release scientific writers after completion or failure."""
-        if self.child is not None:
-            self.child.close()
-        self.repository.close()
+        try:
+            self.execution.close()
+        finally:
+            if self.child is not None:
+                self.child.close()
+            self.repository.close()
 
 
 def open_experiment(request: ExperimentRequest) -> ProcessContext:

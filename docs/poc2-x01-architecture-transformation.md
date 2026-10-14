@@ -292,3 +292,59 @@ handlers/planning/dispatch, window/feature orchestration, repeated storage
 validation, compatibility transformation branches and their obsolete tests
 were removed. The unmigrated Process 04 retains only its existing stored-cohort
 reader until D; no schema bridge or wrapper was introduced.
+
+## Increment D — Forecast candidate; acceptance blocked
+
+The candidate implements the approved five Forecast subflows with pure native
+R/Python calculations, coordinator-only result/artifact acceptance and cached
+foundation-model sessions. D is not accepted: its superseded implementation,
+calibration-only code/configuration/tests and remaining documentation audit have
+not yet been retired. E and F have not started. A–C remain accepted and pushed.
+
+The isolated local 100-series workspace accepted 1,600 individual forecasts,
+595 embeddings, 15 fitted artifacts and 200 complete directional vectors;
+no Process 05/06 work ran. A first attempt failed after 488 forecasts; the native
+failure's cause was not established. A Process 04-only resume preserved those
+forecasts and completed the pool. Completed restart took 4.917 seconds with all
+3,406 parent rows, 732 child rows, timestamps and artifact bytes unchanged.
+Independent direct-aeon and pinned RF calculations verified all 2,800 directional
+labels. Deleting one fitted artifact in a disposable copy rebuilt only that
+unit in 12.410 seconds, with identical bytes and all other accepted rows intact.
+
+A bounded two-machine Process 04-only run reused accepted Process 01–03 inputs
+and finished in 2,128.915 seconds with the same counts. Dask's standard task
+stream recorded scientific groups on Mac CPU, Ubuntu CPU and Ubuntu GPU.
+Each isolated scientific experiment retained one coordinator MLflow run:
+local `54b1cafba2be435f8a45057ddb9da5b7`, distributed
+`e73fc135fdc54cbca127dc0069ee1942`. Completion status does not establish parity.
+
+DTW neighbour identities, distances and all 1,400 labels matched exactly.
+The initial CUDA Mantis run differed in 35 RF prediction vectors. A failing
+eight-input batch reproduced cuDNN's default TF32 reduction. Disabling TF32
+matmul/convolution preserves the specified float32 calculation; a bounded
+595-input diagnostic plus independent 14-horizon RF fits then produced all
+1,400 local labels exactly. Residual embeddings differed by at most
+0.0003509521484375; 524 of 152,320 coordinates exceeded the diagnostic floating
+check. This corrected candidate has not passed full distributed acceptance.
+
+NNETAR and AutoARIMA still differ across hosts: 183 forecast array-fields
+exceeded the legacy diagnostic `atol=rtol=1e-5`, with maximum original-scale
+absolute difference 5.2710900185 and reported relative difference 0.002242269.
+Identical direct native calls reproduced two failing series without Dask,
+inversion or storage; each host's direct means reproduced its stored means
+exactly after the accepted inverse transformation. R/package versions and
+recorded scientific settings agree. Native BLAS libraries differ, but BLAS has
+not been established as the cause. Seven focused A–D tests passed before this
+numerical investigation; they do not override the failed acceptance check.
+After the TF32 correction, the three focused Forecast tests passed again
+(4.893 seconds), and the corrected native CUDA session passed the originally
+failing eight-input batch (maximum embedding difference 0.0000057220458984375).
+
+The living contracts refer to an approved numerical policy without specifying
+floating-output thresholds. The legacy diagnostic threshold is not established
+as researcher-approved. Researcher review must specify same-current-code
+floating acceptance/precision for forecasts and embeddings before D can be
+accepted. Do not widen tolerances, round outputs, alter optimizers/models,
+replace numerical dependencies or concentrate work on one host to hide these
+differences. Historical approximate similarity remains a separate final check.
+Evidence is retained in the isolated review artifact workspaces; X01 is open.

@@ -7,6 +7,7 @@ accepts returned scientific results into DuckDB. No scientific setting changes.
 
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -16,7 +17,7 @@ from prefect.cache_policies import NO_CACHE
 from prefect.futures import as_completed
 from prefect_dask import DaskTaskRunner
 
-from util.runtime import ProgressSnapshot, WorkItem
+from util.runtime import CODE_ROOT, ProgressSnapshot, WorkItem
 
 
 @dataclass
@@ -37,10 +38,13 @@ def calculate_group(items: list[WorkItem], calculate: Callable[[WorkItem], dict[
     failure. DuckDB atomic keys, not this task's operational state, own restart.
     """
     if calculate_batch is not None:
+        results = []
         try:
-            return GroupResult(calculate_batch(items))
+            for result in calculate_batch(items):
+                results.append(result)
+            return GroupResult(results)
         except Exception as error:
-            return GroupResult([], error)
+            return GroupResult(results, error)
     results = []
     for item in items:
         try:
@@ -59,6 +63,19 @@ class WorkGroupExecutor:
 
     def __init__(self, context: Any):
         self.context = context
+        profiles = json.loads((CODE_ROOT / "config/execution_profiles.json").read_text())
+        profiles.update(context.configuration.get("execution_profiles", {}))
+        self.settings = profiles[context.request.execution_profile]
+        self.cluster = None
+
+    def resources(self, provider: str) -> dict[str, float]:
+        """Read registry placement labels; they never enter scientific identity."""
+        return self.settings.get("providers", {}).get(provider, {}).get("resources", {})
+
+    def close(self) -> None:
+        """Release this invocation's cluster, retaining accepted scientific state."""
+        if self.cluster is not None:
+            self.cluster.close()
 
     def run(self, *, subflow_id: str, items: list[WorkItem], calculate: Callable,
             accept: Callable, on_progress: Callable, calculate_batch: Callable | None = None) -> None:
@@ -98,23 +115,37 @@ class WorkGroupExecutor:
             for group in groups:
                 receive(calculate_group.fn(group, calculate, calculate_batch))
         elif groups:
-            profiles = self.context.configuration.get("execution_profiles", {})
-            settings = profiles[profile]
-            runner = DaskTaskRunner(address=settings.get("scheduler_address"),
-                                    cluster_kwargs=settings.get("cluster_kwargs", {
-                                        "n_workers": 2, "threads_per_worker": 1,
-                                        "processes": False, "dashboard_address": None}))
+            settings = self.settings
+            address = settings.get("scheduler_address")
+            if "workers" in settings:
+                if self.cluster is None:
+                    from util.distributed_cluster import DistributedCluster
+                    self.cluster = DistributedCluster(settings)
+                    self.cluster.address = self.cluster.start()
+                address = self.cluster.address
+            runner = (DaskTaskRunner(address=address) if address else
+                      DaskTaskRunner(cluster_kwargs=settings.get("cluster_kwargs", {
+                          "n_workers": 2, "threads_per_worker": 1,
+                          "processes": False, "dashboard_address": None})))
             with runner:
                 limit = int(settings.get("max_in_flight", 4))
                 for offset in range(0, len(groups), limit):
                     futures = []
                     for group in groups[offset:offset + limit]:
                         import dask
-                        with dask.annotate(resources=group[0].resources):
+                        resources = group[0].resources or ({"CPU": 1} if "workers" in settings else {})
+                        with dask.annotate(resources=resources):
                             futures.append(runner.submit(calculate_group,
                                 parameters={"items": group, "calculate": calculate,
                                             "calculate_batch": calculate_batch}))
+                    first_error = None
                     for future in as_completed(futures):
-                        receive(future.result())
+                        try:
+                            receive(future.result())
+                        except Exception as error:
+                            if first_error is None:
+                                first_error = error
+                    if first_error is not None:
+                        raise first_error
         repository.require_complete(subflow_id)
         progress()

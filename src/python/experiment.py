@@ -20,8 +20,19 @@ from util.runtime import CODE_ROOT, ExperimentRequest, open_experiment
 from util.research_tracking import MLflowResearchTracking
 
 
-@flow(name="ShapeFM experiment")
 def run_experiment(request: ExperimentRequest) -> str:
+    """Prepare coordinator services and invoke the single scientific experiment flow.
+
+    Distributed requests use inventory-derived orchestration addresses; the
+    researcher selects a profile, not manually managed Prefect/Dask endpoints.
+    """
+    from util.distributed_cluster import coordinator_api
+    with coordinator_api(request.execution_profile):
+        return experiment_flow(request)
+
+
+@flow(name="ShapeFM experiment")
+def experiment_flow(request: ExperimentRequest) -> str:
     """Experiment-level flow; DuckDB process/subflow/atomic keys govern resume.
 
     Execute the approved six processes in order, stopping at the requested
