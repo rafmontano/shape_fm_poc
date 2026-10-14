@@ -1,15 +1,9 @@
-# ==============================================================================
-# features.R
-#
-# Purpose: Calculate the fixed FFORMA-compatible 42-feature vector for one series.
-# Inputs: A finite stats::ts whose frequency is the centrally resolved seasonality.
-# Outputs: One named, finite numeric vector in FEATURE_SCHEMA order; no forecasts,
-#   future observations, labels, persistence, or frequency mapping are performed.
-# Run from: Imported by src/r/feature_provider.R and focused R tests.
-# ==============================================================================
+# Process 03 reusable FFORMA features: finite prepared stats::ts -> 42 named values.
+# Native tsfeatures formulas and scaling follow the FFORMA feature pool
+# (Montero-Manso et al., 2020); approved missing/fallback policies are below.
+# No future observations, forecasting, membership selection or storage occurs here.
 
-# Scientific constants: the schema and pool reproduce the unchanged legacy
-# calculation while naming composition explicitly rather than relying on positions.
+# Fixed feature order shared by provider output and downstream learners.
 FEATURE_SCHEMA <- c(
   "x_acf1", "x_acf10", "diff1_acf1", "diff1_acf10", "diff2_acf1",
   "diff2_acf10", "seas_acf1", "ARCH.LM", "crossing_points", "entropy",
@@ -25,9 +19,7 @@ NONSEASONAL_OPTIONAL_FEATURES <- c(
   "seas_acf1", "seas_pacf", "seasonal_strength", "peak", "trough"
 )
 
-# Future capability record: these fields are intentionally outside FEATURE_SCHEMA.
-# Legacy training calculated them using window futures, while real prediction used
-# a historical holdout; that mismatch is not a valid deployable feature contract.
+# Future-dependent directional features are excluded from the deployable schema.
 DISABLED_DIRECTIONAL_FEATURES <- c(
   "da_mda_arima", "da_mdv_arima", "da_mdpv_arima", "da_pt_pvalue_arima",
   "da_mda_ets", "da_mdv_ets", "da_mdpv_ets", "da_pt_pvalue_ets"
@@ -37,18 +29,14 @@ DIRECTIONAL_FEATURES_DISABLED_REASON <- paste(
   "holdout; forecasts and directional features are therefore disabled."
 )
 
-# Purpose: Preserve FFORMA's four-zero fallback when heterogeneity cannot be fit.
-# Inputs: One stats::ts accepted by tsfeatures.
-# Outputs: Four named heterogeneity values, or four zeros after any error.
+# stats::ts -> four heterogeneity values; fitting errors return four zeros.
 heterogeneity_feature_fallback <- function(x) {
   fallback <- c(arch_acf = 0, garch_acf = 0, arch_r2 = 0, garch_r2 = 0)
   value <- try(tsfeatures::heterogeneity(x), silent = TRUE)
   if (inherits(value, "try-error")) fallback else value
 }
 
-# Purpose: Preserve a finite zero entropy for constant, short, or failing series.
-# Inputs: One stats::ts accepted by tsfeatures.
-# Outputs: Named scalar entropy, using zero when entropy is not finite or available.
+# stats::ts -> entropy; constant/short inputs and unavailable entropy return zero.
 entropy_feature_fallback <- function(x) {
   series_sd <- stats::sd(as.numeric(x), na.rm = TRUE)
   if (length(x) < 2L || !is.finite(series_sd) || series_sd == 0) {
@@ -61,10 +49,8 @@ entropy_feature_fallback <- function(x) {
   c(entropy = as.numeric(value[[1L]]))
 }
 
-# Purpose: Fit the legacy Holt-Winters AAA parameters with its NA fallback.
-# Inputs: One stats::ts accepted by forecast::ets.
-# Outputs: Named alpha, beta, gamma parameters; unavailable positions are NA and
-#   are converted to zero only by the final feature-vector missing-value policy.
+# stats::ts -> ETS(AAA) alpha/beta/gamma; fit failure returns NA, converted to zero
+# only by the final feature-vector policy.
 hw_parameters_feature_fallback <- function(x) {
   parameters <- c(NA_real_, NA_real_, NA_real_)
   fit <- try(forecast::ets(x, model = "AAA"), silent = TRUE)
@@ -75,12 +61,9 @@ hw_parameters_feature_fallback <- function(x) {
   stats::setNames(parameters, c("hw_alpha", "hw_beta", "hw_gamma"))
 }
 
-# Purpose: Calculate exactly one FFORMA-style feature row independently.
-# Inputs: A finite, non-empty stats::ts with its authoritative resolved frequency.
-# Outputs: Named finite numeric vector in FEATURE_SCHEMA order. Unexpected,
-#   duplicate, or nonseasonal-unrelated missing names raise a schema error.
-# Design: This bounded stateless scientific kernel uses the code standard's
-#   practical functional exception; an object would add no state or cohesion.
+# Finite nonempty stats::ts -> FEATURE_SCHEMA order. tsfeatures scales each series
+# independently; only absent nonseasonal fields and final NA values become zero.
+# Duplicate/unexpected names, other missing fields and nonfinite output fail.
 calculate_fforma_features <- function(series) {
   if (!inherits(series, "ts") || length(series) < 1L || any(!is.finite(series))) {
     stop("feature input must be a non-empty finite stats::ts", call. = FALSE)

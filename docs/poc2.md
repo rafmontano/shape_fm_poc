@@ -44,8 +44,8 @@ The researcher decides whether newly found work belongs to POC2 or the POC3
 backlog. Execution logs are not living documentation.
 
 The cleanup checkpoint `c498dc6` and its recorded structural baseline are
-preserved in [X01](poc2-x01-architecture-transformation.md). Increments A–B passed
-bounded developer acceptance; C–F remain planned. Do not rerun cleanup.
+preserved in [X01](poc2-x01-architecture-transformation.md). Increments A–C passed
+bounded developer acceptance; D–F remain planned. Do not rerun cleanup.
 Approval of the five-layer design does not close X01.
 
 ## Exit criteria

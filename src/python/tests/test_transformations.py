@@ -17,11 +17,6 @@ import subprocess
 import unittest
 from pathlib import Path
 
-from util.shared_configuration import (
-    ExperimentConfigurationError,
-    load_experiment_configuration,
-    resolve_experiment_configuration,
-)
 from util.p04_04_seasonal_period_tuning import historical_folds
 from util.shared_transformations import (
     STANDARDISATION_RECIPE,
@@ -34,12 +29,7 @@ from util.shared_transformations import (
     inverse_transformation,
     transform,
 )
-from util.window_preparation import prepare_context
-
-
 ROOT = Path(__file__).resolve().parents[3]
-from tests.configuration_fixtures import configuration_path
-CONFIGURATION = configuration_path(version=4)
 R_TRANSFORMATIONS = ROOT / "src/r/util/transformations.R"
 
 
@@ -207,53 +197,6 @@ class StandardisationContractTests(unittest.TestCase):
             repeated = fit_transformation(changed_future[: fold.train_end], STANDARDISATION_RECIPE)
             self.assertEqual(state, repeated)
             self.assertEqual(state["count"], fold.train_end)
-
-    def test_v4_configuration_separates_recipe_identity_and_validates_context(self) -> None:
-        """New experiments select the new recipe while v1-v3 semantics stay readable."""
-        configuration = load_experiment_configuration(CONFIGURATION)
-        self.assertEqual(configuration.version, 4)
-        self.assertEqual(configuration.workflow["transformations"], ["identity", STANDARDISATION_RECIPE])
-        self.assertEqual(configuration.workflow["window_preparation"], {"context_length": 64})
-        self.assertIsNone(configuration.seasonal_period_tuning)
-        self.assertEqual(
-            configuration.resolved["execution"]["final_acceptance"],
-            {
-                "mode": "sequential",
-                "processes": [1, 2, 3],
-                "workers": {"mac_cpu": 1, "total": 1},
-                "system_memory_min_available_gib": 2.0,
-            },
-        )
-        self.assertEqual(prepare_context([1.0, 2.0, 3.0], 5), (1.0, 1.0, 1.0, 2.0, 3.0))
-        self.assertEqual(prepare_context(range(100), 64), tuple(float(value) for value in range(36, 100)))
-
-        invalid = json.loads(CONFIGURATION.read_text(encoding="utf-8"))
-        invalid["pipeline"]["window_preparation"]["context_length"] = 0
-        with self.assertRaisesRegex(ExperimentConfigurationError, "context_length"):
-            resolve_experiment_configuration(invalid)
-
-        tuned = json.loads(
-            configuration_path(version=3).read_text(
-                encoding="utf-8"
-            )
-        )
-        tuned["configuration_version"] = 4
-        tuned["pipeline"]["transformations"]["methods"] = [
-            "identity",
-            STANDARDISATION_RECIPE,
-        ]
-        tuned["pipeline"]["window_preparation"] = {"context_length": 64}
-        tuned["evaluation"]["provisional_candidate"]["transformation"] = (
-            STANDARDISATION_RECIPE
-        )
-        tuned_configuration = resolve_experiment_configuration(tuned)
-        self.assertEqual(
-            tuned_configuration.seasonal_period_tuning["validation_windows"], 3
-        )
-        self.assertEqual(set(tuned_configuration.workflow["models"]), {"auto_arima", "ets"})
-        legacy = transform([5.0, 5.0], "minmax_then_standardize")
-        self.assertEqual(inverse([-1.0, 1.0], "minmax_then_standardize", legacy.parameters), (5.0, 5.0))
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -14,7 +14,6 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-import socket
 import struct
 from pathlib import Path
 from typing import Any
@@ -22,9 +21,8 @@ from typing import Any
 import duckdb
 
 from .shared_configuration import canonical_json, json_fingerprint
-from .shared_transformations import apply_transformation, transform
 
-# Operational policy approved for cross-host Process 03 validation; not scientific identity.
+# Retained numerical reporting policy consumed by unmigrated Process 06 exports.
 COMPUTATIONALLY_EQUIVALENT_ULPS = 4
 
 
@@ -83,10 +81,9 @@ class ProcessStorage:
 
     def validate(self, process_id: int, summary: dict[str, Any] | None = None) -> dict[str, Any]:
         """Compare authoritative planned identities with tasks and accepted outputs."""
-        if process_id not in {1, 3, 4, 5, 6}:
-            raise ValueError("legacy validation supports Processes 01 and 03–06 only")
+        if process_id not in {1, 4, 5, 6}:
+            raise ValueError("legacy validation supports Processes 01 and 04–06 only")
         connection = duckdb.connect(str(self.database), read_only=True)
-        numerical = None
         try:
             if process_id == 1:
                 from .shared_database import load_database_configuration
@@ -113,9 +110,9 @@ class ProcessStorage:
                         "SELECT experiment_id FROM experiments"
                     ).fetchone()[0]
                     TableStorage(connection).validate(experiment_id)
-                if version >= 12 and process_id in {3, 4}:
+                if version >= 12 and process_id == 4:
                     self._validate_directional(connection, process_id, version)
-                if version in {10, 11} and process_id >= 3:
+                if version in {10, 11} and process_id >= 4:
                     return self._validate_directional(connection, process_id, version)
                 expected_sql, output_sql = self._contracts(process_id)
                 if version >= 12 and process_id == 6:
@@ -138,9 +135,7 @@ class ProcessStorage:
                 incomplete = abs(expected - task_count) + abs(expected - total_tasks)
                 missing = abs(expected - stored)
                 if not incomplete and not missing:
-                    if process_id == 3:
-                        numerical = self._validate_transformed(connection)
-                    elif process_id == 4:
+                    if process_id == 4:
                         self._validate_forecasts(connection)
         finally:
             connection.close()
@@ -151,8 +146,6 @@ class ProcessStorage:
             )
         evidence = {"output_validated": True, "expected_task_count": expected,
                     "stored_task_count": stored}
-        if numerical is not None:
-            evidence["numerical_reproducibility"] = numerical
         return evidence
 
     def _validate_directional(
@@ -167,9 +160,9 @@ class ProcessStorage:
             ).fetchone()[0]
         )
         expected = (
-            {3: series_count, 4: 1 + series_count * 14 + 1 + 28, 5: 1, 6: 28}
+            {4: 1 + series_count * 14 + 1 + 28, 5: 1, 6: 28}
             if version >= 11
-            else {3: series_count, 4: 1 + series_count * 14, 5: 1, 6: 14}
+            else {4: 1 + series_count * 14, 5: 1, 6: 14}
         )[
             process_id
         ]
@@ -184,30 +177,7 @@ class ProcessStorage:
                 f"completed Process {process_id} has incomplete directional tasks: "
                 f"expected={expected}, tasks={task_count}, completed={completed}"
             )
-        if process_id == 3:
-            inputs = int(
-                connection.execute(
-                    "SELECT count(*) FROM directional_evaluation_inputs"
-                ).fetchone()[0]
-            )
-            labels = int(
-                connection.execute(
-                    "SELECT count(*) FROM directional_actual_labels"
-                ).fetchone()[0]
-            )
-            invalid = int(
-                connection.execute(
-                    """SELECT count(*) FROM directional_evaluation_inputs AS i
-                       JOIN directional_actual_labels AS a
-                         ON a.evaluation_input_id=i.evaluation_input_id
-                       WHERE len(i.transformed_input)!=64 OR len(a.labels)!=14
-                          OR NOT isfinite(i.label_reference)"""
-                ).fetchone()[0]
-            )
-            if inputs != series_count or labels != series_count or invalid:
-                raise RuntimeError("stored directional preparation is incomplete or invalid")
-            stored = inputs
-        elif process_id == 4:
+        if process_id == 4:
             if version >= 11:
                 from .shared_database import load_database_configuration
                 from .shared_model_storage import ModelStorage
@@ -276,7 +246,7 @@ class ProcessStorage:
                 ).fetchone()[0])
                 reference_count = representations - series_count
                 if version == 13:
-                    from .window_preparation import load_training_cohort
+                    from p04_forecast.inputs import load_training_cohort
 
                     preparation = connection.execute(
                         "SELECT preparation_id, child_database FROM window_preparation_runs WHERE status='completed'"
@@ -464,89 +434,6 @@ class ProcessStorage:
                 "scientific_impact_assessment": "measured" if changes else "not_assessed"}
 
     @staticmethod
-    def _validate_transformed(connection: duckdb.DuckDBPyConnection) -> dict:
-        """Validate stored integrity exactly; report, never substitute, cross-host floats."""
-        rows = connection.execute(
-            """SELECT r.transformation_method,v.transformation_method,p.context_target,
-                      r.transformed_target,r.parameters,r.input_hash,r.output_hash,
-                      r.preprocessing_id,r.parent_result_id,p.preprocessing_id,
-                      r.transformation_id,r.experiment_id,r.variant_id,i.series_id,
-                      i.dataset_id,i.window_id,i.actual_target,
-                      (SELECT json_extract_string(a.resource_usage,'$.hostname')
-                       FROM experiment_task_attempts a WHERE a.task_id=t.task_id
-                       AND a.status='completed' ORDER BY a.attempt_number DESC LIMIT 1)
-               FROM experiment_tasks t
-               JOIN transformed_series r ON r.experiment_id=t.experiment_id
-                 AND r.variant_id=t.variant_id AND r.forecast_instance_id=t.forecast_instance_id
-               JOIN experiment_variants v ON v.variant_id=t.variant_id
-                 AND v.experiment_id=t.experiment_id
-               JOIN forecast_instances i ON i.forecast_instance_id=t.forecast_instance_id
-               JOIN experiments e ON e.experiment_id=t.experiment_id
-                 AND e.dataset_id=i.dataset_id
-                 AND e.benchmark_configuration_id=i.benchmark_configuration_id
-               LEFT JOIN preprocessed_series p ON p.experiment_id=t.experiment_id
-                 AND p.forecast_instance_id=t.forecast_instance_id
-                 AND p.cleaning_method=v.cleaning_method
-               WHERE t.stage=3"""
-        ).fetchall()
-        if len(rows) != connection.execute("SELECT count(*) FROM experiment_tasks WHERE stage=3").fetchone()[0]:
-            raise RuntimeError("stored transformation has missing or mismatched identity")
-        records = []
-        directional_changes = 0
-        for (method, expected_method, source, output, parameters, input_hash, output_hash,
-             pre_id, parent, expected_parent, record_id, experiment, variant, series,
-             dataset, window, actual, producer) in rows:
-            if source is None:
-                raise RuntimeError("stored transformation has missing preprocessing lineage")
-            calculated = transform(source, expected_method)
-            stored_parameters = json.loads(parameters) if isinstance(parameters, str) else parameters
-            if (method != expected_method or pre_id != expected_parent or parent != expected_parent
-                    or input_hash != json_fingerprint(source)
-                    or len(output) != len(calculated.values)
-                    or any(v is None or not math.isfinite(v) for v in output)
-                    or output_hash != json_fingerprint(output)):
-                raise RuntimeError("stored transformation failed shape, hash or lineage validation")
-            # Recipe/version/count/constant are exact configured/structural metadata.
-            # Centre and scale are fitted numeric state, not configured parameters.
-            numeric = {"centre", "scale"} & set(calculated.parameters)
-            if (set(stored_parameters) != set(calculated.parameters)
-                    or any(type(stored_parameters[k]) is not type(calculated.parameters[k])
-                           or stored_parameters[k] != calculated.parameters[k]
-                           for k in calculated.parameters if k not in numeric)
-                    or any(type(stored_parameters[k]) not in (int, float)
-                           or not math.isfinite(stored_parameters[k]) for k in numeric)
-                    or ("scale" in numeric and stored_parameters["scale"] <= 0)):
-                raise RuntimeError("stored transformation has invalid method or parameters")
-            if method in {"identity", "standardise_sample_v1"} and output != list(
-                apply_transformation(source, stored_parameters)
-            ):
-                raise RuntimeError("stored transformation payload disagrees with its fitted parameters")
-            changed_labels = 0
-            if method in {"identity", "standardise_sample_v1"}:
-                worker_future = apply_transformation(actual, stored_parameters)
-                validator_future = apply_transformation(actual, calculated.parameters)
-                changed_labels = sum((a > output[-1]) != (b > calculated.values[-1])
-                                     for a, b in zip(worker_future, validator_future, strict=True))
-                directional_changes += changed_labels
-            values = ProcessStorage.compare_float64(output, calculated.values)
-            state = (ProcessStorage.compare_float64(
-                [stored_parameters[k] for k in sorted(numeric)],
-                [calculated.parameters[k] for k in sorted(numeric)]) if numeric else None)
-            comparison = dict(values)
-            if state is not None:
-                comparison["maximum_ulp_distance"] = max(values["maximum_ulp_distance"], state["maximum_ulp_distance"])
-                comparison["classification"] = ("computationally_equivalent" if comparison["maximum_ulp_distance"] <= COMPUTATIONALLY_EQUIVALENT_ULPS
-                                                else "numeric_reproducibility_warning")
-            records.append({"record_id": record_id, "experiment_id": experiment,
-                            "dataset_id": dataset, "series_id": series, "window_id": window,
-                            "variant_id": variant, "transformation": method,
-                            "producing_host": producer, "validating_host": socket.gethostname(),
-                            **comparison, "fitted_state_comparison": state,
-                            "directional_label_changes": changed_labels})
-        return {**ProcessStorage.numerical_review(records, {"directional_label": directional_changes > 0}),
-                "directional_label_changes": directional_changes, "records": records}
-
-    @staticmethod
     def _task_join(process_id: int) -> str:
         """Return the stage-specific identity join, never a count-only match."""
         common = "t.experiment_id=e.experiment_id"
@@ -554,29 +441,25 @@ class ProcessStorage:
             return common + " AND t.variant_id=e.variant_id AND t.candidate=e.candidate"
         value = common + " AND t.forecast_instance_id=e.forecast_instance_id"
         value += " AND t.variant_id=e.variant_id"
-        return value if process_id == 3 else value + " AND t.candidate=e.candidate"
+        return value + " AND t.candidate=e.candidate"
 
     @staticmethod
     def _contracts(process_id: int) -> tuple[str, str]:
         """Derive required work from experiment inputs, variants and model settings."""
         instances = "experiments x JOIN forecast_instances i ON i.benchmark_configuration_id=x.benchmark_configuration_id"
         variants = instances + " JOIN experiment_variants v ON v.experiment_id=x.experiment_id"
-        if process_id == 3:
-            expected = f"SELECT x.experiment_id,i.forecast_instance_id,v.variant_id FROM {variants}"
-            output = expected + " JOIN transformed_series r ON r.experiment_id=x.experiment_id AND r.forecast_instance_id=i.forecast_instance_id AND r.variant_id=v.variant_id"
+        models = "list_filter(json_keys(CAST(x.scientific_configuration AS JSON), '$.models'), m -> NOT starts_with(m, 'directional_'))"
+        combination = (
+            "json_extract_string(CAST(x.scientific_configuration AS JSON), "
+            "'$.pipeline.combination.method')"
+        )
+        candidates = models if process_id == 4 else f"CASE WHEN {combination}='none' THEN {models} ELSE list_append({models}, {combination}) END"
+        if process_id == 6:
+            expected = f"SELECT x.experiment_id,v.variant_id,c.candidate FROM experiments x JOIN experiment_variants v ON v.experiment_id=x.experiment_id, UNNEST({candidates}) c(candidate)"
+            output = expected + " JOIN official_evaluations r ON r.experiment_id=x.experiment_id AND r.variant_id=v.variant_id AND r.candidate=c.candidate"
         else:
-            models = "list_filter(json_keys(CAST(x.scientific_configuration AS JSON), '$.models'), m -> NOT starts_with(m, 'directional_'))"
-            combination = (
-                "json_extract_string(CAST(x.scientific_configuration AS JSON), "
-                "'$.pipeline.combination.method')"
-            )
-            candidates = models if process_id == 4 else f"CASE WHEN {combination}='none' THEN {models} ELSE list_append({models}, {combination}) END"
-            if process_id == 6:
-                expected = f"SELECT x.experiment_id,v.variant_id,c.candidate FROM experiments x JOIN experiment_variants v ON v.experiment_id=x.experiment_id, UNNEST({candidates}) c(candidate)"
-                output = expected + " JOIN official_evaluations r ON r.experiment_id=x.experiment_id AND r.variant_id=v.variant_id AND r.candidate=c.candidate"
-            else:
-                expected = f"SELECT x.experiment_id,i.forecast_instance_id,v.variant_id,c.candidate FROM {variants}, UNNEST({candidates}) c(candidate)"
-                output = expected + " JOIN forecasts r ON r.experiment_id=x.experiment_id AND r.forecast_instance_id=i.forecast_instance_id AND r.variant_id=v.variant_id AND r.candidate=c.candidate"
+            expected = f"SELECT x.experiment_id,i.forecast_instance_id,v.variant_id,c.candidate FROM {variants}, UNNEST({candidates}) c(candidate)"
+            output = expected + " JOIN forecasts r ON r.experiment_id=x.experiment_id AND r.forecast_instance_id=i.forecast_instance_id AND r.variant_id=v.variant_id AND r.candidate=c.candidate"
         return expected, output
 
     @staticmethod

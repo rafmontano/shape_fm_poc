@@ -1,13 +1,8 @@
-# ==============================================================================
-# shared_transformations.py
-#
-# Purpose: Fit, apply, compose, and invert versioned leakage-safe transformations.
-# Inputs: Finite numeric values, registered recipe names, and portable fitted state.
-# Outputs: Immutable transformed values and state, or values restored to original scale.
-# Run from: Imported; not run directly.
-# ==============================================================================
+"""Process 03/04 leakage-safe affine transformations (docs/data-contract.md).
 
-"""Versioned leakage-safe transformations shared by Gate 3 and Gate 4."""
+Finite historical values produce sample-SD fitted state and transformed values;
+Process 04 applies or inverts that state without refitting future observations.
+"""
 
 from __future__ import annotations
 
@@ -16,16 +11,12 @@ from math import fsum, isfinite, sqrt
 from typing import Any, Iterable, Mapping, Sequence
 
 
-# Code constants: the new ordered interface contains only identity and the
-# approved sample-SD recipe. The legacy name remains accepted solely so stored
-# configuration-v1 through v3 experiments keep their historical interpretation.
 REGISTERED_TRANSFORMATION_STEPS = ("identity", "standardise_sample_v1")
 STANDARDISATION_RECIPE = "standardise_sample_v1"
 STANDARDISATION_VERSION = 1
 STANDARDISATION_STATE_KEYS = frozenset(
     {"recipe", "version", "centre", "scale", "count", "constant"}
 )
-LEGACY_TRANSFORMATION = "minmax_then_standardize"
 
 
 @dataclass(frozen=True)
@@ -33,7 +24,7 @@ class TransformationResult:
     """Purpose: Carry transformed observations and the state required for inversion.
 
     Inputs: ``values`` are immutable transformed observations; ``parameters`` holds
-    fitted portable state, legacy parameters, or an empty mapping for identity.
+    fitted portable state or an empty mapping for identity.
     Outputs: Worker-owned, immutable transformation state on the transformed scale.
     """
     values: tuple[float, ...]
@@ -193,43 +184,14 @@ def inverse_steps(
 
 
 def transform(values: Iterable[float], method: str) -> TransformationResult:
-    """Purpose: Fit and apply a supported transformation to context observations.
-
-    Inputs: Finite numeric context ``values`` and a current or historical method.
-    Outputs: Transformed values plus parameters sufficient to restore original units.
-    Notes: The approved recipe uses sample SD and portable state. The historical
-    min-max/population-SD branch remains unchanged for v1-v3 database compatibility.
-    """
+    """Fit context-only identity or sample-SD state and return values and state."""
     source = _finite_values(values, "transformation")
     if method == "identity":
         return TransformationResult(source, {})
     if method == STANDARDISATION_RECIPE:
         state = fit_transformation(source, method)
         return TransformationResult(apply_transformation(source, state), state)
-    if method != LEGACY_TRANSFORMATION:
-        raise ValueError(f"unsupported transformation: {method}")
-    minimum = min(source)
-    maximum = max(source)
-    span = maximum - minimum
-    constant = span == 0.0
-    minmax = tuple(0.0 if constant else (value - minimum) / span for value in source)
-    center = sum(minmax) / len(minmax)
-    variance = sum((value - center) ** 2 for value in minmax) / len(minmax)
-    scale = sqrt(variance)
-    zero_scale = scale == 0.0
-    output = tuple(0.0 if zero_scale else (value - center) / scale for value in minmax)
-    return TransformationResult(
-        output,
-        {
-            "minimum": minimum,
-            "maximum": maximum,
-            "span": span,
-            "minmax_constant": constant,
-            "standardization_center": center,
-            "standardization_scale": scale,
-            "standardization_constant": zero_scale,
-        },
-    )
+    raise ValueError(f"unsupported transformation: {method}")
 
 
 def inverse(values: Iterable[float], method: str, parameters: dict) -> tuple[float, ...]:
@@ -238,26 +200,11 @@ def inverse(values: Iterable[float], method: str, parameters: dict) -> tuple[flo
     Inputs: Forecast ``values``, the fitted method name, and parameters returned by
     :func:`transform` for the corresponding context.
     Outputs: An immutable sequence on the original data scale.
-    Notes: New recipe state is portable across R/Python. Historical constant
-    contexts retain their old collapsed inverse solely for stored compatibility.
+    Fitted sample-SD state is portable across R/Python, including constant contexts.
     """
     source = _finite_values(values, "inverse transformation")
     if method == "identity":
         return source
     if method == STANDARDISATION_RECIPE:
         return inverse_transformation(source, parameters)
-    if method != LEGACY_TRANSFORMATION:
-        raise ValueError(f"unsupported transformation: {method}")
-    if parameters["standardization_constant"]:
-        minmax = (parameters["standardization_center"],) * len(source)
-    else:
-        minmax = tuple(
-            value * parameters["standardization_scale"]
-            + parameters["standardization_center"]
-            for value in source
-        )
-    if parameters["minmax_constant"]:
-        return (parameters["minimum"],) * len(source)
-    return tuple(
-        value * parameters["span"] + parameters["minimum"] for value in minmax
-    )
+    raise ValueError(f"unsupported transformation: {method}")

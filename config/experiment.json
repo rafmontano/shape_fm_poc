@@ -32,6 +32,7 @@
         "10S": {"input_length": 512, "future_horizon": 60}, "5T": {"input_length": 512, "future_horizon": 48}, "10T": {"input_length": 512, "future_horizon": 48}, "15T": {"input_length": 512, "future_horizon": 48}, "H": {"input_length": 256, "future_horizon": 48}, "D": {"input_length": 64, "future_horizon": 14}, "W": {"input_length": 64, "future_horizon": 13}, "M": {"input_length": 64, "future_horizon": 18}, "Q": {"input_length": 32, "future_horizon": 8}, "Y": {"input_length": 16, "future_horizon": 6}
       },
       "stride_rule": "input_plus_future", "block_policy": "complete_non_overlapping", "boundary_policy": "official_training_only", "preprocessing_mode": "robust", "transformation": "standardise_sample_v1",
+      "training_cohort": {"cap": 10000, "seed": 1234, "method": "historical_first_horizon_stratified_v1"},
       "split": {"split_id": "S1", "unit": "series", "training_fraction": 0.8, "seed": 123, "generator": "tsai.TrainValidTestSplitter", "membership_source": "generate", "test_count_rule": "r_double_floor_v1"}
     },
     "adjustment": "identity",

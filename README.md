@@ -36,13 +36,13 @@ Before creating a new experiment, edit `config/experiment.json`. Normal commands
 use fixed paths:
 
 ```sh
-.venv/bin/python src/python/experiment.py plan --processes 1-2
-.venv/bin/python src/python/experiment.py run --processes 1-2
+.venv/bin/python src/python/experiment.py plan --processes 1-3
+.venv/bin/python src/python/experiment.py run --processes 1-3
 .venv/bin/python src/python/experiment.py status
 ```
 
 Use only the process range needed. Existing accepted items are skipped on
-restart. Through Increment B, the new entry point runs Processes 01–02; later
+restart. Through Increment C, the new entry point runs Processes 01–03; later
 processes and stored-output publication become available as their owning
 increments migrate. Do not request the default full range yet.
 

@@ -79,7 +79,7 @@ class TableConfigurationTests(unittest.TestCase):
         full = resolve_experiment_configuration(table_document(full=True))
         self.assertEqual(full.series_count, 4227)
         self.assertEqual(expected_task_counts(100, config.workflow),
-                         {3: 100, 4: 2830, 5: 1500, 6: 46})
+                         {4: 2830, 5: 1500, 6: 46})
 
     def test_historical_reconciliation_metadata_is_inert(self):
         """Preserve historical documents without imposing their retired import gate."""
@@ -184,7 +184,7 @@ class TableConfigurationTests(unittest.TestCase):
                     coordinator.plan()
                 counts = dict(coordinator.connection.execute(
                     "SELECT stage,count(*) FROM experiment_tasks GROUP BY stage").fetchall())
-                self.assertEqual(counts, {3: 100, 4: 2830, 5: 1500, 6: 46})
+                self.assertEqual(counts, {4: 2830, 5: 1500, 6: 46})
                 candidates = dict(coordinator.connection.execute(
                     "SELECT candidate,count(*) FROM experiment_tasks WHERE stage=5 GROUP BY candidate").fetchall())
                 self.assertEqual(candidates, {**{model: 100 for model in
@@ -201,22 +201,6 @@ class TableConfigurationTests(unittest.TestCase):
                     coordinator._run_06_evaluate(plan.experiment_id, [], {}, 1, settings)
                 callback.assert_called_once_with(coordinator=coordinator,
                     experiment_id=plan.experiment_id, rows=[], attempts={}, workers=1, settings=settings)
-
-    def test_mixed_process_03_retains_both_preparation_branches(self):
-        """Directional preparation executes before ordinary full-history transformation."""
-        config = load_experiment_configuration(CONFIG)
-        coordinator = object.__new__(ExperimentCoordinator)
-        coordinator.configuration = config
-        coordinator._run_03_directional_preparation = Mock()
-        coordinator.connection = Mock()
-        values = list(range(80))
-        coordinator.connection.execute.return_value.fetchone.side_effect = [
-            ("robust", "standardise_sample_v1"), ("preprocessing", values)]
-        rows = [("task", "instance", "variant", None)]
-        with patch("util.shared_workflow_orchestration.run_gate_compute_flow", return_value=[]) as compute:
-            coordinator._run_03_transform("experiment", rows, {"task": 1}, 1)
-        coordinator._run_03_directional_preparation.assert_called_once()
-        self.assertEqual(compute.call_args.kwargs["batches"][0][0]["values"], values)
 
     def test_process_06_validation_delegates_to_table_owner(self):
         """The ordinary ProcessStorage boundary invokes the new validator read-only."""

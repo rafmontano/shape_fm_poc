@@ -1,7 +1,7 @@
 # ==============================================================================
 # shared_experiment_execution.py
 #
-# Purpose: Plan M4 Daily tasks, execute Processes 03–06, and export a candidate.
+# Purpose: Plan M4 Daily tasks, execute Processes 04–06, and export a candidate.
 # Inputs: Imported M4 series, experiment configuration, execution profile/settings, and process selection.
 # Outputs: Restartable task/invocation rows, forecasts, official evaluations, status, and candidate exports.
 # Run from: Imported; not run directly.
@@ -42,12 +42,12 @@ from .shared_execution_profiles import (
 )
 from .p05_01_forecast_combination import combine_equal_weight, combine_m4_point
 from .shared_active_paths import repository_root
-from .shared_transformations import TransformationResult, inverse
+from .shared_transformations import inverse
 from .shared_provenance import utc_now
 
 
 # Processes still owned by the legacy coordinator until their migration.
-PROCESSES = {3: "transform", 4: "forecast", 5: "combine", 6: "evaluate"}
+PROCESSES = {4: "forecast", 5: "combine", 6: "evaluate"}
 
 # Code constant: complete scientific columns compared by the directional
 # insert-or-verify boundary. ``created_at`` is deliberately operational only.
@@ -152,7 +152,7 @@ DIRECTIONAL_RECORD_COLUMNS = {
 def expected_task_counts(
     instance_count: int, workflow: dict[str, Any]
 ) -> dict[int, int]:
-    """Purpose: Derive Process 03–06 task totals for an experiment plan.
+    """Purpose: Derive Process 04–06 task totals for an experiment plan.
 
     Inputs: Selected forecast-instance count and the stored workflow mapping of
     cleaning methods, transformations, and models.
@@ -164,14 +164,12 @@ def expected_task_counts(
         ordinary = sum(not model.startswith("directional_") for model in workflow["models"])
         candidates = ordinary + (workflow["combination"]["method"] != "none")
         variants = len(workflow["cleaning"]) * len(workflow["transformations"])
-        return {3: instance_count * variants,
-                4: 30 + instance_count * (14 + variants * ordinary),
+        return {4: 30 + instance_count * (14 + variants * ordinary),
                 5: instance_count * variants * candidates,
                 6: 29 + variants * candidates + 2}
     if set(workflow["models"]) == {"directional_dtw"}:
         horizons = workflow["models"]["directional_dtw"]["labels"]["horizons"]
         return {
-            3: instance_count,
             4: 1 + instance_count * len(horizons),
             5: 1,
             6: len(horizons),
@@ -181,7 +179,6 @@ def expected_task_counts(
         if workflow["models"]["directional_mantis_rf"]["labels"]["horizons"] != horizons:
             raise ValueError("directional providers must use identical horizons")
         return {
-            3: instance_count,
             4: 1 + instance_count * len(horizons) + 1 + 2 * len(horizons),
             5: 1,
             6: 2 * len(horizons),
@@ -191,7 +188,6 @@ def expected_task_counts(
     model_count = len(workflow["models"])
     candidate_count = model_count + 1
     return {
-        3: instance_count * variant_count,
         4: instance_count * variant_count * model_count,
         5: instance_count * variant_count * candidate_count,
         6: variant_count * candidate_count,
@@ -499,7 +495,7 @@ class ExperimentCoordinator:
             required_accelerator=None,
             expected_accelerator_name=None,
             cleaning_workers=int(workers["2"]),
-            transformation_workers=int(workers["3"]),
+            transformation_workers=1,
             autoarima_workers=int(workers["4"]),
             chronos_processes=1,
             chronos_inference_batch_size=int(
@@ -530,7 +526,7 @@ class ExperimentCoordinator:
         execution batch size from authoritative stored configuration.
         Outputs: Dry-run selection/count mapping or persisted :class:`ExperimentPlan`;
         calls GIFT-Eval and, unless dry-running, transactionally inserts benchmark,
-        experiment, variant, instance, and Process 03–06 task rows and invalidates stale
+        experiment, variant, instance, and Process 04–06 task rows and invalidates stale
         evaluation/export state when scope expands.
         """
         availability = self._gift_bridge(*self._gift_description_arguments(1))
@@ -775,11 +771,6 @@ class ExperimentCoordinator:
                         ],
                     )
                     for variant_id, _, _ in variants:
-                        task_rows.append(
-                            self._task_row(
-                                experiment_id, 3, instance_id, variant_id, None
-                            )
-                        )
                         if self.configuration.version in {10, 11, 12, 13}:
                             for horizon in range(1, 15):
                                 task_rows.append(
@@ -1431,7 +1422,7 @@ class ExperimentCoordinator:
     def _pending(self, experiment_id: str, process: int) -> list[tuple]:
         """Purpose: Select restartable work for one process invocation.
 
-        Inputs: Persisted experiment ID and Process 03–06 number.
+        Inputs: Persisted experiment ID and Process 04–06 number.
         Outputs: Ordered incomplete task IDs and instance/variant/candidate dimensions
         read from DuckDB without changing task state.
         """
@@ -1471,13 +1462,10 @@ class ExperimentCoordinator:
     def _check_process_prerequisite(self, experiment_id: str, process: int) -> None:
         """Purpose: Enforce persisted predecessor-process completion.
 
-        Inputs: Persisted experiment ID and requested Process 03–06 number.
+        Inputs: Persisted experiment ID and requested Process 04–06 number.
         Outputs: None; performs a read-only task count and raises ``RuntimeError``
         when the preceding process still has incomplete tasks.
         """
-        # Process 03 consumes legacy prepared inputs, not retired P02 task state.
-        if process == 3:
-            return
         incomplete = self.connection.execute(
             """SELECT count(*) FROM experiment_tasks
             WHERE experiment_id=? AND stage=? AND status!='completed'""",
@@ -1496,7 +1484,7 @@ class ExperimentCoordinator:
         execution: tuple[ExecutionProfile, dict[str, Any]] | None = None,
         execution_settings: ExecutionSettings | None = None,
     ) -> dict[str, Any]:
-        """Purpose: Execute one restartable process from Processes 03–06.
+        """Purpose: Execute one restartable process from Processes 04–06.
 
         Inputs: Experiment/process identity and optional worker, device, batch,
         profile, override, and Dask settings from stored configuration or caller.
@@ -1510,7 +1498,7 @@ class ExperimentCoordinator:
             or (workers is not None and workers < 1)
             or (batch_size is not None and batch_size < 1)
         ):
-            raise ValueError("process must be 3..6; workers and batch_size must be positive")
+            raise ValueError("process must be 4..6; workers and batch_size must be positive")
         configured_batches = self.configuration.execution["batch_sizes"]
         if execution is None:
             profile, configured_settings = self._configured_execution()
@@ -1713,7 +1701,6 @@ class ExperimentCoordinator:
                 raise
             hardware = {"coordinator": coordinator_hardware, "dask_workers": cluster}
         process_workers = {
-            3: profile.transformation_workers,
             4: max(profile.autoarima_workers, profile.chronos_processes),
             5: profile.combination_workers,
             6: profile.evaluation_workers,
@@ -1723,7 +1710,7 @@ class ExperimentCoordinator:
             """SELECT count(DISTINCT i.series_id), count(DISTINCT i.forecast_instance_id)
                FROM forecast_instances i
                JOIN experiment_tasks t USING (forecast_instance_id)
-               WHERE t.experiment_id=? AND t.stage=3""",
+               WHERE t.experiment_id=? AND t.stage=4""",
             [experiment_id],
         ).fetchone()
         invocation_overrides = {
@@ -1742,7 +1729,6 @@ class ExperimentCoordinator:
             process_workers,
             resolved_device,
             {
-                3: int(configured_batches["transform"]),
                 4: int(
                     configured_batches.get(
                         "chronos", configured_batches.get("directional_prediction", 1)
@@ -1765,17 +1751,7 @@ class ExperimentCoordinator:
         failures = []
         execution_error: BaseException | None = None
         try:
-            if process == 3:
-                self._run_03_transform(
-                    experiment_id,
-                    rows,
-                    attempts,
-                    profile.transformation_workers,
-                    dask_client,
-                    settings,
-                    profile,
-                )
-            elif process == 4:
+            if process == 4:
                 self._run_04_forecast(
                     experiment_id,
                     rows,
@@ -1849,361 +1825,6 @@ class ExperimentCoordinator:
         if status == "failed":
             raise RuntimeError(f"Process {process} failed; rerun retries failed tasks")
         return {"invocation_id": invocation, **summary}
-
-    def _run_03_transform(
-        self,
-        experiment_id: str,
-        rows: list[tuple],
-        attempts: dict[str, int],
-        workers: int,
-        dask_client: Any = None,
-        settings: ExecutionSettings | None = None,
-        profile: ExecutionProfile | None = None,
-    ) -> None:
-        """Purpose: Execute Process 03 transformations of cleaned training contexts.
-
-        Inputs: Experiment task rows/attempts, worker count, and optional Dask controls;
-        methods and input vectors are read from variant and preprocessing rows.
-        Outputs: None; computes transformed vectors locally or on Dask and atomically
-        persists values, parameters, lineage, fingerprints, and task completions.
-        """
-        if self.configuration.version in {10, 11, 12, 13}:
-            if not rows:
-                return
-            self._run_03_directional_preparation(
-                experiment_id,
-                rows,
-                attempts,
-                workers,
-                dask_client,
-                settings,
-                profile,
-            )
-            if self.configuration.version < 12:
-                return
-        prepared = []
-        metadata = []
-        for task_id, instance_id, variant_id, _ in rows:
-            cleaning, method = self.connection.execute(
-                "SELECT cleaning_method, transformation_method FROM experiment_variants WHERE variant_id=?",
-                [variant_id],
-            ).fetchone()
-            pre_id, values = self.connection.execute(
-                """SELECT preprocessing_id, context_target FROM preprocessed_series
-                WHERE experiment_id=? AND forecast_instance_id=? AND cleaning_method=?""",
-                [experiment_id, instance_id, cleaning],
-            ).fetchone()
-            prepared.append((values, method))
-            metadata.append((task_id, instance_id, variant_id, pre_id, method, values))
-
-        def commit_result(
-            meta: tuple,
-            result: TransformationResult,
-            runtime: float,
-            resources: dict[str, Any] | None = None,
-        ) -> None:
-            """Purpose: Commit one Process 03 transformation result.
-
-            Inputs: Task metadata, transformed vector/parameters, runtime, and worker evidence.
-            Outputs: None; delegates result insertion and attempt completion to the
-            coordinator's single transaction writer.
-            """
-            task_id, instance_id, variant_id, pre_id, method, values = meta
-            transformation_id = f"transformed/{json_fingerprint({'experiment': experiment_id, 'variant': variant_id, 'instance': instance_id})[:32]}"
-
-            def insert(result=result, values=values):
-                """Purpose: Write one transformed series within its task transaction.
-
-                Inputs: Captured source vector, transformation result, IDs, and method.
-                Outputs: None; inserts an idempotent ``transformed_series`` row with
-                scientific parameters, lineage, and input/output hashes.
-                """
-                self.connection.execute(
-                    """INSERT INTO transformed_series VALUES
-                    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
-                    ON CONFLICT (transformation_id) DO NOTHING""",
-                    [
-                        transformation_id,
-                        experiment_id,
-                        variant_id,
-                        instance_id,
-                        pre_id,
-                        method,
-                        json_fingerprint(values),
-                        json_fingerprint(result.values),
-                        list(result.values),
-                        canonical_json(result.parameters),
-                        pre_id,
-                    ],
-                )
-
-            self._commit_task(
-                task_id, attempts[task_id], runtime, insert, resources
-            )
-
-        jobs = [
-            {"id": meta[0], "values": values, "method": method}
-            for meta, (values, method) in zip(metadata, prepared, strict=True)
-        ]
-        by_task = {meta[0]: meta for meta in metadata}
-        from .shared_workflow_orchestration import run_gate_compute_flow
-
-        outcomes = run_gate_compute_flow(
-            process_id=3,
-            batches=_batches(jobs, int(self.configuration.execution["batch_sizes"]["transform"])),
-            options={},
-            scheduler_address=(dask_client.scheduler.address if dask_client else None),
-            retries=settings.dask_retries if settings else 0,
-            max_in_flight=settings.dask_max_in_flight if settings else workers,
-            local_workers=workers,
-        )
-        errors = []
-        for outcome in outcomes:
-            if "response" not in outcome:
-                errors.append(outcome["error"])
-                continue
-            batch, response = outcome["batch"], outcome["response"]
-            result_ids = [item["id"] for item in response["results"]]
-            expected_ids = {job["id"] for job in batch}
-            if len(result_ids) != len(set(result_ids)) or set(result_ids) != expected_ids:
-                raise RuntimeError(
-                    "Process 03 worker returned missing, duplicate, or unexpected task IDs"
-                )
-            runtime = response["runtime_seconds"] / len(batch)
-            for result in response["results"]:
-                commit_result(
-                    by_task[result["id"]],
-                    TransformationResult(
-                        tuple(result["values"]), result["parameters"]
-                    ),
-                    runtime,
-                    response["worker"],
-                )
-        if errors:
-            raise RuntimeError("; ".join(errors))
-
-    def _run_03_directional_preparation(
-        self,
-        experiment_id: str,
-        rows: list[tuple],
-        attempts: dict[str, int],
-        workers: int,
-        dask_client: Any,
-        settings: ExecutionSettings | None,
-        profile: ExecutionProfile | None,
-    ) -> None:
-        """Prepare S1 references and bounded official inputs through one worker path."""
-        from .shared_distributed_execution import (
-            repository_source_manifest,
-            source_manifest_fingerprint,
-        )
-        from .shared_labels import (
-            DIRECTIONAL_LABEL_DEFINITION_ID,
-            directional_labels,
-        )
-        from .window_preparation import WindowPreparationCoordinator
-
-        manifest_hash = source_manifest_fingerprint(repository_source_manifest())
-        windows_database = self.database_path.with_name(
-            f"{self.database_path.stem}.windows.duckdb"
-        )
-        with WindowPreparationCoordinator(
-            self.database_path, windows_database
-        ) as preparation:
-            preparation_summary = preparation.run(
-                dask_client=dask_client,
-                source_manifest_hash=manifest_hash,
-                local_limits=(
-                    {"max_series": 100, "max_windows": 200}
-                    if dask_client is None
-                    else None
-                ),
-                execution_profile=(profile.name if dask_client is not None else None),
-                dask_retries=(settings.dask_retries if settings else 0),
-                prefect_compute=dask_client is not None,
-                max_in_flight=(settings.dask_max_in_flight if settings else workers),
-            )
-        contract = {
-            "preprocessing_mode": "robust",
-            "transformation": "standardise_sample_v1",
-            "input_length": 64,
-            "boundary": "final raw observations before official forecast origin",
-            "worker": self.configuration.execution_paths["r_preprocess_worker"],
-            "reference_preparation_id": preparation_summary["preparation_id"],
-            "reference_membership_fingerprint": preparation_summary[
-                "membership_fingerprint"
-            ],
-        }
-        preparation_id = (
-            "directional-official-preparation/"
-            + json_fingerprint(contract)[:32]
-        )
-        preparation_fingerprint = json_fingerprint(contract)
-        jobs = []
-        metadata = {}
-        for task_id, instance_id, variant_id, _ in rows:
-            context, actual, frequency, benchmark_metadata = self.connection.execute(
-                """SELECT i.context_target, i.actual_target, b.frequency, b.metadata
-                   FROM forecast_instances AS i
-                   JOIN benchmark_configurations AS b
-                     ON b.benchmark_configuration_id=i.benchmark_configuration_id
-                   WHERE i.forecast_instance_id=?""",
-                [instance_id],
-            ).fetchone()
-            raw = list(context[-64:])
-            if len(raw) != 64:
-                raise RuntimeError("directional official input requires 64 raw observations")
-            seasonality_metadata = json.loads(benchmark_metadata)
-            seasonality = seasonality_metadata.get(
-                "r_period", seasonality_metadata.get("official_seasonality")
-            )
-            input_id = "directional-input/" + json_fingerprint(
-                {
-                    "experiment": experiment_id,
-                    "variant": variant_id,
-                    "instance": instance_id,
-                    "preparation": preparation_id,
-                }
-            )[:32]
-            jobs.append(
-                {
-                    "id": task_id,
-                    "series_key": task_id,
-                    "preprocessing_mode": "robust",
-                    "transformation": "standardise_sample_v1",
-                    "seasonality": seasonality,
-                    "windows": [
-                        {
-                            "window_id": input_id,
-                            "input_start": len(context) - 64,
-                            "input_end": len(context),
-                            "future_start": len(context),
-                            "future_end": len(context) + 14,
-                            "input": raw,
-                        }
-                    ],
-                }
-            )
-            metadata[task_id] = {
-                "instance_id": instance_id,
-                "variant_id": variant_id,
-                "input_id": input_id,
-                "raw": raw,
-                "actual": actual,
-                "frequency": frequency,
-            }
-
-        from .shared_workflow_orchestration import run_gate_compute_flow
-
-        batches = _batches(
-            jobs, int(self.configuration.execution["batch_sizes"]["window_preparation"])
-        )
-        outcomes = run_gate_compute_flow(
-            process_id=3,
-            batches=batches,
-            options={
-                "bounded_preparation": True,
-                "script": self.configuration.execution_paths["r_preprocess_worker"],
-                "timeout": float(
-                    self.configuration.execution["worker_timeouts_seconds"]["r"]
-                ),
-                "threads": int(self.configuration.execution["thread_limits"]["r"]),
-            },
-            scheduler_address=(dask_client.scheduler.address if dask_client else None),
-            retries=settings.dask_retries if settings else 0,
-            max_in_flight=settings.dask_max_in_flight if settings else workers,
-            local_workers=workers,
-        )
-        errors = []
-        for outcome in outcomes:
-            if "response" not in outcome:
-                errors.append(outcome["error"])
-                continue
-            batch = outcome["batch"]
-            response = outcome["response"]
-            by_id = {result["id"]: result for result in response["results"]}
-            if set(by_id) != {job["id"] for job in batch}:
-                raise RuntimeError("directional preparation returned mismatched task IDs")
-            for job in batch:
-                task_id = job["id"]
-                details = metadata[task_id]
-                windows = by_id[task_id].get("windows")
-                if not isinstance(windows, list) or len(windows) != 1:
-                    raise RuntimeError("directional preparation returned an invalid window")
-                result = windows[0]
-                labels_array = directional_labels(
-                    details["actual"], result["prepared_reference"]
-                )
-                if len(labels_array) != 14 or any(math.isnan(value) for value in labels_array):
-                    raise RuntimeError("official directional labels must be complete")
-                labels = [int(value) for value in labels_array]
-                input_content = {
-                    "experiment_id": experiment_id,
-                    "variant_id": details["variant_id"],
-                    "forecast_instance_id": details["instance_id"],
-                    "preparation_id": preparation_id,
-                    "preparation_fingerprint": preparation_fingerprint,
-                    "raw_input_hash": result["input_hash"],
-                    "cleaned_input_hash": result["cleaned_hash"],
-                    "transformed_input_hash": result["transformed_hash"],
-                    "transformed_input": result["transformed_input"],
-                    "label_reference": result["prepared_reference"],
-                    "preprocessing_provenance": canonical_json(
-                        {
-                            **result["preprocessing"],
-                            "frequency": details["frequency"],
-                            "raw_boundary": [result["input_start"], result["input_end"]],
-                            "source_manifest_fingerprint": manifest_hash,
-                        }
-                    ),
-                    "package_versions": canonical_json(response["packages"]),
-                }
-                input_record = {
-                    "evaluation_input_id": details["input_id"],
-                    **input_content,
-                    "content_hash": json_fingerprint(input_content),
-                }
-                label_id = "directional-actual/" + json_fingerprint(
-                    {
-                        "input": details["input_id"],
-                        "definition": DIRECTIONAL_LABEL_DEFINITION_ID,
-                    }
-                )[:32]
-                label_content = {
-                    "experiment_id": experiment_id,
-                    "evaluation_input_id": details["input_id"],
-                    "definition_id": DIRECTIONAL_LABEL_DEFINITION_ID,
-                    "labels": labels,
-                }
-                label_record = {
-                    "actual_label_id": label_id,
-                    **label_content,
-                    "content_hash": json_fingerprint(label_content),
-                }
-
-                def insert(
-                    input_record=input_record,
-                    label_record=label_record,
-                ) -> None:
-                    self._insert_or_verify(
-                        "directional_evaluation_inputs", input_record
-                    )
-                    self._insert_or_verify("directional_actual_labels", label_record)
-
-                if self.configuration.version >= 12:
-                    # The shared task completes only after the full-history point
-                    # transformation below has also been persisted successfully.
-                    insert()
-                else:
-                    self._commit_task(
-                        task_id,
-                        attempts[task_id],
-                        response["runtime_seconds"] / len(batch),
-                        insert,
-                        response.get("worker"),
-                    )
-        if errors:
-            raise RuntimeError("; ".join(errors))
 
     def store_m4_references(self, experiment_id: str) -> int:
         """Request only missing archived means; the coordinator alone stores them.
@@ -2452,7 +2073,7 @@ class ExperimentCoordinator:
         }
         child = duckdb.connect(str(child_path), read_only=True)
         try:
-            from .window_preparation import load_training_cohort
+            from p04_forecast.inputs import load_training_cohort
 
             cohort = load_training_cohort(
                 child, run[0], self.configuration.resolved["pipeline"]["window_preparation"].get("training_cohort")
@@ -2542,8 +2163,8 @@ class ExperimentCoordinator:
             / "src/python/util/shared_transformations.py",
             "src/python/util/shared_labels.py": self.root
             / "src/python/util/shared_labels.py",
-            "src/python/util/window_preparation.py": self.root
-            / "src/python/util/window_preparation.py",
+            "src/python/p04_forecast/inputs.py": self.root
+            / "src/python/p04_forecast/inputs.py",
         }
         source_hashes = {
             relative_path: hashlib.sha256(path.read_bytes()).hexdigest()
@@ -3378,7 +2999,7 @@ class ExperimentCoordinator:
             str((self.database_path.parent / run[1]).resolve()), read_only=True
         )
         try:
-            from .window_preparation import load_training_cohort
+            from p04_forecast.inputs import load_training_cohort
 
             cohort = load_training_cohort(
                 child, run[0], self.configuration.resolved["pipeline"]["window_preparation"].get("training_cohort")
@@ -4304,7 +3925,7 @@ class ExperimentCoordinator:
         expected_count = self.connection.execute(
             """SELECT count(DISTINCT forecast_instance_id)
                FROM experiment_tasks
-               WHERE experiment_id=? AND stage=3""",
+               WHERE experiment_id=? AND stage=4""",
             [experiment_id],
         ).fetchone()[0]
         prepared = []
@@ -4319,7 +3940,7 @@ class ExperimentCoordinator:
                          AND r.series_id=i.series_id AND r.forecast_id=?
                        WHERE x.experiment_id=? AND EXISTS (
                            SELECT 1 FROM experiment_tasks t
-                           WHERE t.experiment_id=x.experiment_id AND t.stage=3
+                           WHERE t.experiment_id=x.experiment_id AND t.stage=4
                              AND t.forecast_instance_id=i.forecast_instance_id
                        ) ORDER BY i.official_position""",
                     [candidate, experiment_id],
@@ -4505,7 +4126,7 @@ class ExperimentCoordinator:
         execution: tuple[ExecutionProfile, dict[str, Any]] | None = None,
         execution_settings: ExecutionSettings | None = None,
     ) -> list[dict[str, Any]]:
-        """Purpose: Execute the remaining Process 03–06 pipeline in process order.
+        """Purpose: Execute the remaining Process 04–06 pipeline in process order.
 
         Inputs: Persisted experiment plan and optional execution controls forwarded
         to each process.

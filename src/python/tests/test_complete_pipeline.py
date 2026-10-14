@@ -36,7 +36,7 @@ class CompletePipelineTests(unittest.TestCase):
                     dry = coordinator.plan(dry_run=True)
                     plan = coordinator.plan()
                 self.assertEqual(dry["official_evaluation_rows"], 17)
-                self.assertEqual(plan.task_counts, {3: 100, 4: 2830, 5: 1500, 6: 46})
+                self.assertEqual(plan.task_counts, {4: 2830, 5: 1500, 6: 46})
                 counts = dict(coordinator.connection.execute(
                     "SELECT candidate,count(*) FROM experiment_tasks WHERE stage=4 GROUP BY candidate"
                 ).fetchall())
@@ -67,9 +67,9 @@ class CompletePipelineTests(unittest.TestCase):
                 dry = coordinator.plan(dry_run=True)
                 self.assertEqual(dry["official_evaluation_rows"], 17)
                 self.assertEqual(expected_task_counts(100, coordinator.config),
-                                 {3: 100, 4: 2830, 5: 1500, 6: 46})
+                                 {4: 2830, 5: 1500, 6: 46})
                 plan = coordinator.plan()
-                self.assertEqual(plan.task_counts, {3: 100, 4: 2830, 5: 1500, 6: 46})
+                self.assertEqual(plan.task_counts, {4: 2830, 5: 1500, 6: 46})
                 for stage, candidates in ((4, ordinary), (5, ordinary | {"m4_comb"})):
                     counts = dict(coordinator.connection.execute(
                         "SELECT candidate,count(*) FROM experiment_tasks WHERE stage=? AND NOT starts_with(candidate,'directional_') GROUP BY candidate", [stage]).fetchall())

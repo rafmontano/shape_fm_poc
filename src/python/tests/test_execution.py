@@ -667,9 +667,9 @@ class ExecutionProfileTests(unittest.TestCase):
         counts = expected_task_counts(4_227, workflow)
         self.assertEqual(
             counts,
-            {3: 16_908, 4: 33_816, 5: 50_724, 6: 12},
+            {4: 33_816, 5: 50_724, 6: 12},
         )
-        self.assertEqual(sum(counts.values()), 101_460)
+        self.assertEqual(sum(counts.values()), 84_552)
 
     def test_unknown_and_invalid_overrides_fail(self) -> None:
         """Profile resolution rejects unknown names and unsafe concurrency overrides."""
@@ -879,50 +879,6 @@ for line in sys.stdin:
         )
         self.assertNotIn("duckdb", dask_imports)
 
-    def test_local_dask_batch_matches_sequential_transform(self) -> None:
-        """Dask transformation batches match direct transforms and report CPU resources."""
-        from distributed import Client, LocalCluster
-
-        from util.shared_distributed_execution import run_batches, transform_batch
-        from util.shared_transformations import transform
-
-        jobs = [
-            {
-                "id": f"task-{index}",
-                "values": [float(index), float(index + 2), float(index - 1)],
-                "method": "minmax_then_standardize",
-            }
-            for index in range(5)
-        ]
-        cluster = LocalCluster(
-            n_workers=1,
-            threads_per_worker=1,
-            processes=False,
-            dashboard_address=None,
-            resources={"CPU": 1},
-        )
-        try:
-            with Client(cluster) as client:
-                returned = []
-                for _, response in run_batches(
-                    client,
-                    transform_batch,
-                    [jobs[:3], jobs[3:]],
-                    resources={"CPU": 1},
-                    max_in_flight=1,
-                    retries=1,
-                ):
-                    returned.extend(response["results"])
-                    self.assertEqual(response["worker"]["resources"], {"CPU": 1})
-            expected = [
-                transform(job["values"], job["method"]) for job in jobs
-            ]
-            self.assertEqual(
-                [tuple(result["values"]) for result in returned],
-                [result.values for result in expected],
-            )
-        finally:
-            cluster.close()
 
     def test_dask_batch_retry_count_is_explicit(self) -> None:
         """A retried Dask batch receives the incremented retry count."""

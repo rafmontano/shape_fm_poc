@@ -17,6 +17,7 @@ def table_document(*, full=False, capped=False, version=12):
     document = json.loads(
         (Path(__file__).resolve().parents[3] / "config/experiment.json").read_text()
     )
+    document["pipeline"]["window_preparation"].pop("training_cohort", None)
     if version != 12:
         _schema_variation(document, version)
     if full or capped:

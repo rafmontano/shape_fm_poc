@@ -1,7 +1,7 @@
 # ==============================================================================
 # shared_workflow_orchestration.py
 #
-# Purpose: Define ShapeFM's Prefect experiment, gate, and preparation workflows.
+# Purpose: Orchestrate retained Process 04–06 coordinator and compute boundaries.
 # Inputs: Existing DuckDB paths, process IDs, resolved execution controls, and thin callables around established coordinators.
 # Outputs: Prefect run identities and existing scientific summaries; research results remain in DuckDB.
 # Run from: Imported; not run directly.
@@ -45,9 +45,6 @@ from prefect_dask import DaskTaskRunner
 GateRunner = Callable[[int], dict[str, Any]]
 GateInspector = Callable[[int], dict[str, Any]]
 GateValidator = Callable[[int, dict[str, Any]], dict[str, Any]]
-PreparationRunner = Callable[[], dict[str, Any]]
-PreparationInspector = Callable[[], dict[str, Any]]
-PreparationValidator = Callable[[dict[str, Any]], dict[str, Any]]
 IdentityRecorder = Callable[[str], None]
 
 
@@ -58,26 +55,6 @@ def _local_worker() -> dict[str, Any]:
         "hostname": platform.node(),
         "retry_count": get_run_context().task_run.run_count - 1,
     }
-
-
-@task(name="Gate 03 transform batch", persist_result=False, cache_policy=NO_CACHE)
-def compute_transform_batch(
-    batch: list[dict[str, Any]], options: dict[str, Any], distributed: bool
-) -> dict[str, Any]:
-    """Transform one serializable batch in a named Prefect compute task."""
-    from .shared_distributed_execution import transform_batch, window_preparation_batch
-
-    if options.get("bounded_preparation"):
-        return window_preparation_batch(
-            batch,
-            options["script"],
-            options["timeout"],
-            options["threads"],
-            options.get("memory_safety"),
-            get_run_context().task_run.run_count - 1,
-        )
-
-    return transform_batch(batch, get_run_context().task_run.run_count - 1)
 
 
 @task(name="Gate 04 directional DTW batch", persist_result=False, cache_policy=NO_CACHE)
@@ -168,7 +145,6 @@ def compute_evaluation(
 
 
 COMPUTE_TASKS = {
-    3: compute_transform_batch,
     4: compute_directional_dtw_batch,
     5: compute_combine_batch,
     6: compute_evaluation,
@@ -395,14 +371,14 @@ def experiment_flow(
     validator: GateValidator,
     retries: int,
     recorder: IdentityRecorder | None = None,
-    import_process: PreparationRunner | None = None,
+    import_process: Callable[[], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Run selected gates in dependency order and collect every child result."""
     selected = tuple(processes)
     if not selected or tuple(sorted(set(selected))) != selected:
         raise ValueError("ShapeFM processes must be unique and in ascending order")
-    if any(process_id not in {1, 3, 4, 5, 6} for process_id in selected):
-        raise ValueError("legacy workflow supports Processes 01 and 03–06 only")
+    if any(process_id not in {1, 4, 5, 6} for process_id in selected):
+        raise ValueError("legacy workflow supports Processes 01 and 04–06 only")
     prefect_flow_run_id = _flow_run_id()
     if selected == (1,):
         record_workflow_identity.fn(prefect_flow_run_id, recorder)
@@ -442,66 +418,4 @@ def experiment_flow(
     return {
         "prefect_flow_run_id": prefect_flow_run_id,
         "processes": summaries,
-    }
-
-
-@task(
-    name="prepare and persist rolling windows",
-    persist_result=False,
-    cache_policy=NO_CACHE,
-)
-def execute_window_preparation(runner: PreparationRunner) -> dict[str, Any]:
-    """Run existing bounded preparation and attach its Prefect task identity."""
-    return {**runner(), "prefect_task_run_id": _task_run_id()}
-
-
-@task(
-    name="inspect rolling-window inputs",
-    persist_result=False,
-    cache_policy=NO_CACHE,
-)
-def inspect_window_preparation(inspector: PreparationInspector) -> dict[str, Any]:
-    """Validate parent/child preparation inputs and attach task identity."""
-    return {**inspector(), "prefect_task_run_id": _task_run_id()}
-
-
-@task(
-    name="validate persisted rolling windows",
-    persist_result=False,
-    cache_policy=NO_CACHE,
-)
-def validate_window_preparation(
-    result: dict[str, Any], validator: PreparationValidator
-) -> dict[str, Any]:
-    """Validate persisted parent/child preparation output and attach task identity."""
-    return {**validator(result), "prefect_task_run_id": _task_run_id()}
-
-
-@flow(name="ShapeFM rolling-window preparation", persist_result=False)
-def window_preparation_flow(
-    inspector: PreparationInspector,
-    runner: PreparationRunner,
-    validator: PreparationValidator,
-    retries: int,
-) -> dict[str, Any]:
-    """Inspect, execute, and validate the optional rolling-window/S1 workflow."""
-    if retries < 0:
-        raise ValueError("Prefect preparation retries cannot be negative")
-    inspected = inspect_window_preparation(inspector)
-    # Native compute tasks own retries; never repeat the enclosing writer task.
-    result = execute_window_preparation.with_options(retries=0)(runner)
-    validated = validate_window_preparation(result, validator)
-    return {
-        **result,
-        "prefect_flow_run_id": _flow_run_id(),
-        "prefect_substeps": {
-            "inspect_task_run_id": inspected["prefect_task_run_id"],
-            "execute_task_run_id": result["prefect_task_run_id"],
-            "validate_task_run_id": validated["prefect_task_run_id"],
-        },
-        "validation": {
-            key: value
-            for key, value in validated.items()
-            if key != "prefect_task_run_id"
-        },
     }

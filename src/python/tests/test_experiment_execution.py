@@ -27,12 +27,11 @@ from util.shared_experiment_execution import (
     scientific_configuration,
     validated_submission_metadata,
 )
-from util.shared_transformations import inverse, transform
 
 
 # Test/calibration value: expected rows derived from the committed 100-series fixture;
 # it is an assertion oracle, not a production execution or experiment global.
-EXPECTED_100_TASK_COUNTS = {3: 400, 4: 800, 5: 1_200, 6: 12}
+EXPECTED_100_TASK_COUNTS = {4: 800, 5: 1_200, 6: 12}
 
 
 def forecast_result(job, mean, *, fallback=False, executed_model=None, quantiles=None):
@@ -89,32 +88,6 @@ class TransformationTests(unittest.TestCase):
         first = {"contract_version": "1", "submission_metadata": {"org": "first"}}
         second = {"contract_version": "1", "submission_metadata": {"org": "second"}}
         self.assertEqual(scientific_configuration(first), scientific_configuration(second))
-
-    def test_minmax_standardize_round_trip_is_ordered_and_exact_within_tolerance(self):
-        """Min-max standardization restores each input in order within numeric tolerance."""
-        source = (-7.5, 2.0, 11.25, 4.5)
-        result = transform(source, "minmax_then_standardize")
-        restored = inverse(result.values, "minmax_then_standardize", result.parameters)
-        for expected, actual in zip(source, restored, strict=True):
-            self.assertAlmostEqual(expected, actual, places=12)
-
-    def test_constant_series_has_deterministic_round_trip(self):
-        """A constant series maps to zeros and every inverse value maps to its constant."""
-        result = transform([3.25] * 5, "minmax_then_standardize")
-        self.assertEqual(result.values, (0.0,) * 5)
-        self.assertEqual(
-            inverse([-100.0, 0.0, 100.0], "minmax_then_standardize", result.parameters),
-            (3.25, 3.25, 3.25),
-        )
-
-    def test_future_actuals_cannot_change_fitted_parameters(self):
-        """Transformation parameters depend only on context and are deterministic."""
-        context = [1.0, 4.0, 9.0]
-        first = transform(context, "minmax_then_standardize")
-        second = transform(context, "minmax_then_standardize")
-        future = [10_000.0, -10_000.0]
-        self.assertNotIn(max(future), first.parameters.values())
-        self.assertEqual(first, second)
 
 class ExternalBatchTests(unittest.TestCase):
     """Purpose: Verify forecast combination and external batch execution contracts.
@@ -315,9 +288,9 @@ class TransactionTests(unittest.TestCase):
         connection = self.coordinator.connection
         connection.execute(
             """INSERT INTO experiment_tasks
-            (task_id, experiment_id, stage, status) VALUES ('task', 'experiment', 3, 'pending')"""
+            (task_id, experiment_id, stage, status) VALUES ('task', 'experiment', 4, 'pending')"""
         )
-        invocation = self.coordinator._begin_invocation("experiment", 3, 1, "cpu", 1)
+        invocation = self.coordinator._begin_invocation("experiment", 4, 1, "cpu", 1)
         attempt = self.coordinator._start_tasks([("task", None, None, None)], invocation)["task"]
 
         def invalid_insert():
@@ -341,7 +314,7 @@ class TransactionTests(unittest.TestCase):
             connection.execute("SELECT count(*) FROM submission_exports").fetchone()[0], 0
         )
         second_invocation = self.coordinator._begin_invocation(
-            "experiment", 3, 1, "cpu", 1
+            "experiment", 4, 1, "cpu", 1
         )
         self.assertEqual(
             connection.execute(

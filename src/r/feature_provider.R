@@ -1,20 +1,13 @@
 #!/usr/bin/env Rscript
-# ==============================================================================
-# feature_provider.R
-#
-# Purpose: Serve the JSON-stdin boundary for the fixed FFORMA 42-feature provider.
-# Inputs: action="describe", or action="extract" with ordered jobs containing id,
-#   finite prepared context values and centrally resolved positive seasonality.
-# Outputs: JSON description or ordered per-job success/failure results on stdout.
-# Run from: printf '%s' '{"action":"describe"}' | Rscript --vanilla src/r/feature_provider.R
-# ==============================================================================
+# Process 03 FFORMA provider: one JSON request on stdin -> one JSON response.
+# describe returns schema/dependency identity; extract accepts ordered jobs with
+# id, finite prepared context and resolved seasonality and returns per-job results.
+# Formulas, schema and approved fallbacks live in util/features.R; no storage.
 
 source("src/r/util/time_series_input.R")
 source("src/r/util/features.R")
 
-# Purpose: Report stable scientific contract and runtime dependency identity.
-# Inputs: None.
-# Outputs: JSON-ready feature provider description; writes nothing.
+# Return the fixed feature contract and native dependency identity.
 describe_feature_provider <- function() {
   list(
     feature_set_id = "fforma_base_v1",
@@ -43,9 +36,7 @@ describe_feature_provider <- function() {
   )
 }
 
-# Purpose: Extract one job while converting scientific/input errors to job failure.
-# Inputs: Job with id, finite context array, and centrally resolved seasonality.
-# Outputs: JSON-ready success with ordered names/values, or failure with error text.
+# Job (id, context, seasonality) -> ordered feature values or explicit job failure.
 extract_feature_job <- function(job) {
   id <- job$id
   tryCatch({
@@ -66,9 +57,7 @@ extract_feature_job <- function(job) {
   })
 }
 
-# Purpose: Validate and dispatch one top-level worker request.
-# Inputs: Decoded JSON list with action and, for extraction, a jobs array.
-# Outputs: JSON-ready response; malformed top-level protocol raises a fatal error.
+# Decoded request -> description or extraction results; malformed protocol fails.
 dispatch_feature_request <- function(payload) {
   if (!is.list(payload) || is.null(payload$action) || length(payload$action) != 1L) {
     stop("top-level action is required", call. = FALSE)
@@ -84,9 +73,7 @@ dispatch_feature_request <- function(payload) {
   )
 }
 
-# Purpose: Read one stdin request and emit its response with protocol precision.
-# Inputs: JSON from stdin.
-# Outputs: Exactly one JSON document on stdout; fatal protocol errors terminate.
+# Emit one response with binary64 round-trip precision; protocol errors terminate.
 feature_provider_main <- function() {
   if (!requireNamespace("jsonlite", quietly = TRUE)) stop("jsonlite is required", call. = FALSE)
   payload <- jsonlite::fromJSON(file("stdin"), simplifyVector = FALSE)

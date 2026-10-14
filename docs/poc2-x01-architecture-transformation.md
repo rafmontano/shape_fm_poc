@@ -128,8 +128,8 @@ curated final metrics/CSV/PNG/PDF artifacts. Failures warn and never invalidate
 science. Periodic progress/ETA is off unless a stored setting explicitly enables
 it for a named long-running subflow; no autologging/system metrics/model registry.
 
-Increments A–B have passed bounded developer acceptance and are submitted for
-researcher review; C–F remain planned. This does not close X01.
+Increments A–C have passed bounded developer acceptance and are submitted for
+researcher review; D–F remain planned. This does not close X01.
 
 | Increment | Scope and bounded acceptance |
 | --- | --- |
@@ -257,3 +257,38 @@ The old Process 02 wrapper, coordinator handler/planning/dispatch, Prefect
 cleaning task, repeated storage validation and obsolete orchestration tests
 were removed. R documentation changed without changing parsed scientific
 expressions. No new/old schema compatibility bridge was added.
+
+## Increment C — Transform
+
+The approved four subflows assign series-level S1 membership, materialise
+modelling origins, materialise reusable features and accept the modelling
+dataset. Rolling inputs clean raw training blocks independently; official
+directional inputs clean the raw trailing 64 observations independently of
+full-history point inputs. Sample-SD state and strict future labels retain the
+accepted definitions. Membership/features/common reference membership are
+parent-owned; origin inputs/labels are child-owned.
+
+Fresh 100-series acceptance through Process 03 took 281.298 seconds including
+startup. It accepted 732 modelling inputs (632 rolling and 100 official), a
+495-window S1 training cohort under the configured shared maximum 10,000, and
+595 reusable 42-feature vectors. Native calculation/acceptance took 127.667
+seconds for inputs and 114.709 seconds for features. All 732 raw boundaries,
+block-local R-cleaned inputs, sample-SD states and strict labels passed an
+independent read/QA calculation. The capped fixture exercises actual stratified
+selection rather than only the below-cap case; evaluation inputs remain uncapped.
+
+Database-only full requested-range restart took 4.065 seconds. A separate
+Process 03-only restart after legacy retirement took 4.893 seconds: all 996
+parent and 732 child rows and acceptance timestamps remained unchanged.
+Evidence databases are retained in the isolated review artifact workspace.
+MLflow used one run, `4456cf7e55a14684a431c5435df278af`, with completed
+03/03.01–03.04 milestones and completion progress. No Process 04 work or
+calibration ran.
+
+Sixteen focused import/preprocess/transform/numerical tests passed after
+retirement. Native feature/cohort/transformation R checks passed; audited R
+expressions remained identical. Superseded Process 03 wrapper, coordinator
+handlers/planning/dispatch, window/feature orchestration, repeated storage
+validation, compatibility transformation branches and their obsolete tests
+were removed. The unmigrated Process 04 retains only its existing stored-cohort
+reader until D; no schema bridge or wrapper was introduced.

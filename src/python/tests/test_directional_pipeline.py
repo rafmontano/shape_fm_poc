@@ -17,13 +17,12 @@ from util.shared_distributed_execution import (
     source_manifest_fingerprint,
     validate_directional_cluster,
 )
-from util.shared_experiment_execution import ExperimentCoordinator, expected_task_counts
-from util.window_preparation import _target_content_hash
+from util.shared_experiment_execution import ExperimentCoordinator
 
 
 ROOT = Path(__file__).resolve().parents[3]
 from tests.configuration_fixtures import configuration_path, table_document
-CONFIG = configuration_path(version=10)
+CONFIG = configuration_path(capped=True)
 
 
 class DirectionalPipelineTests(unittest.TestCase):
@@ -34,12 +33,6 @@ class DirectionalPipelineTests(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
         self.database = Path(self.directory.name) / "directional.duckdb"
         self.configuration = initialize_experiment_database(self.database, CONFIG)
-
-    def test_directional_task_cardinalities_have_no_forecast_combination_rows(self):
-        self.assertEqual(
-            expected_task_counts(100, self.configuration.workflow),
-            {3: 100, 4: 1401, 5: 1, 6: 14},
-        )
 
     def test_fixed_dtw_checkpoints_success_before_failure_and_resumes_missing_only(self):
         """Real task transactions survive a later failed external prediction block."""
@@ -279,166 +272,6 @@ class DirectionalPipelineTests(unittest.TestCase):
                         [next(iter(record.values()))],
                     ).fetchone()[0]
                     self.assertEqual(stored, "h")
-
-    def test_fresh_database_process_03_completes_without_ambiguous_columns(self):
-        """The real fresh parent/child path completes bounded directional preparation."""
-        fixture = table_document(capped=True)
-        fixture["data"]["selection"] = {"method": "first_official", "count": 100}
-        fixture["execution"]["default"]["batch_sizes"]["preprocess"] = 100
-        fixture["execution"]["default"]["batch_sizes"]["window_preparation"] = 16
-        fixture_path = Path(self.directory.name) / "fixture.json"
-        fixture_path.write_text(json.dumps(fixture), encoding="utf-8")
-        database = Path(self.directory.name) / "fresh-process-03.duckdb"
-        initialize_experiment_database(database, fixture_path)
-        connection = duckdb.connect(str(database))
-        try:
-            connection.execute("BEGIN TRANSACTION")
-            connection.execute(
-                """INSERT INTO datasets VALUES
-                   ('dataset/test', 'm4_daily', 'fixture', 'fixture-revision', '{}',
-                    '{}', 'fixture-hash', 'D', '{}', current_timestamp)"""
-            )
-            for index in range(100):
-                series_id = f"D{index + 1}"
-                values = [float(index + offset % 11) for offset in range(106)]
-                connection.execute(
-                    """INSERT INTO series VALUES
-                       ('dataset/test', ?, ?, ?, 'D', TIMESTAMP '2000-01-01', ?, 106,
-                        ?, '{}', current_timestamp)""",
-                    [series_id, series_id, index, values, _target_content_hash(values)],
-                )
-                connection.execute(
-                    """INSERT INTO evaluation_windows VALUES
-                       ('dataset/test', ?, 'short/000', 'validation_and_test',
-                        0, 78, 78, 92, 92, 106, 14,
-                        'zero-based, end-exclusive', current_timestamp)""",
-                    [series_id],
-                )
-            connection.execute(
-                """UPDATE experiment_processes SET status='completed',
-                   completed_at=current_timestamp WHERE process_id=1"""
-            )
-            connection.execute("COMMIT")
-        except BaseException:
-            connection.execute("ROLLBACK")
-            raise
-        finally:
-            connection.close()
-
-        def official(limit: int) -> dict[str, object]:
-            return {
-                "configuration_name": "m4_daily/D/short",
-                "dataset_name": "m4_daily",
-                "frequency": "D",
-                "term": "short",
-                "prediction_length": 14,
-                "window_count": 1,
-                "domain": "Econ/Fin",
-                "num_variates": 1,
-                "available_instances": 100,
-                "r_period": 7,
-                "r_period_source": "pinned frequency",
-                "evaluation_seasonality": 7,
-                "gluonts_default_seasonality": 7,
-                "instances": [
-                    {
-                        "item_id": f"D{index + 1}",
-                        "variate_id": "0",
-                        "window_id": "short/000",
-                        "official_position": index,
-                        "context": [float(index + offset % 11) for offset in range(64)],
-                        "actual": [float(index + 20 + offset) for offset in range(14)],
-                        "start": "2000-01-01",
-                        "forecast_start": "2000-03-05",
-                    }
-                    for index in range(limit)
-                ],
-            }
-
-        with ExperimentCoordinator(database) as coordinator:
-            with patch.object(
-                coordinator,
-                "_gift_bridge",
-                side_effect=lambda *arguments, **_: official(
-                    int(arguments[arguments.index("--limit") + 1])
-                ),
-            ):
-                plan = coordinator.plan()
-            # Process 03 still consumes the legacy prepared schema until migration.
-            # These finite fixture histories are already prepared; never run old P02.
-            for instance_id, context in coordinator.connection.execute(
-                "SELECT forecast_instance_id, context_target FROM forecast_instances"
-            ).fetchall():
-                coordinator.connection.execute(
-                    """INSERT INTO preprocessed_series VALUES
-                       (?, ?, ?, 'robust', ?, ?, ?, '{}', '{}', NULL,
-                        'D', 1, 'success', 0, 0, false, current_timestamp)""",
-                    [f"prepared/{instance_id}", plan.experiment_id, instance_id,
-                     json_fingerprint(context), json_fingerprint(context), context],
-                )
-            try:
-                result = coordinator.run_process(plan.experiment_id, 3)
-            except RuntimeError as error:
-                detail = coordinator.connection.execute(
-                    """SELECT last_error FROM experiment_tasks
-                       WHERE stage=3 AND last_error IS NOT NULL LIMIT 1"""
-                ).fetchone()
-                self.fail(f"Process 03 failed: {detail[0] if detail else error}")
-            self.assertEqual(result["counts"], {"completed": 100})
-            self.assertEqual(
-                coordinator.connection.execute(
-                    "SELECT count(*) FROM directional_evaluation_inputs"
-                ).fetchone()[0],
-                100,
-            )
-            self.assertEqual(
-                coordinator.connection.execute(
-                    "SELECT count(*) FROM directional_actual_labels"
-                ).fetchone()[0],
-                100,
-            )
-            common_inputs, definition_hash, membership_hash = (
-                coordinator._directional_mantis_inputs()
-            )
-            official_inputs = [
-                item for item in common_inputs if item.role == "official_evaluation"
-            ]
-            training_inputs = [item for item in common_inputs if item.role == "training"]
-            stored_official = {
-                row[0]: (tuple(row[1]), row[2])
-                for row in coordinator.connection.execute(
-                    """SELECT evaluation_input_id, transformed_input,
-                              transformed_input_hash
-                       FROM directional_evaluation_inputs"""
-                ).fetchall()
-            }
-            self.assertEqual(len(official_inputs), 100)
-            self.assertTrue(training_inputs)
-            self.assertTrue(all(item.labels is None for item in official_inputs))
-            self.assertTrue(all(item.labels is not None for item in training_inputs))
-            self.assertTrue(all(item.membership_fingerprint == membership_hash
-                                for item in common_inputs))
-            self.assertTrue(all(item.preparation_definition_id == definition_hash
-                                for item in training_inputs))
-            library, _, preparation = coordinator._directional_reference_library()
-            self.assertEqual(
-                {item.input_id: (item.values, item.labels) for item in training_inputs},
-                {item["identity"]: (tuple(item["values"]), tuple(item["labels"]))
-                 for item in library["references"]},
-            )
-            self.assertEqual(json_fingerprint({
-                "split": preparation["membership_fingerprint"],
-                "training_cohort": preparation["training_cohort"]["cohort_fingerprint"],
-            }), membership_hash)
-            self.assertEqual(preparation["training_cohort"]["selected_count"], len(training_inputs))
-            self.assertEqual(
-                {
-                    item.input_id: (item.values, item.input_fingerprint)
-                    for item in official_inputs
-                },
-                stored_official,
-            )
-
 
 if __name__ == "__main__":
     unittest.main()
