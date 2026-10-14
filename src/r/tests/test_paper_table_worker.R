@@ -12,7 +12,7 @@ source("src/r/tests/test_paper_table_metrics.R")
 # Invoke the real worker with one JSON request; collect exit status and stdout.
 invoke <- function(request_json) {
   suppressWarnings(system2(file.path(R.home("bin"), "Rscript"),
-    c("--vanilla", "src/r/06_02_evaluate_paper_tables.R"),
+    c("--vanilla", "src/r/p06_evaluate/evaluation_worker.R"),
     input = request_json, stdout = TRUE, stderr = TRUE))
 }
 

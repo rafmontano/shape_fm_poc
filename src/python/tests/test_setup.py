@@ -6,6 +6,7 @@ import importlib.util
 import hashlib
 import io
 import json
+import shlex
 import shutil
 import subprocess
 import sys
@@ -48,6 +49,24 @@ def shell(command: str) -> subprocess.CompletedProcess[str]:
 
 class SetupInterfaceTests(unittest.TestCase):
     """Protect shared environment setup arguments and read-only verification."""
+
+    def test_environment_sync_removes_only_generated_source_metadata(self):
+        """Stubbed installation leaves authored source and environment metadata intact."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = make_repository(Path(directory) / "project")
+            shutil.copy2(ROOT / "scripts/setup_support.py", root / "scripts/setup_support.py")
+            metadata = root / "src/python/package.egg-info"
+            metadata.mkdir(parents=True)
+            (metadata / "PKG-INFO").write_text("generated")
+            source = root / "src/python/authored.py"
+            source.write_text("authored source")
+            environment_metadata = root / ".venv/retained.egg-info"
+            environment_metadata.mkdir(parents=True)
+            result = shell(f"REPOSITORY_ROOT={shlex.quote(str(root))}; UV=true; sync_python_environments")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse(metadata.exists())
+            self.assertEqual(source.read_text(), "authored source")
+            self.assertTrue(environment_metadata.is_dir())
 
     def test_supported_operations(self):
         """Only the documented default, verification and help operations resolve."""

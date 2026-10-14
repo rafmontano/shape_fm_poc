@@ -4,12 +4,12 @@
 #
 # Process 04: verify the registered R forecast pool, separate M4 point methods,
 #   usable native output and the approved fallback contract.
-# Inputs: Project R library plus src/r/util/forecast_methods.R.
+# Inputs: Project R library plus src/r/p04_forecast/forecast_methods.R.
 # Outputs: Test progress on stdout and nonzero exit on assertion failure; writes nothing.
 # Run from: Rscript src/r/tests/test_forecast_methods.R
 # ==============================================================================
 
-source("src/r/util/forecast_methods.R")
+source("src/r/p04_forecast/forecast_methods.R")
 
 # Test constant: exact approved identifiers and FFORMA order.
 APPROVED_METHODS <- c(
@@ -272,7 +272,7 @@ check("M4 point methods reject invalid inputs, horizons, and outputs", function(
 })
 
 check("M4 preparation is shared and no refitting comb function exists", function() {
-  source_lines <- readLines("src/r/util/forecast_methods.R", warn = FALSE)
+  source_lines <- readLines("src/r/p04_forecast/forecast_methods.R", warn = FALSE)
   code_lines <- source_lines[!grepl("^\\s*#", source_lines)]
   assert_identical(
     sum(grepl("stats::decompose\\(", code_lines)),
@@ -296,7 +296,7 @@ check("shared R adapter preserves values and applies the resolved period", funct
   adapted <- time_series_from_values(TEST_CONTEXT, 7L, allow_missing = FALSE)
   assert_identical(as.numeric(adapted), TEST_CONTEXT, "shared adapter changed input values")
   assert_identical(as.integer(stats::frequency(adapted)), 7L, "shared adapter changed period")
-  source_lines <- readLines("src/r/util/forecast_methods.R", warn = FALSE)
+  source_lines <- readLines("src/r/p04_forecast/forecast_methods.R", warn = FALSE)
   code_lines <- source_lines[!grepl("^\\s*#", source_lines)]
   assert_identical(
     sum(grepl("stats::ts\\(", code_lines)),
@@ -519,7 +519,7 @@ check("output validator rejects non-finite, crossing, and malformed arrays", fun
 })
 
 check("forecast library has no database writer or arbitrary expression execution", function() {
-  source_lines <- readLines("src/r/util/forecast_methods.R", warn = FALSE)
+  source_lines <- readLines("src/r/p04_forecast/forecast_methods.R", warn = FALSE)
   code_lines <- source_lines[!grepl("^\\s*#", source_lines)]
   code <- paste(code_lines, collapse = "\n")
   assert_true(!grepl("DBI::|duckdb::|dbConnect|dbExecute", code), "database-writing code introduced")

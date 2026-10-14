@@ -88,6 +88,20 @@ DTW stores one multi-horizon artifact per frequency. Random Forest stores one
 classifier per frequency/horizon. Adding a model calculates only the new delta;
 deleting an artifact makes that scope eligible for training again.
 
+The canonical Daily paths are:
+
+```text
+models/directional_dtw/daily/model.pickle
+models/directional_mantis_rf/daily/horizon_01.pickle ... horizon_14.pickle
+```
+
+Scientific experiment IDs and lineage live in DuckDB, not visible model paths.
+Path normalization moves these fifteen artifacts byte-for-byte, without training
+or prediction, and updates only operational model-path fields in the accepted
+database. Scientific settings, stored configuration, identities and checksums
+are preserved. Models are not MLflow artifacts; none exist there, so no MLflow
+metadata changes are needed for this normalization.
+
 ## Parallel and restart behavior
 
 Prefect preserves Process 04's approved order: individual forecasts,

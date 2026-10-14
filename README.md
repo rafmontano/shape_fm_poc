@@ -62,18 +62,27 @@ src/python/p04_forecast/        Process 04
 src/python/p05_combine/         Process 05
 src/python/p06_evaluate/        Process 06
 src/python/util/                code used by two or more processes
-src/r/                          R workers, utilities and tests
+src/python/tests/               central Python tests
+src/r/pNN_process/              process-owned R workers and helpers
+src/r/util/                     R code used by two or more processes
+src/r/tests/                    central R tests
 results/experiment.duckdb       parent scientific store
 results/windows.duckdb          Process 03 high-volume child store
 results/tables/                 derived tables
 results/figures/                derived figures
-models/<experiment-id>/         fifteen fitted directional artifacts
-.runtime/mlflow/                one resumable run and published artifacts
+models/directional_dtw/daily/   model.pickle (one multi-horizon artifact)
+models/directional_mantis_rf/daily/ horizon_01.pickle through horizon_14.pickle
+.runtime/                      operational Prefect, Dask and MLflow state
 docs/                           living documentation only
 ```
 
 Generated data, models, results, caches and runtime logs are untracked. Git holds
 source, configuration, dependency locks and living documentation.
+Both languages use `pNN_process` folders and descriptive `snake_case` filenames;
+`util/` contains only code used by at least two processes. Scientific identities
+remain in DuckDB, not visible model paths. Operational state is confined to
+`.runtime/{prefect,dask,mlflow}`; the normal entry point sets `PREFECT_HOME` before
+importing Prefect, and the obsolete root `.prefect/` is removed.
 Normal commands resolve these paths against the repository root, independently
 of the current shell directory. Focused tests use self-cleaning temporary roots;
 no review workspace or symlink is needed by the delivered experiment.

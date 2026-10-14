@@ -2,7 +2,7 @@
 # Process 06 selected-output worker (docs/evaluation.md).
 # Inputs: stored canonical origins, accepted forecasts/directions and selected jobs.
 # Outputs: selected-only adjusted vectors; no metric rescoring, fitting or storage.
-source("src/r/util/forecast_adjustments.R")
+source("src/r/p06_evaluate/adjustments.R")
 
 # Retain the selected diagnostic path without recomputing its stored surface metrics.
 retain_selected <- function(job) {

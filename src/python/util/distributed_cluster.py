@@ -101,10 +101,12 @@ class DistributedCluster:
                 "--nworkers", str(allocation["count"]), "--nthreads", "1", "--no-dashboard",
                 "--memory-limit", allocation["memory_limit"],
                 "--resources", allocation["resources"], "--local-directory", str(root / ".runtime/dask")]
-            environment = {**os.environ, "PYTHONPATH": str(root / "src/python")}
+            environment = {**os.environ, "PYTHONPATH": str(root / "src/python"),
+                           "PREFECT_HOME": str(root / ".runtime/prefect")}
             if allocation["machine"] != self.settings["coordinator"]:
                 target = f"{machine['ssh_user']}@{machine['hostname']}"
-                remote = f"cd {shlex.quote(str(root))} && PYTHONPATH={shlex.quote(str(root / 'src/python'))} " + shlex.join(command)
+                remote = (f"cd {shlex.quote(str(root))} && PYTHONPATH={shlex.quote(str(root / 'src/python'))} "
+                          f"PREFECT_HOME={shlex.quote(str(root / '.runtime/prefect'))} " + shlex.join(command))
                 command = ["ssh", "-o", "BatchMode=yes", target, remote]
             self.processes.append(subprocess.Popen(command, cwd=CODE_ROOT, env=environment))
             total += allocation["count"]

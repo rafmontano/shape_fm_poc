@@ -8,8 +8,8 @@
 # ==============================================================================
 # Bounded functional exception: pure assertions do not need classes.
 before <- loadedNamespaces()
-source("src/r/util/forecast_adjustments.R")
-source("src/r/util/paper_table_metrics.R")
+source("src/r/p06_evaluate/adjustments.R")
+source("src/r/p06_evaluate/metrics.R")
 stopifnot(identical(before, loadedNamespaces()))
 
 # Assert numerical parity with independently derived rational fixture values.

@@ -9,12 +9,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from dataclasses import asdict
 from importlib import import_module
 from pathlib import Path
 from typing import Sequence
 
 import duckdb
+
+# Prefect reads its home during import, before any flow or server is started.
+os.environ["PREFECT_HOME"] = str(Path(__file__).resolve().parents[2] / ".runtime/prefect")
 from prefect import flow
 
 from util.runtime import CODE_ROOT, ExperimentRequest, open_experiment

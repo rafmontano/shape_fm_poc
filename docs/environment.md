@@ -22,6 +22,9 @@ it checks small imports and asset presence without loading models or calculating
 on a GPU. Setup does not archive directories, write installation reports or run
 scientific processes. Scientific execution must not update dependencies
 automatically.
+At the end of Python environment synchronization, setup removes generated
+`src/*.egg-info` directories with a simple shell cleanup, not an additional
+cleanup framework. Generated packaging metadata is not retained source.
 
 ## Machines
 
@@ -72,10 +75,20 @@ review. The accepted experiment is in canonical `results/`, `models/` and
 these repository-root locations. The source layout uses `experiment.py`,
 importable `p01_import` through `p06_evaluate` process packages, and shared
 adapters in `util/`; superseded execution paths have been retired.
+R uses the same `pNN_process` folders and descriptive `snake_case` filenames;
+process-only workers/helpers live in their process folder, shared code in
+`util/` is used by at least two processes, and each language keeps central tests.
 Setup acquires canonical data through `p01_import.acquisition`; import execution
 itself reads the local pinned source and does not acquire a second dataset.
 MLflow records one resumable research run using operational state under
 `.runtime/mlflow/`; DuckDB alone decides accepted work and restart.
+
+All operational state belongs under repository-root `.runtime/`: Prefect in
+`.runtime/prefect/`, Dask in `.runtime/dask/` and MLflow in `.runtime/mlflow/`.
+The normal researcher entry point sets `PREFECT_HOME` to `.runtime/prefect/`
+early, before importing Prefect. The obsolete root `.prefect/` is removed rather
+than retained as a second operational location. These paths do not enter
+scientific identity.
 
 ## Failure and restart
 

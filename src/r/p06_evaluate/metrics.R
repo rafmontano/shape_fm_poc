@@ -1,7 +1,7 @@
 # Process 06 m4_paper_tables_v1 scoring under docs/evaluation.md.
 # Raw contexts, future actuals, stored means/directions and explicit jobs produce
 # cohort metrics, per-horizon correct counts and optional diagnostic means.
-# Adjustment functions are supplied by forecast_adjustments.R; no I/O or scheduler.
+# Adjustment functions are supplied by adjustments.R; no I/O or scheduler.
 
 # Require a finite real path, optionally with an exact horizon.
 .paper_path <- function(x, name, horizon = NULL) {

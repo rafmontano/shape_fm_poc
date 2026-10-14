@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[3]
-WORKER = ROOT / "src/r/02_01_preprocess_series.R"
+WORKER = ROOT / "src/r/p02_preprocess/preprocess_worker.R"
 
 
 def run_worker(jobs: list[dict]) -> dict:

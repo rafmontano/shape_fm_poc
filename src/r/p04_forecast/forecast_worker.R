@@ -9,7 +9,7 @@ suppressPackageStartupMessages({
   library(tsfeatures)
 })
 
-source("src/r/util/forecast_methods.R")
+source("src/r/p04_forecast/forecast_methods.R")
 
 payload <- jsonlite::fromJSON(file("stdin"), simplifyVector = FALSE)
 

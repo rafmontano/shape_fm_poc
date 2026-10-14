@@ -359,7 +359,7 @@ existing MLflow run is `e73fc135fdc54cbca127dc0069ee1942`.
 - Both `results/experiment.duckdb` and `results/windows.duckdb` open read-only,
   have the same single owner, and retain all atomic plans/results. All 30
   milestones (six processes and 24 approved subflows) remain accepted.
-- All 15 relative `models/<experiment-id>/...` references resolve with their
+- All 15 relative semantic `models/<model>/daily/...` references resolve with their
   stored size/SHA. Five CSVs in `results/tables/` and six PNG/PDF files in
   `results/figures/` are byte-identical to the accepted outputs.
 - The existing MLflow run remains `FINISHED`, with 28 curated scientific metrics
@@ -401,20 +401,20 @@ include nested definitions. Vendored/generated code and environments are exclude
 
 | Measure | Before | Candidate |
 | --- | ---: | ---: |
-| Production Python files / folders | 59 / 2 | 35 / 8 |
-| Production Python lines | 26,419 | 4,442 |
+| Production Python files / folders | 59 / 2 | 34 / 8 |
+| Production Python lines | 26,419 | 4,452 |
 | Python functions / classes | 682 / 77 | 254 / 25 |
-| Python test files / lines | 37 / 14,776 | 13 / 1,060 |
-| Production R files / folders | 22 / 3 | 13 / 2 |
+| Python test files / lines | 37 / 14,776 | 13 / 1,120 |
+| Production R files / folders | 22 / 3 | 13 / 5 |
 | Production R lines | 3,582 | 1,988 |
 | R test files / lines | 9 / 1,703 | 7 / 1,122 |
 
-Longest retained Python files: `util/runtime.py` 307,
-`p04_forecast/application.py` 304, `p06_evaluate/application.py` 285,
+Longest retained Python files: `p04_forecast/application.py` 308,
+`util/runtime.py` 307, `p06_evaluate/application.py` 285,
 `p01_import/acquisition.py` 262, `p04_forecast/mantis.py` 250 lines. Longest R:
-`util/forecast_methods.R` 992, `04_01_forecast_r_methods.R` 157,
-`util/paper_table_metrics.R` 151, `06_03_plot_directional_results.R` 123,
-`util/features.R` 108 lines. Before, the longest R files were respectively
+`p04_forecast/forecast_methods.R` 992, `p04_forecast/forecast_worker.R` 157,
+`p06_evaluate/metrics.R` 151, `p06_evaluate/publication_worker.R` 123,
+`p03_transform/features.R` 108 lines. Before, the longest R files were respectively
 `util/forecast_methods.R` 997, `qa/get_m4_daily_series.R` 300,
 `qa/inspect_rolling_window.R` 277, `qa/inspect_standardisation.R` 210 and
 `util/transformations.R` 188 lines; Python baseline maxima are recorded above.
@@ -427,13 +427,13 @@ src/python/
   p01_import/       acquisition.py application.py flow.py
   p02_preprocess/   application.py flow.py period.py
   p03_transform/   application.py flow.py inputs.py labels.py
-  p04_forecast/    __init__.py application.py checkpoint.py chronos.py
+  p04_forecast/    application.py checkpoint.py chronos.py
                    contract.py flow.py mantis.py native.py providers.py
   p05_combine/     application.py flow.py science.py
   p06_evaluate/    application.py flow.py gift.py publication.py reports.py
   util/            __init__.py distributed_cluster.py distributed_execution.py
                    providers.py research_tracking.py runtime.py
-                   shared_transformations.py
+                   transformations.py
 ```
 
 The old path was numbered entry scripts → generic coordinator/handler/planner
@@ -458,8 +458,8 @@ line numbers refer to this candidate):
 
 | Integration | Locations |
 | --- | --- |
-| Prefect | `experiment.py:18`; `p01_import/flow.py:9`; `p02_preprocess/flow.py:9`; `p03_transform/flow.py:9`; `p04_forecast/flow.py:11`; `p05_combine/flow.py:7`; `p06_evaluate/flow.py:11`; `util/distributed_cluster.py:24`; `util/distributed_execution.py:15–17`; `util/research_tracking.py:16` |
-| Dask/distributed | `util/distributed_cluster.py:22–23`; `util/distributed_execution.py:138` |
+| Prefect | `experiment.py:22`; `p01_import/flow.py:9`; `p02_preprocess/flow.py:9`; `p03_transform/flow.py:9`; `p04_forecast/flow.py:11`; `p05_combine/flow.py:7`; `p06_evaluate/flow.py:11`; `util/distributed_cluster.py:24`; `util/distributed_execution.py:15–17`; `util/research_tracking.py:16` |
+| Dask/distributed | `util/distributed_cluster.py:22–23`; `util/distributed_execution.py:139` |
 | prefect-dask | `util/distributed_execution.py:18` |
 | MLflow | `util/research_tracking.py:15` |
 
@@ -490,3 +490,170 @@ Final researcher review uses the canonical produced tables and figures, not a
 second workload or historical-equivalence exercise. X01 remains open; neither
 the completed candidate nor publication authorizes merging to `main` or closing
 the transformation.
+
+## Bounded source and workspace normalization
+
+Safety checkpoint: `af53500f5a1a07b1d7bccb21d393da4d2cc2c4e0`. This increment
+normalizes ownership, naming and operational paths only. It does not redesign
+the five layers, change scientific settings or calculate any scientific item.
+All six processes and 24 subflows retain their accepted state.
+
+### Source and root before/after
+
+Both languages now use `pNN_<process_name>/`, descriptive `snake_case` files and
+central `tests/`. Python retains all six process folders and the `util`/`tests`
+package markers; process folders are implicit namespace packages. R has no
+Import or Combine directory because those processes have no R code.
+
+| Authored source | Safety checkpoint files / lines | Normalized files / lines |
+| --- | ---: | ---: |
+| Python production | 35 / 4,442 | 34 / 4,452 |
+| Python tests | 13 / 1,060 | 13 / 1,120 |
+| R production | 13 / 1,988 | 13 / 1,988 |
+| R tests | 7 / 1,122 | 7 / 1,122 |
+
+The before layout had eight flat R workers, four process-only helpers in R
+`util/`, the shared time-series adapter, and central tests. The exact source
+move inventory below names checkpoint paths, not active aliases. All twelve
+R files retain their parsed expressions, except literal `source()` paths.
+
+```text
+Before src/r/                     Normalized src/r/
+eight flat workers                p02_preprocess/ preprocess_worker.R
+                                  p03_transform/ feature_worker.R features.R training_cohort.R
+                                  p04_forecast/ forecast_worker.R archived_forecast_worker.R
+                                                forecast_methods.R
+                                  p06_evaluate/ evaluation_worker.R diagnostic_worker.R
+                                                publication_worker.R adjustments.R metrics.R
+util/ five helpers                util/ time_series_input.R
+tests/ seven files                tests/ same seven central files
+qa/ generated history             removed
+
+Before src/python/                Normalized src/python/
+p01_import/ ... p06_evaluate/      same six process folders, without p04 package marker
+util/ shared transformations      util/ transformations.py; other shared modules retained
+tests/ thirteen files             tests/ same thirteen files, shared fixture marker retained
+```
+
+| Checkpoint path (under `src/`) | Active path (under `src/`) |
+| --- | --- |
+| `python/util/shared_transformations.py` | `python/util/transformations.py` |
+| `r/02_01_preprocess_series.R` | `r/p02_preprocess/preprocess_worker.R` |
+| `r/feature_provider.R` | `r/p03_transform/feature_worker.R` |
+| `r/util/features.R` | `r/p03_transform/features.R` |
+| `r/03_02_select_training_cohort.R` | `r/p03_transform/training_cohort.R` |
+| `r/04_01_forecast_r_methods.R` | `r/p04_forecast/forecast_worker.R` |
+| `r/04_03_forecast_m4_reference.R` | `r/p04_forecast/archived_forecast_worker.R` |
+| `r/util/forecast_methods.R` | `r/p04_forecast/forecast_methods.R` |
+| `r/06_02_evaluate_paper_tables.R` | `r/p06_evaluate/evaluation_worker.R` |
+| `r/06_04_retain_diagnostics.R` | `r/p06_evaluate/diagnostic_worker.R` |
+| `r/06_03_plot_directional_results.R` | `r/p06_evaluate/publication_worker.R` |
+| `r/util/forecast_adjustments.R` | `r/p06_evaluate/adjustments.R` |
+| `r/util/paper_table_metrics.R` | `r/p06_evaluate/metrics.R` |
+
+```text
+Before root                    Normalized root
+.prefect/                      .runtime/prefect/
+.runtime/dask/ stale scratch    .runtime/dask/ (empty operational boundary)
+.runtime/mlflow/               .runtime/mlflow/ (unchanged accepted run)
+models/<stored experiment ID>/  models/directional_dtw/daily/model.pickle
+                               models/directional_mantis_rf/daily/horizon_01..14.pickle
+.idea/ .Rproj.user/             removed
+.DS_Store .Rhistory             removed
+.amp/                          removed after task scratch is no longer needed
+results/ data/ config/ src/     retained (authored source normalized above)
+docs/ scripts/ external/        retained
+.cache/ .tools/ .venv/          retained
+renv/ environments/             retained
+.Renviron .Renviron.example     retained
+.Rprofile shape_fm_poc.Rproj     retained
+.git/ and root manifests/locks  retained
+```
+
+No compatibility copy, forwarding alias, empty source directory or QA script
+remains. Removed source is the documentation-only Python Process 04 package
+marker. R `qa/` contained generated history only and is removed. Local filesystem
+metadata was removed, including `.DS_Store` inside the vendored checkout; no
+vendored source was changed. Generated bytecode/pytest caches and packaging
+debris were removed from authored workspace locations. Installed dependency
+metadata and protected environments/caches are not authored source and remain
+intact. `src/` contains exactly the authored Python/R modules and central tests.
+
+Python utility ownership was audited: `runtime`, `distributed_execution`,
+`distributed_cluster` and `research_tracking` serve Processes 01–06;
+`providers` serves 02/03/04/06; `transformations` serves 03/04. R `util` contains
+only `time_series_input.R`, used by 02/03/04. The single-process period transport
+moved unchanged into `p02_preprocess/application.py`.
+
+The process-owned preprocessing script constant is reused by Transform. Its
+obsolete bootstrap execution-path field was removed; the accepted stored
+configuration is untouched and no old-path compatibility mapping is needed.
+Prefect home is set before imports at the researcher boundary, propagated with
+worker-local roots over SSH, and Dask scratch stays under `.runtime/dask/`.
+Setup removes generated source egg-info immediately after environment sync;
+the cleanup is one shell command, not a packaging or cleanup framework.
+
+### Model-byte and scientific-state preservation
+
+Before moving files, their original filenames, sizes and SHA-256 values were
+recorded and checked against stored model references. Fifteen existing files
+were renamed, not refitted or deserialized. The following final manifest has
+the same sizes and hashes before and after. DTW is
+`models/directional_dtw/daily/model.pickle`; every RF row is under
+`models/directional_mantis_rf/daily/`.
+
+| Final file | Bytes | SHA-256 (unchanged) |
+| --- | ---: | --- |
+| DTW `model.pickle` | 297706 | `ded4b1111328aca91af3e81ee760ad94ee3729091c78fa8e450f33ed3f6ab80f` |
+| `horizon_01.pickle` | 1735200 | `02ff12e1e888ac637a26a6c4c365374368aa10978a34be20690d7a0f6cd193fe` |
+| `horizon_02.pickle` | 1775040 | `b6e5afc9d65f3e8ee35c5a45939f451cba422709b344208bf74edc3dae87e281` |
+| `horizon_03.pickle` | 1763840 | `c72be6ff881eee43caf85c80066ac799dcaa5ab15fd539408d5f82d12d4ad4a4` |
+| `horizon_04.pickle` | 1748800 | `ae876471060bbe394271eeee14b57529fc432c1cdb68afcf407c03568bdccc5d` |
+| `horizon_05.pickle` | 1731840 | `087bbfbf045765fae2f9e766a444f04215b09fe94b12c462eb585e42268ce05d` |
+| `horizon_06.pickle` | 1774240 | `b3a08215a1a0f12d39ce01fd929f4eb79bb8e386a1b15a502101dfd9a1b3589e` |
+| `horizon_07.pickle` | 1738240 | `9057842ee437cc69d9ecd8a198a350c4f7a8fe5bf8eab370085f6396ba960ef4` |
+| `horizon_08.pickle` | 1756640 | `fc52a83bb1bba214b1bffaa35014843b250216bdd494206661e6091aa402815b` |
+| `horizon_09.pickle` | 1778880 | `a72a787eeb12789e83555300fed328f3599932b53802ea743811369e6b86e7a2` |
+| `horizon_10.pickle` | 1755040 | `ffee2a0df4f4940a42c74678d79d7f5f4773b06752e8d2f70be582ad96e24402` |
+| `horizon_11.pickle` | 1778400 | `3fbdd0ea3b63eba2d042beb2e8fcd1a1eced1ac80cfbb24a241702627cbdccc6` |
+| `horizon_12.pickle` | 1769600 | `a31c5e04421e25395629c45fb9a87bb8c7e044da59744ef702ab4707cf971ad7` |
+| `horizon_13.pickle` | 1780800 | `a92cbdbdb972e0a1152f5114839e5c19f47eca1e0bcfd130aed4b9ec7495c67d` |
+| `horizon_14.pickle` | 1778880 | `9ad63c95c2cfebe8f60b32f88e46f846f12d78bb1e0b3cc6f2b07d9e62b137d5` |
+
+Every row in both databases was checked read-only against the pre-move snapshot.
+Only fifteen `04.03` result `path` fields changed. All other fields, table rows,
+plans, accepted identities, scientific values, configurations, completion state
+and timestamps are unchanged. No MLflow metadata change was needed: models are
+not tracking artifacts, and the accepted tracking database/artifact bytes are
+unchanged. The same existing run remains `FINISHED` with resolving links. All
+five CSVs, six figures and canonical source-data bytes are unchanged.
+
+### Exact additional authored edits and bounded checks
+
+Besides the moves/removal above, edits are confined to:
+
+- `config/experiment.json`, `scripts/setup.sh`, `src/python/experiment.py`;
+- Python `p02_preprocess/application.py`, `p03_transform/application.py`,
+  `p04_forecast/application.py`, `p06_evaluate/application.py` and
+  `p06_evaluate/publication.py`;
+- Python `util/providers.py`, `util/distributed_cluster.py`,
+  `util/distributed_execution.py`;
+- Python tests `test_preprocessing.py`, `test_researcher_interface.py`,
+  `test_setup.py`, `test_transformations.py`;
+- R tests `test_directional_result_plots.R`, `test_features.R`,
+  `test_forecast_adjustments.R`, `test_forecast_methods.R`,
+  `test_paper_table_metrics.R`, `test_paper_table_worker.R`,
+  `test_training_cohort.R` (moved source/worker path references only);
+- `README.md` and living docs `architecture.md`, `code-standards.md`,
+  `environment.md`, `experiment-configuration.md`, `directional-models.md`
+  and this X01 document.
+
+Ten focused interface/path/setup tests passed using mocked calculation calls,
+opaque temporary bytes and a stubbed installer, not models or scientific
+processes. Python compiled in memory; retained application/flow/shared modules
+and the renamed transformation-test imports resolved. All twenty R files parsed;
+all twelve moved production files retained their parsed scientific expressions.
+Source/config paths, Markdown links, whitespace and active stale-path searches
+passed. No new scientific output, restart, parity workload, dependency change or
+lockfile edit occurred. Ubuntu synchronization is revision-only, attempted once
+at the end; an unavailable host leaves synchronization pending, not science.

@@ -8,7 +8,7 @@
 # Run from: Rscript src/r/tests/test_features.R
 # ==============================================================================
 
-source("src/r/feature_provider.R")
+source("src/r/p03_transform/feature_worker.R")
 
 EXPECTED_SCHEMA <- c(
   "x_acf1", "x_acf10", "diff1_acf1", "diff1_acf10", "diff2_acf1",

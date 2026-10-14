@@ -4,7 +4,7 @@ Inputs are accepted prepared histories and canonical training/test boundaries.
 Outputs are parent membership/features/cohort references and child rolling plus
 official modelling inputs. Local window cleaning preserves future independence.
 Sample-SD fitting, strict direction labels and window boundaries follow
-docs/data-contract.md; feature definitions follow the FFORMA pool in R util/features.R.
+docs/data-contract.md; feature definitions follow R p03_transform/features.R.
 """
 
 from __future__ import annotations
@@ -12,11 +12,12 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from p02_preprocess.application import PREPROCESS_WORKER
 from p03_transform.inputs import rolling_window_inputs, s1_partition
 from p03_transform.labels import directional_labels
 from util.providers import run_r
 from util.runtime import DataRef, WorkItem
-from util.shared_transformations import transform
+from util.transformations import transform
 
 
 def calculate_modelling_input(item: WorkItem) -> dict[str, Any]:
@@ -71,7 +72,7 @@ def calculate_reusable_feature(item: WorkItem) -> dict[str, Any]:
 def calculate_feature_batch(items: list[WorkItem]) -> list[tuple[str, dict[str, Any]]]:
     """Extract the accepted 42-feature contract in independent native R jobs."""
     settings = items[0].payload["execution"]
-    response = run_r("src/r/feature_provider.R", {"action": "extract", "jobs": [
+    response = run_r("src/r/p03_transform/feature_worker.R", {"action": "extract", "jobs": [
         {"id": item.key, "context": item.payload["values"], "seasonality": item.payload["r_period"]}
         for item in items]}, timeout=settings["timeout"], threads=settings["threads"])
     results = response["results"]
@@ -139,7 +140,7 @@ class Application:
 
     def _execution(self) -> dict[str, Any]:
         settings = self.context.configuration["execution"]
-        return {"script": settings["paths"]["r_preprocess_worker"],
+        return {"script": PREPROCESS_WORKER,
                 "timeout": settings["default"]["worker_timeouts_seconds"]["r"],
                 "threads": settings["default"]["thread_limits"]["r"]}
 
@@ -187,7 +188,7 @@ class Application:
         population = sorted(key for key, row in inputs.items()
             if row["kind"] == "rolling" and row["partition"] == "train")
         settings = self.configuration["training_cohort"]
-        selection = run_r("src/r/03_02_select_training_cohort.R", {
+        selection = run_r("src/r/p03_transform/training_cohort.R", {
             "labels": [inputs[key]["labels"][0] for key in population],
             "cap": settings["cap"], "seed": settings["seed"]}, timeout=60, threads=1)
         indexes = selection["selected_indices"]

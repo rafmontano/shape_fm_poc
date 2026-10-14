@@ -4,15 +4,22 @@ Mocked execution and rendering verify canonical defaults and JSON contracts;
 no scientific process, native calculation or output regeneration is invoked.
 """
 
+import base64
+import hashlib
 import io
 import json
+import os
 import subprocess
+import sys
+import tempfile
 import unittest
 from contextlib import redirect_stdout
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import experiment
-from util.providers import resolve_r_period
+from p02_preprocess.application import resolve_r_period
 from util.runtime import CODE_ROOT, FinalResearchSummary
 
 
@@ -47,7 +54,7 @@ class ResearcherInterfaceTests(unittest.TestCase):
             with self.subTest(override=override):
                 configuration["pipeline"]["r_period_override"] = override
                 response = {"frequency": "W", "r_period": override or 52}
-                with patch("util.providers.subprocess.run", return_value=subprocess.CompletedProcess(
+                with patch("p02_preprocess.application.subprocess.run", return_value=subprocess.CompletedProcess(
                         [], 0, json.dumps(response), "")) as invoke:
                     self.assertEqual(resolve_r_period(configuration, "W"), response)
                 command = invoke.call_args.args[0]
@@ -56,6 +63,40 @@ class ResearcherInterfaceTests(unittest.TestCase):
                 self.assertTrue(script.is_file())
                 self.assertEqual(command[1:], [str(script), "--frequency", "W"] +
                                  ([] if override is None else ["--override", "7"]))
+
+    def test_model_publication_uses_semantic_paths_without_changing_bytes(self):
+        """Already-produced bytes publish by model/frequency/horizon, not run ID."""
+        from p04_forecast.application import Application
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            accepted = {}
+            context = SimpleNamespace(request=SimpleNamespace(root=root), configuration={},
+                repository=SimpleNamespace(accept=lambda subflow, rows: accepted.update(rows)))
+            content = b"opaque provider bytes; no model is fitted or deserialized"
+            cases = [("directional_dtw", None, "model.pickle"),
+                     ("directional_mantis_rf", 1, "horizon_01.pickle"),
+                     ("directional_mantis_rf", 14, "horizon_14.pickle")]
+            for model, horizon, filename in cases:
+                key = f"D/{model}/{horizon or 'all'}"
+                Application(context).accept_decision_models([(key, {"model": model, "horizon": horizon,
+                    "artifact": base64.b64encode(content).decode("ascii")})])
+                relative = f"models/{model}/daily/{filename}"
+                self.assertEqual(accepted[key]["path"], relative)
+                self.assertEqual((root / relative).read_bytes(), content)
+                self.assertEqual(accepted[key]["size"], len(content))
+                self.assertEqual(accepted[key]["sha256"], hashlib.sha256(content).hexdigest())
+            self.assertEqual(len(list((root / "models").rglob("*.pickle"))), 3)
+            self.assertEqual(list(root.rglob("*.partial")), [])
+
+    def test_researcher_import_sets_canonical_prefect_home_before_settings_load(self):
+        """A fresh entry-point import resolves Prefect settings inside hidden runtime."""
+        response = subprocess.run([sys.executable, "-B", "-c",
+            "import experiment; from prefect.settings import get_current_settings; "
+            "print(get_current_settings().home)"], cwd=CODE_ROOT, capture_output=True,
+            text=True, check=True, env={**os.environ, "PREFECT_HOME": "/unused-prefect-home",
+                                      "PYTHONPATH": str(CODE_ROOT / "src/python")})
+        self.assertEqual(Path(response.stdout.strip()), CODE_ROOT / ".runtime/prefect")
 
 
 if __name__ == "__main__":

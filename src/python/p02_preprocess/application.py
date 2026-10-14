@@ -7,11 +7,34 @@ parent DuckDB. Future test observations never enter the R cleaning request.
 
 from __future__ import annotations
 
+import json
 import math
+import subprocess
 from typing import Any
 
-from util.providers import resolve_r_period, run_r
-from util.runtime import DataRef, WorkItem
+from util.providers import run_r
+from util.runtime import CODE_ROOT, DataRef, WorkItem
+
+
+PREPROCESS_WORKER = "src/r/p02_preprocess/preprocess_worker.R"
+
+
+def resolve_r_period(configuration: dict[str, Any], frequency: str) -> dict[str, Any]:
+    """Resolve the modelling period once from pinned GluonTS or the stored override.
+
+    Per docs/data-contract.md, this convention is distinct from inferred
+    seasonality and scoring seasonality. No copied frequency mapping is used.
+    """
+    environment = configuration["evaluation"]["gift_eval"]["environment"]
+    command = [str(CODE_ROOT / environment / "bin/python"),
+               str(CODE_ROOT / "src/python/p02_preprocess/period.py"),
+               "--frequency", frequency]
+    override = configuration["pipeline"]["r_period_override"]
+    if override is not None:
+        command.extend(["--override", str(override)])
+    completed = subprocess.run(command, cwd=CODE_ROOT, check=True, capture_output=True,
+                               text=True, timeout=60)
+    return json.loads(completed.stdout)
 
 
 def calculate_prepared_history(item: WorkItem) -> dict[str, Any]:
@@ -102,7 +125,7 @@ class Application:
                 periods[frequency] = resolve_r_period(configuration, frequency)
             items.append(WorkItem(key, {"series_key": key, "method": method,
                 "history": series["target"][:series["test_start"]], "history_end": series["test_start"],
-                "period": periods[frequency], "script": execution["paths"]["r_preprocess_worker"],
+                "period": periods[frequency], "script": PREPROCESS_WORKER,
                 "timeout": execution["default"]["worker_timeouts_seconds"]["r"],
                 "threads": execution["default"]["thread_limits"]["r"]}))
         return self.store.plan("02.01", items)

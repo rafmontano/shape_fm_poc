@@ -1,7 +1,7 @@
 # Process 03 cohort contract tests: fixed labels, cap and seed -> assertions
 # on selected membership, quotas and RNG preservation; no database or outputs.
 # Run: Rscript src/r/tests/test_training_cohort.R
-source("src/r/03_02_select_training_cohort.R")
+source("src/r/p03_transform/training_cohort.R")
 
 labels <- rep(c(-1L, 0L, 1L), c(11000L, 5000L, 2001L))
 selected <- select_training_cohort(labels, 10000L, 1234L)

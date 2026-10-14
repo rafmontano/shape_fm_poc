@@ -72,7 +72,7 @@ def calculate_diagnostic_candidate(item: WorkItem) -> dict[str, Any]:
 def calculate_diagnostic_batch(items: list[WorkItem]) -> list[tuple[str, dict[str, Any]]]:
     """Call the accepted R paper-table/Oracle kernel for bounded candidate groups."""
     payload = items[0].payload
-    response = run_r("src/r/06_02_evaluate_paper_tables.R", {
+    response = run_r("src/r/p06_evaluate/evaluation_worker.R", {
         "frequency": "Daily", "series": payload["series"],
         "jobs": [item.payload["job"] for item in items]}, timeout=1800, threads=1)
     rows = response["results"]
@@ -95,7 +95,7 @@ def calculate_diagnostic_batch(items: list[WorkItem]) -> list[tuple[str, dict[st
 
 def calculate_selected_diagnostic(item: WorkItem) -> dict[str, Any]:
     """Retain selected-only adjusted paths, without rescoring the accepted surface."""
-    response = run_r("src/r/06_04_retain_diagnostics.R", {"jobs": [
+    response = run_r("src/r/p06_evaluate/diagnostic_worker.R", {"jobs": [
         {"key": item.key, "series": item.payload["series"], **item.payload["job"]}]},
         timeout=1800, threads=1)["results"][0]
     rows = response["adjusted_means"]

@@ -18,7 +18,7 @@ from p04_forecast.providers import native_request
 from p04_forecast.contract import ForecastContract
 from util.providers import run_r
 from util.runtime import DataRef, WorkItem
-from util.shared_transformations import inverse_transformation
+from util.transformations import inverse_transformation
 
 
 def calculate_individual_forecast(item: WorkItem) -> dict[str, Any]:
@@ -36,7 +36,7 @@ def calculate_forecast_batch(items: list[WorkItem]) -> Iterator[tuple[str, dict[
         group = [item for item in items if item.payload["provider"] == provider]
         settings = group[0].payload["execution"]
         if provider == "archived":
-            response = run_r("src/r/04_03_forecast_m4_reference.R", {
+            response = run_r("src/r/p04_forecast/archived_forecast_worker.R", {
                 "action": "reference_forecast", "jobs": [item.payload["request"] for item in group]},
                 timeout=settings["timeout"], threads=1)
             results = response["records"]
@@ -48,7 +48,7 @@ def calculate_forecast_batch(items: list[WorkItem]) -> Iterator[tuple[str, dict[
             continue
         requests = [item.payload["request"] for item in group]
         if provider == "r":
-            response = run_r("src/r/04_01_forecast_r_methods.R", {"action": "forecast", "jobs": requests},
+            response = run_r("src/r/p04_forecast/forecast_worker.R", {"action": "forecast", "jobs": requests},
                 timeout=settings["timeout"], threads=1)
         else:
             response = native_request("chronos", settings, {"command": "predict", "batch_id": group[0].key,
@@ -128,7 +128,7 @@ class Application:
         """Bind accepted configuration, coordinator repository and artifact root."""
         self.context, self.store = context, context.repository
         self.configuration = context.configuration
-        self.model_root = context.request.root / "models" / context.experiment_ref.experiment_id
+        self.model_root = context.request.root / "models"
 
     def modelling_dataset(self) -> DataRef:
         """Return the accepted Process 03 modelling reference."""
@@ -258,7 +258,11 @@ class Application:
         accepted = []
         for key, result in results:
             content = base64.b64decode(result["artifact"], validate=True)
-            path = self.model_root / f"{key.replace('/', '-')}.pickle"
+            frequency, model, _ = key.split("/")
+            frequency_name = {"D": "daily", "W": "weekly", "M": "monthly",
+                              "Q": "quarterly", "Y": "yearly", "H": "hourly"}[frequency]
+            filename = "model.pickle" if result["horizon"] is None else f"horizon_{result['horizon']:02d}.pickle"
+            path = self.model_root / model / frequency_name / filename
             path.parent.mkdir(parents=True, exist_ok=True)
             temporary = path.with_suffix(".partial")
             temporary.write_bytes(content)

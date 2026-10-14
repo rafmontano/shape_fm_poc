@@ -9,7 +9,7 @@
 # ==============================================================================
 
 packages_before <- loadedNamespaces()
-source("src/r/util/forecast_adjustments.R")
+source("src/r/p06_evaluate/adjustments.R")
 stopifnot(identical(loadedNamespaces(), packages_before))
 
 # Run a named assertion group and report success only after all assertions pass.
@@ -101,7 +101,7 @@ check("invalid types, dimensions, lengths and non-finite inputs fail", function(
 })
 
 check("dependency-free source and only approved paper-profile activation", function() {
-  code <- readLines("src/r/util/forecast_adjustments.R")
+  code <- readLines("src/r/p06_evaluate/adjustments.R")
   code <- code[!grepl("^\\s*#", code)]
   stopifnot(!any(grepl(
     "library\\(|require\\(|requireNamespace\\(|source\\(|::|read[A-Z]|write[A-Z]|save\\(|load\\(|file\\(|dir\\.create|system\\(|<<-|auto\\.arima|ets\\(|duckdb|Prefect|Dask",
@@ -115,13 +115,13 @@ check("dependency-free source and only approved paper-profile activation", funct
     list.files("scripts", pattern = "\\.(R|py|sh)$", recursive = TRUE, full.names = TRUE)
   )
   files <- files[!grepl("/tests/", files) &
-                   !files %in% c("src/r/util/forecast_adjustments.R",
-                                 "src/r/util/paper_table_metrics.R",
-                                 "src/r/06_02_evaluate_paper_tables.R",
-                                 "src/r/06_04_retain_diagnostics.R") & !dir.exists(files)]
+                   !files %in% c("src/r/p06_evaluate/adjustments.R",
+                                 "src/r/p06_evaluate/metrics.R",
+                                 "src/r/p06_evaluate/evaluation_worker.R",
+                                 "src/r/p06_evaluate/diagnostic_worker.R") & !dir.exists(files)]
   for (file in files) {
     stopifnot(!any(grepl(
-      "forecast_adjustments\\.R|calculate_smyl_oracle|smyl_scalar_smape_oracle_v1",
+      "p06_evaluate/adjustments\\.R|calculate_smyl_oracle|smyl_scalar_smape_oracle_v1",
       readLines(file, warn = FALSE)
     )))
   }

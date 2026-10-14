@@ -143,8 +143,7 @@
     "paths": {
       "classifiers_environment": "environments/classifiers/.venv",
       "mantis_environment": "environments/mantis/.venv",
-      "chronos_environment": "environments/chronos-2/.venv",
-      "r_preprocess_worker": "src/r/02_01_preprocess_series.R"
+      "chronos_environment": "environments/chronos-2/.venv"
     }
   }
 }

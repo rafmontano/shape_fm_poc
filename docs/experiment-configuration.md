@@ -49,11 +49,15 @@ results/
 └── figures/
 
 models/
-└── <experiment-id>/<frequency>-<directional-model>-<horizon-or-all>.pickle
+├── directional_dtw/daily/model.pickle
+└── directional_mantis_rf/daily/horizon_01.pickle ... horizon_14.pickle
 
-.runtime/mlflow/
-├── tracking.sqlite            operational tracking, not scientific authority
-└── artifacts/<run-id>/artifacts/
+.runtime/
+├── prefect/                   operational orchestration state
+├── dask/                      operational scheduling state
+└── mlflow/
+    ├── tracking.sqlite        operational tracking, not scientific authority
+    └── artifacts/<run-id>/artifacts/
 ```
 
 There is no experiment name, date or retry number in generated filenames. Those
@@ -64,6 +68,11 @@ Normal researcher commands write directly to the repository's canonical paths,
 not a review workspace. Temporary test roots clean up after themselves. Fitted
 paths stored in DuckDB are relative to this root; MLflow local artifact URIs
 resolve under canonical `.runtime/mlflow/`. No symlink or `.amp` copy is needed.
+Visible model paths contain no scientific experiment IDs. Path normalization
+moves fitted files byte-for-byte and changes only operational model-path fields
+in the accepted database; scientific identities, settings and stored
+configuration remain unchanged. No MLflow model artifacts exist, so this model
+path normalization requires no MLflow metadata changes.
 
 The parent owns resolved configuration, canonical series, process/item state,
 forecasts, combinations and evaluations. The child owns high-volume preparation

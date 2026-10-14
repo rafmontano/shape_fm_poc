@@ -97,7 +97,10 @@ results/windows.duckdb          child: rolling/high-volume modelling inputs,
                                 transformed windows and their labels
 results/tables/                 derived human-readable tables
 results/figures/                derived figures
-models/<experiment-id>/...      fitted DTW/Random-Forest artifacts
+models/directional_dtw/daily/model.pickle
+models/directional_mantis_rf/daily/horizon_01.pickle ... horizon_14.pickle
+.runtime/prefect/               operational Prefect state
+.runtime/dask/                  operational Dask state
 .runtime/mlflow/                operational tracking and published artifacts
 ```
 
@@ -193,8 +196,21 @@ src/python/
 Each importable process folder contains its real Prefect `flow.py` and code used
 only by that process. Empty parent wrappers, forwarding aliases and process code
 hidden in large `shared_*` modules are not the target. `util/` is only for code
-used by at least two processes. R keeps process entry
-scripts under `src/r/` and reusable scientific functions under `src/r/util/`.
+used by at least two processes. Both Python and R use `pNN_process` folders and
+descriptive `snake_case` filenames, with central tests in `src/python/tests/`
+and `src/r/tests/`. Python shared transformations live in
+`src/python/util/transformations.py`; process folders use implicit namespace
+packages. R workers and process-only helpers live in
+their owning process folders; only cross-process code such as
+`src/r/util/time_series_input.R` remains in `util/`. The exact R layout is defined
+in [code standards](code-standards.md).
+
+Operational state is confined to `.runtime/{prefect,dask,mlflow}`. The normal
+researcher entry point sets `PREFECT_HOME` to repository-root `.runtime/prefect/`
+before importing Prefect; the obsolete root `.prefect/` is removed. Model paths
+contain model/frequency/horizon names, not scientific experiment IDs. Path
+normalization preserves model bytes, accepted scientific state and configuration;
+only operational model-path fields in DuckDB change.
 
 ## Architecture qualities
 

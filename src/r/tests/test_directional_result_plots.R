@@ -11,7 +11,7 @@
 # Invoke the real worker; only its structured runtime response is accepted.
 invoke <- function(request) {
   suppressWarnings(system2(file.path(R.home("bin"), "Rscript"),
-    c("--vanilla", "src/r/06_03_plot_directional_results.R"),
+    c("--vanilla", "src/r/p06_evaluate/publication_worker.R"),
     input = jsonlite::toJSON(request, auto_unbox = TRUE, null = "null", digits = 17),
     stdout = TRUE, stderr = TRUE))
 }
@@ -32,7 +32,7 @@ root_outputs <- function() {
 # Exercise owned PDF/PNG devices with successful and failing draw callbacks.
 check_devices <- function(directory, settings) {
   renderer <- new.env(parent = globalenv())
-  expressions <- parse("src/r/06_03_plot_directional_results.R")
+  expressions <- parse("src/r/p06_evaluate/publication_worker.R")
   for (expression in expressions) {
     if (is.call(expression) && identical(expression[[1]], as.name("<-")) &&
         identical(expression[[2]], as.name("request"))) break
@@ -109,7 +109,7 @@ run_checks <- function() {
   }
   cat("ok - locked revision, scientific settings, excluded/missing model and invalid values reject\n")
   check_devices(directory, settings)
-  code <- readLines("src/r/06_03_plot_directional_results.R")
+  code <- readLines("src/r/p06_evaluate/publication_worker.R")
   stopifnot(any(grepl("scmamp::plotCD", code, fixed = TRUE)),
     !any(grepl("readRDS|saveRDS|source\\(|duckdb|evaluate_paper_tables|calculate_smyl_oracle|auto.arima|future::", code)))
   cat("ok - selective renderer isolation: no legacy readers, evaluation or model execution\n")

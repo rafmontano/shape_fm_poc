@@ -2,10 +2,10 @@
 # Process 03 FFORMA provider: one JSON request on stdin -> one JSON response.
 # describe returns schema/dependency identity; extract accepts ordered jobs with
 # id, finite prepared context and resolved seasonality and returns per-job results.
-# Formulas, schema and approved fallbacks live in util/features.R; no storage.
+# Formulas, schema and approved fallbacks live in features.R; no storage.
 
 source("src/r/util/time_series_input.R")
-source("src/r/util/features.R")
+source("src/r/p03_transform/features.R")
 
 # Return the fixed feature contract and native dependency identity.
 describe_feature_provider <- function() {

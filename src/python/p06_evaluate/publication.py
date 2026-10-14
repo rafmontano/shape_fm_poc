@@ -76,7 +76,7 @@ def publish_stored_outputs(root: Path, report: dict[str, Any] | None = None) -> 
         lock = json.loads((CODE_ROOT / "renv.lock").read_text())["Packages"]
         packages = {name: {k: lock[name][k] for k in ("Version", "RemoteSha") if k in lock[name]}
                     for name in ("scmamp", "jsonlite")}
-        run_r("src/r/06_03_plot_directional_results.R", {"output": str(figures),
+        run_r("src/r/p06_evaluate/publication_worker.R", {"output": str(figures),
             "horizon": _matrix(report["figure_2"]["horizon"]), "cd": matrix,
             "settings": report["figure_settings"]["cd_settings"], "packages": packages}, timeout=120, threads=1)
         relative = [*(f"tables/{name}.csv" for name in CSV_NAMES),

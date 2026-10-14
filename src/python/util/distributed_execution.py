@@ -129,7 +129,8 @@ class WorkGroupExecutor:
             runner = (DaskTaskRunner(address=address) if address else
                       DaskTaskRunner(cluster_kwargs=settings.get("cluster_kwargs", {
                           "n_workers": 2, "threads_per_worker": 1,
-                          "processes": False, "dashboard_address": None})))
+                          "processes": False, "dashboard_address": None,
+                          "local_directory": str(CODE_ROOT / ".runtime/dask")})))
             with runner:
                 limit = int(settings.get("max_in_flight", 4))
                 for offset in range(0, len(groups), limit):

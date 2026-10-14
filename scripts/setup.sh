@@ -155,6 +155,8 @@ sync_python_environments() {
     retry_command "Synchronize locked Python environment: $project" \
       "$UV" sync --project "$REPOSITORY_ROOT/$project" --locked
   done <<< "$projects"
+  # Editable builds need metadata during installation, not in authored source.
+  find "$REPOSITORY_ROOT/src" -type d -name '*.egg-info' -prune -exec rm -rf {} +
 }
 
 # Recoverable large-asset operations -----------------------------------------

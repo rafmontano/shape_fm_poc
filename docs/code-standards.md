@@ -77,13 +77,37 @@ src/python/tests/...                     tests by process/component
 
 Use descriptive `snake_case` names. A `shared_` prefix is unnecessary inside
 `util/`. Do not create empty process wrappers or one file per trivial class.
+Shared transformations live in `src/python/util/transformations.py`. Process
+folders use implicit namespace packages; retain `util/__init__.py` and
+`tests/__init__.py` for their shared utility and fixture namespaces.
 
 ## R ownership
 
-Process-facing R workers use `<NN>_<action>.R`. Reusable numerical functions live
-under `src/r/util/`; tests under `src/r/tests/`. R workers read one request and
-return one response; they do not
-write DuckDB or start nested parallel execution.
+R follows the same `pNN_process` ownership and descriptive `snake_case` naming
+as Python. Workers and helpers used by one process live together:
+
+```text
+src/r/p02_preprocess/preprocess_worker.R
+src/r/p03_transform/feature_worker.R
+src/r/p03_transform/features.R
+src/r/p03_transform/training_cohort.R
+src/r/p04_forecast/forecast_worker.R
+src/r/p04_forecast/archived_forecast_worker.R
+src/r/p04_forecast/forecast_methods.R
+src/r/p06_evaluate/evaluation_worker.R
+src/r/p06_evaluate/diagnostic_worker.R
+src/r/p06_evaluate/publication_worker.R
+src/r/p06_evaluate/adjustments.R
+src/r/p06_evaluate/metrics.R
+src/r/util/time_series_input.R
+src/r/tests/
+```
+
+`src/r/util/` contains only code used by at least two processes;
+`time_series_input.R` remains shared. Tests stay central under `src/r/tests/`,
+just as Python tests stay under `src/python/tests/`. R workers read one request
+and return one response; they do not write DuckDB or start nested parallel
+execution.
 
 ## Configuration and globals
 
