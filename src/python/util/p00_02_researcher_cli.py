@@ -106,6 +106,8 @@ class ResearcherCLI:
         status = commands.add_parser("status", help="read acceptance experiment status")
         status.add_argument("--database", type=Path, default=DEFAULT_DATABASE)
         status.add_argument("--experiment-id")
+        status.add_argument("--format", choices=("json", "human"), default=argparse.SUPPRESS,
+                            help="presentation format (default: json)")
         export = commands.add_parser("export", help="export stored Process 06 tables and selective figures")
         export.add_argument("--database", type=Path, required=True,
                             help="authoritative results/<experiment>.duckdb")
@@ -140,9 +142,10 @@ class ResearcherCLI:
         self.parser.print_help()
 
     @staticmethod
-    def present(result: dict[str, Any]) -> None:
-        """Render one successful result as stable readable JSON."""
-        print(json.dumps(result, indent=2, sort_keys=True, default=str))
+    def present(result: dict[str, Any] | str) -> None:
+        """Render explicit human status text or the preserved JSON result."""
+        print(result if isinstance(result, str) else
+              json.dumps(result, indent=2, sort_keys=True, default=str))
 
     @staticmethod
     def present_error(error: BaseException) -> None:

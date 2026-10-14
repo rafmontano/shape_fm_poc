@@ -5062,9 +5062,9 @@ def experiment_status(
         ).fetchall()
         table_summary = None
         if configuration[0] >= 12:
-            from .p06_02_table_storage import TableStorage
+            from .p00_04_progress import ProgressReader
 
-            table_summary = TableStorage(connection).summary(experiment_id)
+            table_summary = ProgressReader.paper_summary(connection, experiment_id)
         return {
             "experiment_id": experiment_id,
             **({"paper_tables": table_summary} if configuration[0] >= 12 else {}),

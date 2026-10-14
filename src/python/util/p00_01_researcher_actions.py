@@ -685,7 +685,7 @@ class ResearcherActions:
         self.window_action = window_action or WindowPreparationAction()
         self.feature_action = feature_action or FeatureExtractionAction()
 
-    def dispatch(self, request: ResearcherRequest, invocation: dict[str, Any]) -> dict[str, Any]:
+    def dispatch(self, request: ResearcherRequest, invocation: dict[str, Any]) -> dict[str, Any] | str:
         method = getattr(self, f"_{request.action.replace('-', '_')}")
         return method(request, invocation)
 
@@ -727,7 +727,8 @@ class ResearcherActions:
             ),
         }
 
-    def _status(self, request: ResearcherRequest, invocation: dict[str, Any]) -> dict[str, Any]:
+    def _status(self, request: ResearcherRequest, invocation: dict[str, Any]) -> dict[str, Any] | str:
+        """Read stored state, optionally presenting it without scientific validation."""
         status = configuration_status(request.database)
         try:
             identity = request.value("experiment_id") or latest_experiment_id(request.database)
@@ -735,6 +736,11 @@ class ResearcherActions:
             identity = None
         if identity is not None:
             status["experiment"] = experiment_status(request.database, identity)
+        if request.value("format", "json") == "human":
+            from .p00_04_progress import HumanProgress, ProgressInterpretation, ProgressReader
+
+            evidence = ProgressReader(request.database).read(status)
+            return HumanProgress().render(ProgressInterpretation.interpret(status, evidence))
         return {"invocation": invocation, "status": status}
 
     def _export(self, request: ResearcherRequest, invocation: dict[str, Any]) -> dict[str, Any]:

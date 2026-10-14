@@ -1,5 +1,10 @@
 # ShapeFM architecture
 
+POC2-X01 architecture transformation is **in progress, Increment 1 only**. Its
+[governing target and incremental validation rule](poc2-x01-architecture-transformation.md)
+preserve the accepted baseline and add a read-only human status branch; they do
+not authorise a wholesale rewrite or later increments.
+
 The governing long-term direction is documented in the
 [ShapeFM research vision](research-vision.md). Architecture and implementation
 decisions should preserve its nested-system boundaries, reproducible FFORMA

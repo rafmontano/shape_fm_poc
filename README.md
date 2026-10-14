@@ -222,11 +222,17 @@ recover the interrupted Gate 4 tuning run:
   --report results/poc2_final_acceptance_report.json
 ```
 
-Read status and official evaluation results:
+Read status and official evaluation results. Status defaults to compatible JSON;
+`--format human` presents recorded progress without validating science or changing
+DuckDB. Missing legacy substeps and ETA say `not recorded`. This is the
+[POC2-X01 Increment 1](docs/poc2-x01-architecture-transformation.md) candidate,
+in progress and awaiting researcher acceptance.
 
 ```sh
 .tools/uv/uv run --locked --no-sync python src/python/00_main.py status \
   --database results/poc2_final_acceptance.duckdb
+.tools/uv/uv run --locked --no-sync python src/python/00_main.py status \
+  --database results/poc2_final_acceptance.duckdb --format human
 .tools/uv/uv run --locked --no-sync python src/python/00_main.py results \
   --database results/poc2_final_acceptance.duckdb
 ```
