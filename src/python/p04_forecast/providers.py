@@ -25,6 +25,7 @@ class NativeSession:
     """
 
     def __init__(self, command: list[str], timeout: float):
+        """Start the pinned JSON-lines provider and require its ready response."""
         self.timeout = timeout
         self.process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             text=True, bufsize=1, cwd=CODE_ROOT, env={**os.environ,
@@ -69,7 +70,7 @@ def native_request(kind: str, settings: dict[str, Any], request: dict[str, Any])
     """Reuse the native session owned by this calculation worker and environment."""
     command = [str(CODE_ROOT / settings["environment"] / "bin/python")]
     if kind == "chronos":
-        command.extend([str(CODE_ROOT / "src/python/04_02_forecast_chronos.py"), "serve",
+        command.extend(["-m", "p04_forecast.chronos", "serve",
             "--model", settings["model"]["repository"], "--revision", settings["model"]["revision"],
             "--dtype", "float32", "--device", settings["device"], "--internal-cpu-threads", "1"])
     else:

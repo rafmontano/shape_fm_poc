@@ -1,7 +1,7 @@
 """Process01 and shared-runtime regressions through the public experiment flow.
 
 Synthetic Arrow inputs exercise canonical preservation, partial failure/restart,
-single resumable research tracking and sequential/Dask execution parity.
+and single resumable research tracking without comparison executions.
 """
 
 import json
@@ -80,19 +80,3 @@ class MVPImportTests(unittest.TestCase):
             self.assertEqual(len(runs), 1)
             self.assertEqual(runs[0].data.tags["shapefm.last_completed_subflow"], "01.03")
             self.assertEqual(runs[0].data.tags["shapefm.last_completed_process"], "01")
-
-    def test_same_science_sequential_and_dask(self):
-        """Worker placement changes neither canonical values nor atomic identities."""
-        targets = [[float(i + offset * i * i) for i in range(36)] for offset in (2, 5, 7)]
-        outputs = []
-        for profile in ("sequential_safe", "local_dask"):
-            with tempfile.TemporaryDirectory() as temporary:
-                root = Path(temporary)
-                write_source(root, [targets[0], targets[1], targets[0], targets[2]], ["D", "W", "D", "D"])
-                configuration(root, 3)
-                run_experiment(ExperimentRequest((1,), root, execution_profile=profile))
-                with duckdb.connect(str(root / "results/experiment.duckdb"), read_only=True) as connection:
-                    outputs.append([(key, json.loads(value)["target"]) for key, value in connection.execute(
-                        "SELECT atomic_key,result FROM atomic_results WHERE subflow_id='01.02' ORDER BY atomic_key").fetchall()])
-                self.assertEqual([value for _, value in outputs[-1]], [targets[0], targets[0], targets[2]])
-        self.assertEqual(outputs[0], outputs[1])

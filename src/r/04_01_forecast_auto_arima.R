@@ -27,7 +27,8 @@ payload <- jsonlite::fromJSON(file("stdin"), simplifyVector = FALSE)
 #   coordinator-authoritative AutoARIMA booleans, core count, and interval levels.
 # Outputs: List with id; h same-scale mean and median values; and nine h-value
 #   quantile vectors ordered 0.1 through 0.9, plus explicit fallback provenance.
-#   Writes nothing to stdout; malformed input or terminal model/fallback failure raises.
+#   Writes nothing to stdout; malformed input or fitting failure raises. AutoARIMA
+#   has no scientific fallback under the forecast black-box contract.
 forecast_one <- function(job, settings) {
   result <- run_forecast_method(list(
     task_id = job$id,

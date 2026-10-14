@@ -57,7 +57,11 @@ obsolete paths through empty wrappers or aliases.
 - DTW and Mantis use the same canonical directional input/cohort/output boundary.
 - Only expensive reusable directional fitted state is persisted outside DuckDB.
 - Process 06 evaluates stored results; it does not refit models.
-- Operational topology must not enter scientific identity or alter results.
+- Calculate each scientific atomic item once on its assigned worker; resume
+  accepted DuckDB state. Hardware/backend are operational provenance, not identity
+  or grounds for recalculation. Ordinary valid float differences are accepted;
+  no parity gate, workload or tolerance gate. Provider boundaries check shape
+  and scientifically usable values. Preserve the Mantis TF32/float32 correction.
 
 The current contracts are in [data](docs/data-contract.md),
 [forecasting](docs/forecast-black-box-contract.md),
@@ -83,6 +87,12 @@ machine synchronization require the applicable researcher approval.
 Validate a changed execution path with focused tests and a fresh isolated
 100-series run only through the affected process. Prove restart at the smallest
 durable unit. Do not routinely execute later processes.
+
+For X01 E/F, continue accepted 100-series Process 04 evidence through only 05/06;
+do not rerun 04 or start from zero. D (`D94e12b3`) is researcher-accepted; E/F
+are being implemented, not accepted. Final review presents produced tables and
+figures, with no automatic historical comparison or second scientific workload.
+Stop for a material final-result issue only when the researcher identifies it.
 
 ## Documentation
 

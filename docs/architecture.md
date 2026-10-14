@@ -121,6 +121,11 @@ DuckDB item commits are restart authority. A restart submits only missing or
 failed identities; completed results are not recalculated merely to verify them.
 Prefect records operational attempts but does not replace scientific state.
 
+Calculate each scientific atomic item once on its assigned worker. Hardware and
+backend are operational provenance, not identity or grounds for recalculation.
+Ordinary valid floating-point differences are accepted; no parity gate, workload
+or tolerance gate. Provider boundaries check shape and scientifically usable values.
+
 Researcher status is a read-only interpretation of stored state. It reports the
 experiment, current process/substep, completed/failed/pending counts, latest
 recorded error and known totals. It does not rerun validation or infer a live
@@ -198,7 +203,7 @@ scripts under `src/r/` and reusable scientific functions under `src/r/util/`.
   atomically; restart resumes the delta.
 - **Observable:** progress follows the research hierarchy.
 - **Scientifically stable:** operational topology never changes scientific
-  identity or results.
+  identity or triggers recalculation of accepted results.
 
 The active simplification work is governed by
 [POC2-X01](poc2-x01-architecture-transformation.md).

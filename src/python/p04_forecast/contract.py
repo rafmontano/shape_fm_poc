@@ -1,13 +1,9 @@
-# ==============================================================================
-# p04_00_forecast_contract.py
-#
-# Purpose: Define and validate the language-neutral ShapeFM forecast boundary.
-# Inputs: JSON-compatible per-model requests, successful results, and errors.
-# Outputs: Validated mappings with one versioned field set; no external effects.
-# Run from: Imported by Process 04 providers and coordinator storage.
-# ==============================================================================
+"""Process 04 language-neutral forecast boundary for R and Python providers.
 
-"""One serialized request/result contract shared by R and Python providers."""
+Past-only JSON requests and native results become validated forecast-v1 mappings;
+capabilities, finite horizons and permitted STL fallback follow the forecast
+black-box contract. This module has no storage or execution side effects.
+"""
 
 from __future__ import annotations
 

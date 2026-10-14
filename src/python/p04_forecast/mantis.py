@@ -1,27 +1,18 @@
-#!/usr/bin/env python3
-# ==============================================================================
-# 04_05_encode_mantis.py
-#
-# Purpose: Calculate frozen legacy Mantis-8M representations in its native environment.
-# Inputs: Label-free bounded length-64 requests and an explicit approved device.
-# Outputs: Portable finite float32×256 representation records and runtime provenance.
-# Run from: environments/mantis/.venv; JSON request on stdin and response on stdout.
-# ==============================================================================
+"""Process 04 frozen Mantis-8M scientific representation provider.
 
-"""Offline native Mantis representation worker for directional_mantis_rf."""
+Label-free finite length-64 inputs are linearly resized to 512 and encoded as
+float32×256 final-layer CLS vectors. The native session owns transport; this
+provider owns the pinned offline network and scientific/runtime description.
+"""
 
 from __future__ import annotations
 
-import argparse
 import contextlib
 import hashlib
 import importlib.metadata
 import json
 import os
-import platform
-import socket
 import sys
-import time
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -48,18 +39,6 @@ EXPECTED_RUNTIME = {
     "torch": "2.12.0",
     "transformers": "4.57.6",
 }
-REQUEST_FIELDS = {
-    "representation_id",
-    "input_id",
-    "source_series_id",
-    "role",
-    "definition_id",
-    "values",
-    "input_fingerprint",
-    "preparation_definition_id",
-    "preparation_fingerprint",
-    "membership_fingerprint",
-}
 
 
 def canonical_json(value: Any) -> str:
@@ -81,13 +60,6 @@ def _file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _identity(value: Any, field: str) -> str:
-    """Validate and return one nonempty stable identity."""
-    if not isinstance(value, str) or not value.strip() or value != value.strip():
-        raise ValueError(f"{field} must be a nonempty stable identity")
-    return value
-
-
 def dependency_versions() -> dict[str, str]:
     """Report and validate the exact native Mantis runtime."""
     versions = {name: importlib.metadata.version(name) for name in EXPECTED_RUNTIME}
@@ -101,7 +73,7 @@ def default_checkpoint_path() -> Path:
     cache_root = Path(
         os.environ.get(
             "HF_HUB_CACHE",
-            Path(__file__).resolve().parents[2] / ".cache/huggingface",
+            Path(__file__).resolve().parents[3] / ".cache/huggingface",
         )
     )
     return (
@@ -157,7 +129,7 @@ def input_matrix(values: Sequence[Sequence[float]]) -> np.ndarray:
 
 
 def resize_for_mantis(values: Sequence[Sequence[float]]) -> np.ndarray:
-    """Apply the historical 64→512 linear interpolation with align_corners false."""
+    """Apply accepted 64→512 linear interpolation with align_corners false."""
     matrix = input_matrix(values)
     tensor = torch.tensor(matrix[:, np.newaxis, :], dtype=torch.float32)
     resized = functional.interpolate(
@@ -214,7 +186,7 @@ def describe_runtime(device: str, checkpoint_path: Path | None = None) -> dict[s
 
 
 class MantisRepresentationProvider:
-    """Own the pinned native network and calculate frozen legacy CLS embeddings."""
+    """Own the pinned native network and calculate frozen final-layer CLS vectors."""
 
     def __init__(
         self,
@@ -267,73 +239,6 @@ class MantisRepresentationProvider:
             raise RuntimeError("Mantis returned an invalid representation matrix")
         return embeddings
 
-    def encode(self, requests: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
-        """Validate label-free requests and return portable representation records."""
-        if not isinstance(requests, Sequence) or not requests:
-            raise ValueError("Mantis request batch must be nonempty")
-        description = self.describe()
-        normalized = []
-        identities = []
-        for request in requests:
-            if not isinstance(request, Mapping) or set(request) != REQUEST_FIELDS:
-                raise ValueError("Mantis request has an invalid or label-bearing contract")
-            for field in (
-                "representation_id",
-                "input_id",
-                "source_series_id",
-                "definition_id",
-                "input_fingerprint",
-                "preparation_definition_id",
-                "preparation_fingerprint",
-                "membership_fingerprint",
-            ):
-                _identity(request[field], field)
-            if request["role"] not in {"training", "official_evaluation"}:
-                raise ValueError("Mantis request role is invalid")
-            if request["definition_id"] != description["definition_id"]:
-                raise ValueError("Mantis request definition differs from the loaded provider")
-            values = np.asarray(request["values"], dtype=np.float64)
-            if values.shape != (INPUT_LENGTH,) or not np.isfinite(values).all():
-                raise ValueError("Mantis request values must contain 64 finite numbers")
-            if content_fingerprint(values.tolist()) != request["input_fingerprint"]:
-                raise ValueError("Mantis request values do not match their fingerprint")
-            identities.append(request["representation_id"])
-            normalized.append((request, values))
-        if len(identities) != len(set(identities)):
-            raise ValueError("Mantis representation identities must be unique")
-        embeddings = self.transform([values for _, values in normalized])
-        provenance = {
-            "hostname": socket.gethostname(),
-            "platform": platform.platform(),
-            "python": platform.python_version(),
-            "runtime": self.runtime,
-            "device": str(self.device),
-            "checkpoint_revision": CHECKPOINT_REVISION,
-            "checkpoint_fingerprint": self.checkpoint_content_fingerprint,
-        }
-        records = []
-        for (request, _), embedding in zip(normalized, embeddings, strict=True):
-            values = embedding.tolist()
-            records.append(
-                {
-                    "representation_id": request["representation_id"],
-                    "input_id": request["input_id"],
-                    "source_series_id": request["source_series_id"],
-                    "role": request["role"],
-                    "definition_id": description["definition_id"],
-                    "values": values,
-                    "dtype": REPRESENTATION_DTYPE,
-                    "dimension": REPRESENTATION_DIMENSION,
-                    "input_fingerprint": request["input_fingerprint"],
-                    "preparation_definition_id": request["preparation_definition_id"],
-                    "preparation_fingerprint": request["preparation_fingerprint"],
-                    "membership_fingerprint": request["membership_fingerprint"],
-                    "representation_fingerprint": content_fingerprint(values),
-                    "worker_provenance": provenance,
-                }
-            )
-        return records
-
     def close(self) -> None:
         """Release the native trainer/network and accelerator cache owned here."""
         del self._trainer
@@ -342,42 +247,3 @@ class MantisRepresentationProvider:
             torch.cuda.empty_cache()
         elif self.device.type == "mps":
             torch.mps.empty_cache()
-
-
-def main() -> None:
-    """Describe or execute one native Mantis request from standard input."""
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=("describe", "encode"))
-    parser.add_argument("--device", required=True, choices=("cpu", "cuda", "mps"))
-    parser.add_argument("--checkpoint", type=Path)
-    parser.add_argument("--batch-size", type=int, default=256)
-    arguments = parser.parse_args()
-    started = time.monotonic()
-    if arguments.operation == "describe":
-        response = describe_runtime(arguments.device, arguments.checkpoint)
-        response["runtime_seconds"] = time.monotonic() - started
-        print(canonical_json(response))
-        return
-    provider = MantisRepresentationProvider(
-        device=arguments.device,
-        checkpoint_path=arguments.checkpoint,
-        batch_size=arguments.batch_size,
-    )
-    try:
-        request = json.load(sys.stdin)
-        jobs = request.get("jobs") if isinstance(request, dict) else None
-        if not isinstance(jobs, list) or not jobs:
-            raise ValueError("Mantis worker request must contain a nonempty jobs list")
-        response = {
-            "operation": "encode",
-            "definition": provider.describe(),
-            "records": provider.encode(jobs),
-        }
-        response["runtime_seconds"] = time.monotonic() - started
-        print(canonical_json(response))
-    finally:
-        provider.close()
-
-
-if __name__ == "__main__":
-    main()

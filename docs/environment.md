@@ -64,8 +64,10 @@ do not require experiment names or database paths. Run only the process range
 needed. A change to Process 03 is validated through Process 03, not through
 Process 06.
 
-Through Increment C, request Processes 01–03 explicitly: the new flow path for later
-processes and `export` is not available until those increments migrate. The
+Increment D (`D94e12b3`) is researcher-accepted through Forecast. E/F are being
+implemented, not accepted: continue their bounded 100-series evidence from
+accepted Process 04 through only Combine/Evaluate; do not rerun 04 or start from
+zero. Later processes/publication become available as their increments migrate. The
 source layout uses `experiment.py`, importable `p01_import` through
 `p06_evaluate` process packages, and shared adapters in `util/`. Later legacy
 scientific modules remain for migration, not as an alternative researcher CLI.

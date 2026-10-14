@@ -17,7 +17,6 @@ from util.shared_experiment_execution import (
     get_forecast_mean,
     validate_forecast_capability,
 )
-from util.p04_05_m4_submission import retrieve_m4_submission
 
 
 class M4ReferenceLoadingTests(unittest.TestCase):
@@ -269,29 +268,6 @@ class M4ReferenceTests(unittest.TestCase):
         )
         connection.close()
 
-    def test_gate4_retrieves_each_exact_mean_with_provenance(self):
-        smyl = retrieve_m4_submission(self.database, self.request())
-        fforma = retrieve_m4_submission(self.database, self.request("m4_fforma"))
-        self.assertEqual(smyl["mean"], [10.0, 11.0])
-        self.assertEqual(fforma["mean"], [20.0, 21.0])
-        self.assertEqual(smyl["horizon"], 2)
-        self.assertEqual(smyl["forecast_capability"], "mean_only")
-        self.assertEqual(smyl["provenance"]["submission_id"], 118)
-        self.assertEqual(smyl["requested_provider"], smyl["executed_provider"])
-
-    def test_gate4_rejects_incompatible_requests_without_fallback(self):
-        cases = (
-            ({"series_id": "1"}, "instance"),
-            ({"horizon": 3}, "instance"),
-            ({"window_id": "other/000"}, "final window"),
-            ({"variant_id": "transformed-variant"}, "official_reference"),
-            ({"forecast_id": "m4_other"}, "unapproved"),
-        )
-        for changes, pattern in cases:
-            with self.subTest(changes=changes):
-                with self.assertRaisesRegex(ValueError, pattern):
-                    retrieve_m4_submission(self.database, self.request(**changes))
-
     def test_common_query_returns_same_type_for_live_and_archived(self):
         observed = [
             get_forecast_mean(
@@ -361,11 +337,6 @@ class M4ReferenceTests(unittest.TestCase):
                         '{}', 'partial-hash', 'mean_only')"""
             )
         connection.close()
-
-    def test_provider_contains_no_fitting_or_fallback(self):
-        source = (Path(__file__).parents[1] / "util/p04_05_m4_submission.py").read_text()
-        self.assertNotIn("forecast::", source)
-        self.assertNotIn("fallback_", source.lower())
 
     def test_mean_only_forecast_uses_eight_mean_metrics(self):
         """Process 06 selects the mean profile and stores finite point metrics."""

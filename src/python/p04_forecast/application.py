@@ -13,7 +13,7 @@ import math
 from typing import Any, Iterator
 
 from p04_forecast.providers import native_request
-from util.p04_00_forecast_contract import ForecastContract
+from p04_forecast.contract import ForecastContract
 from util.providers import run_r
 from util.runtime import DataRef, WorkItem
 from util.shared_transformations import inverse_transformation
@@ -70,7 +70,7 @@ def calculate_forecast_batch(items: list[WorkItem]) -> Iterator[tuple[str, dict[
 
 
 def calculate_representation(item: WorkItem) -> dict[str, Any]:
-    """Calculate one frozen legacy CLS embedding from a label-free input."""
+    """Calculate one frozen final-layer CLS embedding from a label-free input."""
     return calculate_representation_batch([item])[0][1]
 
 
@@ -123,6 +123,7 @@ class Application:
     calculate_directional_prediction = staticmethod(calculate_directional_prediction)
 
     def __init__(self, context: Any):
+        """Bind accepted configuration, coordinator repository and artifact root."""
         self.context, self.store = context, context.repository
         self.configuration = context.configuration
         self.model_root = context.request.root / "models" / context.experiment_ref.experiment_id

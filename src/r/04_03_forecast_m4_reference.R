@@ -3,6 +3,9 @@
 # Input: jobs with dataset/series identity, zero-based official_position, horizon
 # and forecast_ids. Output: standard mean-only records; no fitting or writes.
 
+# Resolve approved Daily archived vectors by canonical source position and horizon.
+# Inputs are request jobs and native package objects; outputs are original-scale
+# mean-only records with submission provenance, never canonical observations.
 forecast_m4_reference <- function(jobs, M4, submission_info, package_version) {
   approved <- list(
     m4_smyl = list(id = 118L, rank = 1L, author = "Smyl"),

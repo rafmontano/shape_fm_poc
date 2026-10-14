@@ -15,9 +15,10 @@ reproduction, not improving forecast accuracy.
 - Complete M4 Daily Table 1.
 - Daily-only Table 2 calculation using the future POC3 path.
 - Approved Figure 2 outputs for applicable implemented models.
-- Same-current-code sequential and distributed execution must preserve accepted
-  scientific results for identical inputs/settings under the approved numerical
-  policy; this is not exact equivalence to historical implementations.
+- Calculate each scientific atomic item once on its assigned worker; resume
+  accepted DuckDB state. Hardware/backend are operational provenance, not identity
+  or grounds for recalculation. Ordinary valid float differences are accepted;
+  no parity gate, workload or tolerance gate.
 - Active DTW: direct aeon one-NN, float64 standardised length 64, fixed proportion
   0.10/effective width 6 across horizons 1–14, one neighbour's labels reused and
   shared configured reference cap 10,000. Calibrated/uncapped v12 is historical.
@@ -44,8 +45,10 @@ The researcher decides whether newly found work belongs to POC2 or the POC3
 backlog. Execution logs are not living documentation.
 
 The cleanup checkpoint `c498dc6` and its recorded structural baseline are
-preserved in [X01](poc2-x01-architecture-transformation.md). Increments A–C passed
-bounded developer acceptance; D–F remain planned. Do not rerun cleanup.
+preserved in [X01](poc2-x01-architecture-transformation.md). Increments A–C retain
+their recorded status; D (`D94e12b3`) is researcher-accepted. E/F are being
+implemented, not accepted; continue only 05/06 from accepted 04 evidence without
+rerunning Forecast. Do not rerun cleanup.
 Approval of the five-layer design does not close X01.
 
 ## Exit criteria
@@ -56,9 +59,8 @@ match the approved presentation contract, the workspace is clean, and the
 standards/clean-install QA passes. Publication and synchronization occur only
 after explicit approval.
 
-Historical comparison is approximate aggregate similarity supporting the same
-research interpretation (also for POC3), not forced exact historical equality.
-No calibration comparison or tuning to reproduce retired v12 is required or
-permitted. Record ordinary numerical differences and continue; only material
-differences in rankings, conclusions or interpretations require researcher
-review. X01 remains open until final researcher acceptance.
+Present final produced tables/figures to the researcher; do not run automatic
+historical comparison or a second scientific workload for final review. Stop for
+a material final-result issue only when the researcher identifies it. No
+calibration or tuning to prior results. X01 remains open until final researcher
+acceptance.

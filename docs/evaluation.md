@@ -99,9 +99,18 @@ and discussed; it is not silently redesigned.
 
 Prefect owns Process 06 dependencies. Dask distributes bounded independent
 candidate/metric batches across eligible CPU workers; workers do not start nested
-parallel frameworks. The coordinator writes aggregate results. Sequential,
-local-Dask and distributed-Dask modes must return the same scientific results.
+parallel frameworks. The coordinator writes aggregate results. Each atomic item
+is calculated once on its assigned worker; ordinary valid floating-point
+differences are accepted, without parity workloads or tolerance gates.
 
 Each candidate identity is committed independently. Restart submits only missing
 candidates and continues to selection, tables and exports once prerequisites are
 complete.
+
+## Final review
+
+Present the final produced tables and figures to the researcher. Do not run
+automatic historical comparison or a second scientific workload for review.
+Stop for a material final-result issue only when the researcher identifies it.
+E/F acceptance continues accepted Process 04 evidence through Combine/Evaluate
+only; it does not rerun Forecast or restart the experiment from zero.

@@ -48,9 +48,11 @@ visibly. Chronos-2 uses its pinned local checkpoint and native probabilistic
 provider; ordinary execution is offline and does not download the model for each
 job.
 
-Given identical input, frequency, horizon, seed and model settings, the FFORMA
-methods must produce the same individual point means as the original
-implementation. ShapeFM's envelope, storage and quantile fields are additional
+FFORMA methods preserve the approved native scientific definitions and settings,
+not exact floating-point identity across hardware/backends or retired code.
+Provider boundaries check output shape and scientifically usable values;
+ordinary valid floating-point differences are accepted without parity workloads
+or tolerance gates. ShapeFM's envelope, storage and quantile fields are additional
 contracts around those calculations.
 
 ## Storage and combination

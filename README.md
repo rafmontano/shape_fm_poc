@@ -42,9 +42,10 @@ use fixed paths:
 ```
 
 Use only the process range needed. Existing accepted items are skipped on
-restart. Through Increment C, the new entry point runs Processes 01–03; later
-processes and stored-output publication become available as their owning
-increments migrate. Do not request the default full range yet.
+restart. Increment D (`D94e12b3`) is researcher-accepted through Process 04;
+E/F are being implemented, not accepted. Their bounded acceptance continues
+accepted 100-series 04 evidence through only Combine/Evaluate, without rerunning
+Forecast or starting from zero. Do not request the default full range yet.
 
 ## Target repository layout
 

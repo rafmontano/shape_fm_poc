@@ -114,6 +114,11 @@ trust-boundary failures are allowed. Completion checks only planned identities,
 accepted predecessors and the required output reference; it does not revalidate
 scientific content. Binary direction has no near-zero dead zone.
 
+Provider return checks concern output shape and scientifically usable values.
+Ordinary valid floating-point differences are accepted, without parity gates,
+workloads or tolerance gates. Preserve approved precision, including disabling
+CUDA TF32 matmul/convolution for Mantis float32 calculations.
+
 ## Errors, retry and fallback
 
 Failures identify process, substep (if any), batch/item and underlying cause.
@@ -125,8 +130,8 @@ model behind a generic forecast substitution.
 
 Scientific identity contains data, method, approved settings, horizon and
 transformation/model lineage. Operational evidence contains host, worker,
-runtime, duration, retry and batching. Operational differences must not change
-scientific IDs or content hashes.
+runtime, duration, retry, batching, hardware and backend. Operational differences
+must not change scientific IDs or trigger recalculation of accepted results.
 
 Record provenance needed to reproduce or interpret a result; do not turn every
 internal object into a manifest. Documentation text and execution location are
@@ -139,6 +144,13 @@ Use the smallest test that proves the changed behaviour:
 1. focused unit/contract tests;
 2. a fresh isolated 100-series run only through the affected process; and
 3. interruption/restart at the smallest durable boundary when execution changed.
+
+X01 E/F are an exception to fresh-from-zero execution: continue accepted
+100-series Process 04 evidence through only Combine/Evaluate; do not rerun 04.
+Calculate each scientific atomic item once on its assigned worker and resume
+accepted DuckDB state. Final review uses produced tables/figures, not automatic
+historical comparison or a second scientific workload; stop for a material
+final-result issue only when the researcher identifies it.
 
 Do not routinely run later processes or the complete historical matrix. Broader
 tests need a demonstrated dependency or researcher approval. A fixture tests the

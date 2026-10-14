@@ -10,12 +10,10 @@ from __future__ import annotations
 import argparse
 import base64
 import importlib.metadata
-import importlib.util
 import json
 import pickle
 import sys
 from functools import lru_cache
-from pathlib import Path
 from typing import Any
 
 
@@ -88,11 +86,8 @@ def serve(kind: str, device: str) -> None:
         # TF32 convolution/matmul that can change subsequent RF decisions.
         torch.backends.cuda.matmul.allow_tf32 = False
         torch.backends.cudnn.allow_tf32 = False
-        spec = importlib.util.spec_from_file_location("mantis_provider",
-            Path(__file__).resolve().parents[1] / "04_05_encode_mantis.py")
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        provider = module.MantisRepresentationProvider(device=device)
+        from p04_forecast.mantis import MantisRepresentationProvider
+        provider = MantisRepresentationProvider(device=device)
     print(json.dumps({"type": "ready"}), flush=True)
     try:
         for line in sys.stdin:

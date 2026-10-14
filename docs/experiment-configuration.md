@@ -35,7 +35,9 @@ Deleting or changing the JSON does not redefine an existing database.
 Scientific configuration and operational execution are separate. Data,
 preprocessing, transformations, methods, model parameters, horizon, seed,
 metric profile and cohort membership affect scientific identity. Host, worker
-count, addresses, batch size, completion order and elapsed time do not.
+count, addresses, batch size, completion order, elapsed time, hardware and backend
+do not. These are operational provenance, not grounds to recalculate accepted
+DuckDB work. Ordinary valid floating-point differences are accepted.
 
 ## Fixed generated layout
 

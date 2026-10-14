@@ -43,12 +43,11 @@ width once per frequency. Prediction loads it and never recalibrates.
 This is the authoritative active POC2/POC3 baseline, with the shared configured
 maximum of 10,000 reference windows. Horizon-calibrated, uncapped version 12 is
 historical only, preserved through Git history; it is not an active alternative.
-Do not run calibration comparison, tune for prior results or force exact
-historical equivalence. Same-current-code local/distributed parity checks
-execution integrity with identical inputs/settings under the approved numerical
-policy. Historical aggregate results need only be approximately similar and
-support the same interpretation. Record ordinary differences; only material
-changes to rankings, conclusions or interpretations require researcher review.
+Do not run calibration, tune for prior results or force historical equivalence.
+Calculate each atomic item once on its assigned worker and reuse accepted DuckDB
+state. Ordinary valid floating-point differences are accepted, with no parity
+workload or tolerance gate. Final produced outputs go to the researcher, without
+automatic historical comparison or a second scientific review workload.
 
 ## Mantis/Random Forest baseline
 
@@ -62,6 +61,7 @@ frozen Mantis representation → reusable Random Forest classifier
 - Linear resize from 64 to 512, `align_corners=false`.
 - Legacy-compatible final-transformer-layer CLS representation.
 - Frozen float32 representation of dimension 256.
+- CUDA TF32 matmul/convolution disabled to preserve the float32 calculation.
 - One independent scikit-learn Random Forest per horizon.
 - 200 trees, seed 42 and `n_jobs=1`.
 
@@ -96,6 +96,7 @@ acceptance. Membership/features/representations are stored in the parent
 `experiment.duckdb`; rolling modelling inputs are in `windows.duckdb`, created
 only when Process 03 needs it. Dask places
 eligible work across configured machines. Completed artifacts and predictions
-are skipped on restart. Worker/host/batch changes do not change model identity or
-predictions. The coordinator alone writes DuckDB and owns the authoritative
+are skipped on restart. Worker/host/batch/hardware/backend are operational
+provenance, not model identity or grounds to recalculate accepted predictions.
+The coordinator alone writes DuckDB and owns the authoritative
 model-file copy.

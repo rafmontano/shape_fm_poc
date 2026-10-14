@@ -1,13 +1,9 @@
-# ==============================================================================
-# 04_02_forecast_chronos.py
-#
-# Purpose: Persistent Chronos-2 JSON-lines worker; this module never imports DuckDB.
-# Inputs: Internal hardware/serve arguments and, for serve, newline-delimited predict or shutdown JSON requests on stdin.
-# Outputs: Newline-delimited hardware, ready, forecast, shutdown, or error JSON responses on stdout.
-# Run from: Internal worker command: `.tools/uv/uv run --locked --no-sync python src/python/04_02_forecast_chronos.py <hardware|serve> [options]`.
-# ==============================================================================
+"""Process 04 offline Chronos-2 provider in its pinned native environment.
 
-"""Persistent Chronos-2 JSON-lines worker; this module never imports DuckDB."""
+Past-only forecast-v1 requests produce same-scale mean, median and ordered
+quantile horizons. A JSON-lines session reuses one model; no storage or scheduling.
+Launch with ``python -m p04_forecast.chronos serve`` and explicit model settings.
+"""
 
 from __future__ import annotations
 
@@ -31,7 +27,7 @@ os.environ["HF_HUB_OFFLINE"] = "1"
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
 from chronos import BaseChronosPipeline, Chronos2Pipeline
 
-from util.p04_00_forecast_contract import ForecastContract
+from p04_forecast.contract import ForecastContract
 from util.shared_chronos_checkpoint import local_chronos_snapshot
 
 
@@ -233,9 +229,7 @@ def serve(args: argparse.Namespace) -> None:
     Outputs: Ready, result, error, and shutdown JSON lines on stdout; returns at stdin EOF or shutdown.
     Side effects: Sets thread environment defaults, loads model/cache state once, and retains accelerator state across requests.
     """
-    # Execution globals: use one OpenMP/MKL thread unless the launching machine
-    # environment overrides these source fallbacks; effective values are not yet
-    # recorded separately in worker provenance.
+    # Bound native threading; the owning worker supplies its execution limits.
     os.environ.setdefault("OMP_NUM_THREADS", "1")
     os.environ.setdefault("MKL_NUM_THREADS", "1")
     torch.set_num_threads(args.internal_cpu_threads)

@@ -1,8 +1,9 @@
-"""Process 04 reads persisted training membership for its unmigrated consumers.
+"""Read stored cohort metadata for the legacy shared completion checker.
 
 Inputs are a read-only child connection, preparation identity and cohort settings;
 output is stored membership metadata. No selection, fitting or writes occur here.
-Active Process 03 science belongs to :mod:`p03_transform.inputs`.
+Active Process 04 reads accepted Process 03 atomic inputs in its application;
+this accessor has no role in fitting or selecting its scientific cohort.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ def load_training_cohort(
     """Read the required stored cohort; an unset cap means uncapped inputs.
 
     Missing membership is an error, never an invitation to recreate predecessors.
-    This accessor reads the schema still consumed by the unmigrated Process 04.
+    This accessor serves the legacy shared storage completion boundary only.
     """
     if settings is None:
         return None

@@ -17,7 +17,6 @@ import subprocess
 import unittest
 from pathlib import Path
 
-from util.p04_04_seasonal_period_tuning import historical_folds
 from util.shared_transformations import (
     STANDARDISATION_RECIPE,
     apply_steps,
@@ -187,16 +186,6 @@ class StandardisationContractTests(unittest.TestCase):
                 self.assertTrue(math.isclose(r["state"]["centre"], python.parameters["centre"], rel_tol=1e-12, abs_tol=1e-12))
                 self.assertTrue(math.isclose(r["state"]["scale"], python.parameters["scale"], rel_tol=1e-12, abs_tol=1e-15))
                 self.assert_vector_close(r["values"], python.values)
-
-    def test_fold_states_use_only_each_training_slice(self) -> None:
-        """Historical tuning folds own distinct training-only fitted state."""
-        history = [float(index) for index in range(1, 101)]
-        changed_future = history + [100_000.0] * 10
-        for fold in historical_folds(100, 10):
-            state = fit_transformation(history[: fold.train_end], STANDARDISATION_RECIPE)
-            repeated = fit_transformation(changed_future[: fold.train_end], STANDARDISATION_RECIPE)
-            self.assertEqual(state, repeated)
-            self.assertEqual(state["count"], fold.train_end)
 
 if __name__ == "__main__":
     unittest.main()

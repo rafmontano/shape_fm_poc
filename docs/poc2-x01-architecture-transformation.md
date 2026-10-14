@@ -50,8 +50,9 @@ completion state machines or model-specific experiment runners.
    code in `util/`; audit all retained active Python/R documentation against
    [code standards](code-standards.md), not merely new files.
 7. Show the before/after call path and objective file/function/class/line counts.
-8. Validate from an empty generated workspace with 100 series only through the
-   changed process, then prove restart at its smallest durable unit.
+8. Validate with focused tests and bounded 100-series evidence through only the
+   changed process, then prove restart at its smallest durable unit. E/F continue
+   the accepted Process 04 evidence; do not restart from zero or rerun Forecast.
 
 Do not run later processes “for completeness.” Do not create a branch per
 process. Work continues on `poc2-x01-architecture-transformation` until the
@@ -105,8 +106,8 @@ The same structure applies with process-specific science:
 ## Acceptance of X01
 
 X01 closes only after all six active paths conform, the researcher can follow
-the workflow/progress, scientific comparisons support the accepted interpretation, fixed
-storage paths/restart work from a clean generated workspace, and obsolete code,
+the workflow/progress, final produced tables/figures are presented to the researcher,
+fixed storage paths/restart preserve accepted work, and obsolete code,
 tests, configuration and documentation have been removed. The researcher makes
 the final acceptance decision.
 
@@ -128,33 +129,36 @@ curated final metrics/CSV/PNG/PDF artifacts. Failures warn and never invalidate
 science. Periodic progress/ETA is off unless a stored setting explicitly enables
 it for a named long-running subflow; no autologging/system metrics/model registry.
 
-Increments A–C have passed bounded developer acceptance and are submitted for
-researcher review; D–F remain planned. This does not close X01.
+Increments A–C retain their recorded status. Increment D (`D94e12b3`) is accepted
+by the researcher. E/F are being implemented, not accepted. This does not close X01.
 
 | Increment | Scope and bounded acceptance |
 | --- | --- |
 | A | Shared runtime/executor/tracking, experiment and Process 01; from no scientific DBs, 100 series through Import only; three visible subflows, one resumable run, restart schedules no accepted series. |
 | B | Process 02; fresh 100 series through Preprocess only; prepared histories and database-only restart. |
 | C | Process 03; fresh 100 series through Transform only; child ownership, shared configured cap, modelling inputs/features and atomic restart. |
-| D | Process 04 without calibration; fresh 100 series through Forecast only; local then bounded two-machine same-current-code execution parity, cached assets and atomic restart. |
-| E | Process 05; fresh 100 series through Combine only; stored components and explicitly enabled deployable adjustments, excluding Oracle/sensitivity diagnostics. |
-| F | Process 06/final publication; fresh 100-series end-to-end run; complete candidate-restartable surface, selected-only diagnostics, approved tables/figures and MLflow publication; no-new-work restart performs no scientific recalculation. |
+| D | Accepted Process 04 without calibration; completed 100-series distributed run on Mac CPU, Ubuntu CPU and Ubuntu GPU; required outputs, cached assets, accepted-work restart and targeted TF32 tests. |
+| E | Process 05-only continuation of accepted 100-series Process 04 evidence; stored components and explicitly enabled deployable adjustments, excluding Oracle/sensitivity diagnostics; no rerun of Process 04. |
+| F | Process 06-only continuation after E; complete candidate-restartable surface, selected-only diagnostics, approved tables/figures and MLflow publication; no-new-work restart performs no scientific recalculation; no rerun of Process 04. |
 
 Remove each superseded active path/tests after its bounded acceptance; do not
 retain aliases. Measure before/after production files/folders/physical lines,
 longest files, test files/lines and every direct Prefect/Dask/MLflow import
-location; include elapsed times, restart and local/two-machine evidence. Focused
-tests protect flow order/restart, shared-executor parity, scientific formulas and
+location; include elapsed times, restart and assigned-worker evidence. Focused
+tests protect flow order/restart, shared-executor execution, scientific formulas and
 one resumable tracking run/publication. Run the bounded final suite once after F.
 
-Same-current-code local/distributed parity verifies execution integrity with the
-same inputs/settings and approved numerical policy. Historical aggregate
-comparison instead asks whether Table 1, Daily Table 2, Figure 2 and standalone
-CD outputs are approximately similar and support the same interpretation. Do not
-calibrate, compare calibration settings or force exact historical v12 equivalence.
-Record ordinary differences and continue; only differences materially affecting
-rankings, conclusions or interpretations require researcher review. POC3 follows
-this approximate historical-comparison policy too.
+Calculate each scientific atomic item once on its assigned worker and resume
+accepted DuckDB state. Hardware/backend are operational provenance, not scientific
+identity or grounds for recalculation. Ordinary valid floating-point differences
+are accepted; there is no parity gate, parity workload or numerical tolerance
+gate. Provider boundaries check output shape and scientifically usable values.
+Keep the TF32 correction that preserves Mantis float32 calculations.
+
+Final review presents the produced Table 1, Daily Table 2, Figure 2 and standalone
+CD outputs to the researcher. Do not run automatic historical comparison or a
+second scientific workload for review. Stop for a material final-result issue
+only when the researcher identifies it. No calibration or tuning to prior results.
 
 ## Pre-implementation checkpoint — 14 October 2026
 
@@ -222,7 +226,7 @@ Prefect exposed 01 and 01.01–01.03. MLflow recorded one resumable run,
 completion progress. Periodic progress remained disabled.
 
 Public-flow tests cover partial group failure with preserved earlier acceptance,
-database-only resume, a single tracking run, and sequential/local-Dask parity
+database-only resume, a single tracking run, and sequential/local-Dask execution
 with mixed-frequency source rows. Together with retained setup tests, 12 passed.
 Retained legacy storage/table/export tests passed (28); five focused
 feature/manifest tests passed. Acquisition verified the real pinned source;
@@ -290,61 +294,22 @@ retirement. Native feature/cohort/transformation R checks passed; audited R
 expressions remained identical. Superseded Process 03 wrapper, coordinator
 handlers/planning/dispatch, window/feature orchestration, repeated storage
 validation, compatibility transformation branches and their obsolete tests
-were removed. The unmigrated Process 04 retains only its existing stored-cohort
-reader until D; no schema bridge or wrapper was introduced.
+were removed. No schema bridge or wrapper was introduced.
 
-## Increment D — Forecast candidate; acceptance blocked
+## Increment D — Forecast accepted
 
-The candidate implements the approved five Forecast subflows with pure native
+The researcher accepted `D94e12b3`. The five Forecast subflows use pure native
 R/Python calculations, coordinator-only result/artifact acceptance and cached
-foundation-model sessions. D is not accepted: its superseded implementation,
-calibration-only code/configuration/tests and remaining documentation audit have
-not yet been retired. E and F have not started. A–C remain accepted and pushed.
+foundation-model sessions. A–C retain their status; E/F are being implemented
+and are not accepted. X01 remains open.
 
-The isolated local 100-series workspace accepted 1,600 individual forecasts,
-595 embeddings, 15 fitted artifacts and 200 complete directional vectors;
-no Process 05/06 work ran. A first attempt failed after 488 forecasts; the native
-failure's cause was not established. A Process 04-only resume preserved those
-forecasts and completed the pool. Completed restart took 4.917 seconds with all
-3,406 parent rows, 732 child rows, timestamps and artifact bytes unchanged.
-Independent direct-aeon and pinned RF calculations verified all 2,800 directional
-labels. Deleting one fitted artifact in a disposable copy rebuilt only that
-unit in 12.410 seconds, with identical bytes and all other accepted rows intact.
+Accepted evidence is the completed 100-series distributed Process 04 run using
+Mac CPU, Ubuntu CPU and Ubuntu GPU. Required outputs are 1,600 individual
+forecasts, 595 embeddings, 15 fitted artifacts and 200 complete directional
+vectors. Restart preserves accepted DuckDB work and fitted artifacts; cached
+assets are reused. No calibration or Process 05/06 acceptance is part of D.
 
-A bounded two-machine Process 04-only run reused accepted Process 01–03 inputs
-and finished in 2,128.915 seconds with the same counts. Dask's standard task
-stream recorded scientific groups on Mac CPU, Ubuntu CPU and Ubuntu GPU.
-Each isolated scientific experiment retained one coordinator MLflow run:
-local `54b1cafba2be435f8a45057ddb9da5b7`, distributed
-`e73fc135fdc54cbca127dc0069ee1942`. Completion status does not establish parity.
-
-DTW neighbour identities, distances and all 1,400 labels matched exactly.
-The initial CUDA Mantis run differed in 35 RF prediction vectors. A failing
-eight-input batch reproduced cuDNN's default TF32 reduction. Disabling TF32
-matmul/convolution preserves the specified float32 calculation; a bounded
-595-input diagnostic plus independent 14-horizon RF fits then produced all
-1,400 local labels exactly. Residual embeddings differed by at most
-0.0003509521484375; 524 of 152,320 coordinates exceeded the diagnostic floating
-check. This corrected candidate has not passed full distributed acceptance.
-
-NNETAR and AutoARIMA still differ across hosts: 183 forecast array-fields
-exceeded the legacy diagnostic `atol=rtol=1e-5`, with maximum original-scale
-absolute difference 5.2710900185 and reported relative difference 0.002242269.
-Identical direct native calls reproduced two failing series without Dask,
-inversion or storage; each host's direct means reproduced its stored means
-exactly after the accepted inverse transformation. R/package versions and
-recorded scientific settings agree. Native BLAS libraries differ, but BLAS has
-not been established as the cause. Seven focused A–D tests passed before this
-numerical investigation; they do not override the failed acceptance check.
-After the TF32 correction, the three focused Forecast tests passed again
-(4.893 seconds), and the corrected native CUDA session passed the originally
-failing eight-input batch (maximum embedding difference 0.0000057220458984375).
-
-The living contracts refer to an approved numerical policy without specifying
-floating-output thresholds. The legacy diagnostic threshold is not established
-as researcher-approved. Researcher review must specify same-current-code
-floating acceptance/precision for forecasts and embeddings before D can be
-accepted. Do not widen tolerances, round outputs, alter optimizers/models,
-replace numerical dependencies or concentrate work on one host to hide these
-differences. Historical approximate similarity remains a separate final check.
-Evidence is retained in the isolated review artifact workspaces; X01 is open.
+Targeted TF32 tests support the retained correction: CUDA matmul/convolution
+TF32 is disabled to preserve the specified Mantis float32 calculation. Ordinary
+valid backend floating-point differences are accepted without parity comparison
+or tolerance gates. Continue E/F from this accepted evidence without rerunning 04.
