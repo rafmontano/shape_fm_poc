@@ -50,10 +50,13 @@ OOP is not mandatory when it adds ceremony without clarity or reuse.
 
 ## Workflow implementation
 
-`00_main.py` is the only researcher entry point. Prefect owns experiment and
-process dependencies. Use a meaningful substep only when it has distinct inputs,
-durable outputs and restart value. Use Prefect's Dask integration for eligible
-parallel tasks; do not manage a parallel scheduler inside application objects.
+`experiment.py` is the target researcher entry point. Prefect owns experiment,
+process and meaningful-subflow orchestration. The mandatory hierarchy is
+Experiment → Process → meaningful subflow → work group → atomic item; preserve
+the exact subflows/order in [architecture](architecture.md). Use the supported
+Prefect/Dask integration and one shared executor, invisible to process flows.
+Scientific functions do not import Prefect, Dask or MLflow, choose placement or
+open tracking runs. MLflow is the fifth/top research-tracking layer, not science.
 
 The coordinator is the sole DuckDB writer. Workers receive bounded read-only
 inputs and return results. DuckDB transactions own accepted scientific item and
@@ -62,8 +65,12 @@ completion state. Restart queries stored identities and schedules the delta.
 ## Python ownership
 
 ```text
-src/python/<NN_process>/process.py       real Prefect process flow
-src/python/<NN_process>/<name>.py        code used by that process only
+src/python/experiment.py                experiment Prefect flow
+src/python/p01_import/flow.py            real process flow (through p06_evaluate)
+src/python/pNN_process/<name>.py         code used by that process only
+src/python/util/runtime.py              minimal shared runtime facade
+src/python/util/distributed_execution.py shared work-group executor
+src/python/util/research_tracking.py     coordinator MLflow adapter
 src/python/util/<name>.py                code used by two or more processes
 src/python/tests/...                     tests by process/component
 ```
@@ -99,10 +106,13 @@ Validate once at a real trust boundary. Normal checks are proportional:
 - database constraints and transaction outcome; and
 - prerequisite/completion count.
 
-Do not validate the same contract at every internal handoff. Deep parity,
-environment, checksum, cross-host, corruption and historical reproduction
-checks belong to named QA actions. Binary direction uses its exact definition;
-near-zero values are not a special validation policy.
+Do not validate the same contract at every internal handoff. MVP behaviour not
+named in the approved design is absent by default: no calibration, automatic
+tuning, benchmark/environment probes, speculative validation/conversion,
+compatibility wrappers or monitoring frameworks. Normal assertions and clear
+trust-boundary failures are allowed. Completion checks only planned identities,
+accepted predecessors and the required output reference; it does not revalidate
+scientific content. Binary direction has no near-zero dead zone.
 
 ## Errors, retry and fallback
 
@@ -140,6 +150,23 @@ bounded evidence. Architecture compliance is judged from the active path, not
 from test count or folder names.
 
 ## Documentation
+
+All retained active first-party Python/R under `src/` is audited at final
+acceptance, not just newly created code. Vendored dependencies, generated files
+and lockfiles are excluded.
+
+- Every module/R worker states its domain responsibility, owning process and
+  principal inputs/outputs in a concise header or module docstring.
+- Every public flow, task, class and function documents research purpose,
+  contract and durable output where relevant.
+- Prefect flows/subflows document hierarchy level and durable restart boundary;
+  tasks document atomic-item or work-group responsibility.
+- Formulas and non-obvious transformations state meaning, assumptions and the
+  authoritative paper/equation or accepted contract where available.
+- Comments explain why or scientific meaning, not obvious syntax, change
+  history or duplicated type hints. No commented-out code or ceremonial prose.
+- Simple private helpers use descriptive names and type hints as primary
+  documentation. Reconcile stale comments/docstrings when moving retained code.
 
 Keep living rules in the small canonical set listed in `docs/README.md`. Update
 the owning document; do not create a new AMP-instruction or acceptance file.

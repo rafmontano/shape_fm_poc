@@ -126,13 +126,21 @@ class SourceAcquisitionTests(unittest.TestCase):
     """Verify source-only acquisition and reuse without network or model execution."""
 
     def test_verified_download_cleans_local_metadata_and_reuses_source(self):
-        from tests.test_import import write_source
-        from util import p01_04_gift_eval_acquisition as acquisition
+        import pyarrow as pa
+        import pyarrow.ipc as ipc
+        from p01_import import acquisition
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             fixture = root / "fixture/m4_daily"
-            write_source(fixture, [[float(i) for i in range(31)]])
+            fixture.mkdir(parents=True)
+            table = pa.table({"target": pa.array([[float(i) for i in range(31)]],
+                                               type=pa.list_(pa.float32()))})
+            with (fixture / "data-00000-of-00001.arrow").open("wb") as stream:
+                with ipc.new_stream(stream, table.schema) as writer:
+                    writer.write_table(table)
+            (fixture / "dataset_info.json").write_text(json.dumps({"rows": 1}))
+            (fixture / "state.json").write_text(json.dumps({"format": "arrow"}))
             expected = {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
                         for p in fixture.iterdir()}
             dependency = json.loads((ROOT / "config/dependencies/gift_eval.json").read_text())

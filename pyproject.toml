@@ -13,6 +13,7 @@ dependencies = [
   "distributed==2026.8.0",
   "duckdb>=1.2",
   "huggingface-hub>=0.36,<0.37",
+  "mlflow==3.17.1",
   "prefect==3.8.7",
   "prefect-dask==0.3.7",
   "pyarrow>=20",
@@ -21,7 +22,7 @@ dependencies = [
 
 [tool.setuptools.packages.find]
 where = ["src/python"]
-include = ["util*"]
+include = ["util*", "p01_import*", "p02_preprocess*", "p03_transform*", "p04_forecast*", "p05_combine*", "p06_evaluate*"]
 exclude = ["tests*"]
 
 [tool.uv]

@@ -66,10 +66,10 @@ all windows from one series stay in one S1 partition. Complete non-overlapping
 blocks use configured input length plus future horizon; no partial block is
 padded. Daily uses input length 64 and horizon 14.
 
-High-volume windows, membership, transformed inputs, labels and reusable
-features belong in `results/windows.duckdb`. Raw series and general experiment
-state remain in the parent. The child links to the parent through the same
-experiment and stable source/configuration fingerprints.
+High-volume rolling modelling inputs, transformed windows and their labels
+belong in `results/windows.duckdb`. Membership, reusable features,
+representations, raw series and experiment state remain in the parent. The
+child records the same experiment identity; it is first created by Process 03.
 
 ## Directional labels
 

@@ -8,7 +8,8 @@ import subprocess
 import unittest
 from pathlib import Path
 
-from util.p01_03_gift_eval_source import iter_source_series
+import pyarrow as pa
+import pyarrow.ipc as ipc
 
 
 class RobustPreprocessingRegressionTests(unittest.TestCase):
@@ -17,10 +18,9 @@ class RobustPreprocessingRegressionTests(unittest.TestCase):
     def test_first_100_match_legacy_tsclean(self):
         root = Path(__file__).resolve().parents[4]
         source = root / "data/gift_eval/m4_daily"
-        contexts = [
-            list(series.target[:-14])
-            for series in iter_source_series(source, "D", 100)
-        ]
+        with pa.memory_map(str(source / "data-00000-of-00001.arrow"), "r") as stream:
+            targets = ipc.open_stream(stream).read_all().column("target").slice(0, 100).to_pylist()
+        contexts = [target[:-14] for target in targets]
         jobs = [
             {
                 "id": str(index),

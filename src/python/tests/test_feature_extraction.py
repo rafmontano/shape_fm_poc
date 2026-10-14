@@ -26,8 +26,8 @@ from util.feature_extraction import (
     FeatureExtractionCoordinator,
     feature_provenance_fingerprint,
     get_prepared_features,
+    run_feature_extraction_flow,
 )
-from util.p00_01_researcher_actions import FeatureExtractionAction
 from util.shared_database import initialize_experiment_database
 from util.shared_distributed_execution import feature_provider_description
 from util.window_preparation import (
@@ -190,10 +190,21 @@ class FeatureExtractionTests(unittest.TestCase):
 
         tracemalloc.start()
         started = time.monotonic()
+        provider = feature_provider_description()
+        run_arguments = {
+            "scheduler_address": None,
+            "parent_database": self.parent,
+            "windows_database": self.child,
+            "provider_descriptions": [provider],
+            "source_manifest_hash": "connected-source",
+            "local_max_windows": 2,
+            "execution_profile": None,
+            "memory_safety": None,
+            "max_in_flight": 1,
+            "retries": 0,
+        }
         try:
-            first = FeatureExtractionAction().run(
-                self.parent, self.child, local_max_windows=2
-            )
+            first = run_feature_extraction_flow(**run_arguments)
         finally:
             elapsed = time.monotonic() - started
             _, peak_bytes = tracemalloc.get_traced_memory()
@@ -214,9 +225,7 @@ class FeatureExtractionTests(unittest.TestCase):
         self.assertEqual(constant.feature_values[varying.feature_names.index("entropy")], 0)
         self.assertEqual(varying.period, 1)
 
-        second = FeatureExtractionAction().run(
-            self.parent, self.child, local_max_windows=2
-        )
+        second = run_feature_extraction_flow(**run_arguments)
         self.assertEqual(second["submitted_feature_rows"], 0)
         self.assertEqual(second["reused_feature_rows"], 2)
         self.assertEqual(second["array_rows_read"], 0)
@@ -259,7 +268,7 @@ class FeatureExtractionTests(unittest.TestCase):
                 **provider,
                 "dependencies": {**provider["dependencies"], "changed": "2"},
             }
-            changed = feature_provenance_fingerprint(changed_provider, first["source_manifest"])
+            changed = feature_provenance_fingerprint(changed_provider, "connected-source")
             coordinator._configure_pending_selection(periods, {changed})
             self.assertEqual(coordinator._pending_count(), 2)
         self.assertEqual((succeeded, failed), (0, 1))
@@ -423,20 +432,6 @@ class FeatureExtractionTests(unittest.TestCase):
         finally:
             child.close()
         self.assertEqual(feature_tables, 0)
-
-    def test_invalid_local_bounds_fail_without_creating_feature_tables(self) -> None:
-        """The optional route cannot silently run an unbounded local workload."""
-        with self.assertRaisesRegex(RuntimeError, "local feature extraction requires"):
-            FeatureExtractionAction().run(self.parent, self.child)
-        child = duckdb.connect(str(self.child), read_only=True)
-        try:
-            count = child.execute(
-                """SELECT count(*) FROM information_schema.tables
-                   WHERE table_name='window_features'"""
-            ).fetchone()[0]
-        finally:
-            child.close()
-        self.assertEqual(count, 0)
 
 
 if __name__ == "__main__":

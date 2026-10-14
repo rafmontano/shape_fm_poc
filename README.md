@@ -7,10 +7,11 @@ six-process workflow:
 01 Import → 02 Preprocess → 03 Transform → 04 Forecast → 05 Combine → 06 Evaluate
 ```
 
-The researcher entry point is `src/python/00_main.py`. Prefect coordinates the
+The researcher entry point is `src/python/experiment.py`. Prefect coordinates the
 workflow, Dask schedules eligible bounded computation, Python/R providers own
 scientific calculations, and the selected coordinator writes authoritative
-state to DuckDB.
+state to DuckDB. MLflow projects researcher-facing milestones without owning
+scientific acceptance or restart.
 
 ## Documentation
 
@@ -35,14 +36,15 @@ Before creating a new experiment, edit `config/experiment.json`. Normal commands
 use fixed paths:
 
 ```sh
-.venv/bin/python src/python/00_main.py plan
-.venv/bin/python src/python/00_main.py run --processes 1-6
-.venv/bin/python src/python/00_main.py status --format human
-.venv/bin/python src/python/00_main.py export
+.venv/bin/python src/python/experiment.py plan --processes 1
+.venv/bin/python src/python/experiment.py run --processes 1
+.venv/bin/python src/python/experiment.py status
 ```
 
 Use only the process range needed. Existing accepted items are skipped on
-restart.
+restart. During Increment A, the new entry point runs only Process 01; later
+processes and stored-output publication become available as their owning
+increments migrate. Do not request the default full range yet.
 
 ## Target repository layout
 
@@ -51,13 +53,13 @@ POC2-X01 is transforming the active source tree toward this structure:
 ```text
 config/                         active experiment, machines and execution profiles
 data/gift_eval/                 pinned canonical source data
-src/python/00_main.py           researcher entry point
-src/python/01_import/           Process 01
-src/python/02_preprocess/       Process 02
-src/python/03_transform/        Process 03
-src/python/04_forecast/         Process 04
-src/python/05_combine/          Process 05
-src/python/06_evaluate/         Process 06
+src/python/experiment.py        researcher entry point
+src/python/p01_import/          Process 01, including canonical source acquisition
+src/python/p02_preprocess/      Process 02
+src/python/p03_transform/       Process 03
+src/python/p04_forecast/        Process 04
+src/python/p05_combine/         Process 05
+src/python/p06_evaluate/        Process 06
 src/python/util/                code used by two or more processes
 src/r/                          R workers, utilities, tests and QA
 results/experiment.duckdb       parent scientific store
@@ -70,6 +72,9 @@ docs/                           living documentation only
 
 Generated data, models, results, caches and runtime logs are untracked. Git holds
 source, configuration, dependency locks and living documentation.
+Unmigrated later processes retain their legacy scientific modules until bounded
+acceptance of their replacements; the retired import/control-plane path is not
+a second researcher entry point.
 
 ## Current work
 

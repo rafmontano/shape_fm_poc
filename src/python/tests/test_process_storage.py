@@ -13,7 +13,6 @@ from util.shared_configuration import canonical_json, json_fingerprint
 from util.shared_database import initialize_experiment_database
 from util.shared_model_storage import ModelStorage
 from util.shared_process_storage import ProcessStorage
-from util.p00_01_researcher_actions import ProcessAction
 from util.shared_transformations import TransformationResult, transform
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -86,24 +85,6 @@ class ProcessStorageTests(unittest.TestCase):
         with duckdb.connect(str(self.database)) as connection:
             connection.execute("UPDATE experiment_tasks SET status='pending' WHERE task_id='gpu'")
         self.assertTrue(storage.forecast_requires_gpu(False))
-
-    def test_failed_fresh_validation_leaves_gate_failed_not_completed(self):
-        storage = ProcessStorage(self.database)
-        action = ProcessAction()
-        storage.transition(2, "completed", {})
-        result = {"process_id": 2, "status": "completed", "summary": {}}
-        with mock.patch.object(
-            storage, "validate", side_effect=RuntimeError("invalid output")
-        ):
-            with self.assertRaisesRegex(RuntimeError, "invalid output"):
-                action._validate(storage, 2, result)
-        self.assertEqual(storage.process_rows()[1][1], "failed")
-
-    def test_partial_resume_revalidates_predecessor_output(self):
-        storage = ProcessStorage(self.database)
-        storage.transition(1, "completed", {"series_count": 1})
-        with self.assertRaisesRegex(RuntimeError, "missing stored output"):
-            ProcessAction()._inspect(storage, 2)
 
     def _insert_gate_fixture(self) -> None:
         """Insert one valid Gate 2/3 chain; a class would add no value to this test fixture."""
@@ -256,19 +237,6 @@ class ProcessStorageTests(unittest.TestCase):
         self.assertEqual(evidence["maximum_ulp_distance"], 2)
         self.assertEqual(evidence["directional_label_changes"], 1)
         self.assertEqual(evidence["classification"], "researcher_review_required")
-
-    def test_execution_persists_operational_validation_only(self):
-        self._insert_gate_fixture()
-        action = ProcessAction()
-        wrapper = mock.Mock()
-        wrapper.run.return_value = {"selected": 1}
-        with mock.patch.object(action.registry, "load", return_value=wrapper):
-            result = action._execute(ProcessStorage(self.database), None, None, 3)
-        self.assertEqual(result["summary"]["numerical_reproducibility"]["maximum_ulp_distance"], 0)
-        with duckdb.connect(str(self.database), read_only=True) as c:
-            summary = json.loads(c.execute("SELECT summary FROM experiment_processes WHERE process_id=3").fetchone()[0])
-            self.assertEqual(summary, result["summary"])
-            self.assertEqual(c.execute("SELECT configuration_hash FROM experiments").fetchone()[0], "h")
 
     def test_fitted_numeric_state_is_compared_but_recipe_metadata_is_exact(self):
         self._insert_gate_fixture()

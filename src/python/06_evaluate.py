@@ -4,8 +4,7 @@
 # Purpose: Expose Process 06 official GIFT-Eval orchestration and experiment completion.
 # Inputs: Path to an experiment DuckDB containing complete candidate forecast matrices and authoritative evaluation settings.
 # Outputs: Existing Process 06 summary plus official metrics, evaluation provenance, task state, and completed experiment state written by ExperimentCoordinator through the 06_01 isolated bridge.
-# Called from: 00_main.py through its numbered-wrapper loader.
-# Run from: Imported by 00_main.py; not run directly.
+# Run from: Legacy process API retained until Process 06 migration; not a researcher CLI.
 # ==============================================================================
 
 """Process 06 wrapper over shared official-evaluation orchestration."""
@@ -17,7 +16,7 @@ from util.shared_experiment_execution import ExperimentCoordinator, latest_exper
 from util.shared_execution_profiles import ExecutionProfile, ExecutionSettings
 
 
-# Code constant: process identity validated by the numbered-wrapper loader.
+# Code constant: legacy process identity.
 PROCESS_NUMBER = 6
 
 

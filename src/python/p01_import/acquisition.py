@@ -1,10 +1,10 @@
 # ==============================================================================
-# p01_04_gift_eval_acquisition.py
+# acquisition.py — Process 01 source setup
 #
 # Purpose: Acquire and verify the immutable, revision-pinned GIFT-Eval source data.
 # Inputs: Dependency-lock metadata, acquisition scope, and a GIFT-Eval source directory.
 # Outputs: Verified source files; verification details returned without a sidecar.
-# Run from: Developer utility: `.venv/bin/python -m util.p01_04_gift_eval_acquisition <m4_daily|complete|verify>` with `PYTHONPATH=src/python`.
+# Run from: `.venv/bin/python -m p01_import.acquisition <m4_daily|complete|verify>` with `PYTHONPATH=src/python`.
 # ==============================================================================
 
 """Acquire and verify the immutable, revision-pinned GIFT-Eval source data."""
@@ -23,8 +23,8 @@ import pyarrow as pa
 import pyarrow.ipc as ipc
 from huggingface_hub import HfApi, snapshot_download
 
-from .shared_configuration import ImportValidationError
-from .shared_provenance import sha256_file
+from util.shared_configuration import ImportValidationError
+from util.shared_provenance import sha256_file
 
 
 def repository_root() -> Path:

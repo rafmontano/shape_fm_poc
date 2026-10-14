@@ -23,10 +23,10 @@ import duckdb
 
 from .shared_configuration import canonical_json
 from .p06_02_table_storage import TableStorage
-from .p00_02_researcher_cli import ResearcherCLI
 
 # Code constants: declared derived files, renderer boundary and historical exclusions.
 ROOT = Path(__file__).resolve().parents[3]
+RESULTS_ROOT = ROOT / "results"
 CSV_NAMES = ("table_1", "table_2_daily", "directional_accuracy_by_horizon",
              "cd_input_daily", "cd_mean_ranks_daily")
 FIGURE_NAMES = ("figure_2_accuracy_by_horizon", "figure_2_cd_daily", "figure_2_cd_daily_paper")
@@ -44,8 +44,22 @@ class ResultExport:
 
     def __init__(self, database: Path, output: Path | None = None):
         """Bind paths without opening a database, creating files or running workers."""
-        self.database = ResearcherCLI.result_path(database, database=True)
-        self.output = ResearcherCLI.result_path(output if output is not None else self.database.with_suffix(""))
+        self.database = self._result_path(database, database=True)
+        self.output = self._result_path(output if output is not None else self.database.with_suffix(""))
+
+    @staticmethod
+    def _result_path(value: Path, *, database: bool = False) -> Path:
+        """Keep legacy publication inside results before any filesystem mutation."""
+        path = Path(value)
+        root = RESULTS_ROOT.resolve()
+        if ".." in path.parts or RESULTS_ROOT.is_symlink():
+            raise ValueError("results paths reject traversal and symlink escapes")
+        resolved = path.resolve()
+        if not resolved.is_relative_to(root) or resolved == root:
+            raise ValueError("persistent outputs must be underneath repository results/")
+        if database and (resolved.parent != root or resolved.suffix != ".duckdb"):
+            raise ValueError("experiment database must be results/<experiment>.duckdb")
+        return resolved
 
     @staticmethod
     def _csv(path: Path, columns: list[str], rows: list[dict]) -> None:

@@ -4,8 +4,7 @@
 # Purpose: Expose Process 03 transformation orchestration.
 # Inputs: Path to an experiment DuckDB containing a planned experiment and completed Process 02 tasks.
 # Outputs: Existing Process 03 summary plus transformed series and restart state written by ExperimentCoordinator using shared transformation and distributed-execution utilities.
-# Called from: 00_main.py through its numbered-wrapper loader.
-# Run from: Imported by 00_main.py; not run directly.
+# Run from: Legacy process API retained until Process 03 migration; not a researcher CLI.
 # ==============================================================================
 
 """Process 03 wrapper over shared transformation orchestration."""
@@ -17,7 +16,7 @@ from util.shared_experiment_execution import ExperimentCoordinator, latest_exper
 from util.shared_execution_profiles import ExecutionProfile, ExecutionSettings
 
 
-# Code constant: process identity validated by the numbered-wrapper loader.
+# Code constant: legacy process identity.
 PROCESS_NUMBER = 3
 
 

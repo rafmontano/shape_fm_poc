@@ -1149,7 +1149,7 @@ class OrdinaryManifestTests(unittest.TestCase):
         """Retain dependency checks while replacing clean-Git with byte identity."""
         from util.shared_distributed_execution import validate_cluster, EXPECTED_DASK_VERSION
 
-        manifest = {"src/python/00_main.py": "approved", "uv.lock": "locked"}
+        manifest = {"src/python/experiment.py": "approved", "uv.lock": "locked"}
         report = {
             "git_commit": "revision", "git_dirty": True, "source_manifest": manifest,
             "python_version": "3.12.14", "dask_version": EXPECTED_DASK_VERSION,

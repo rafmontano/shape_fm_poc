@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import socket
@@ -389,13 +390,26 @@ class ProcessStorage:
 
     @staticmethod
     def _validate_import(connection: duckdb.DuckDBPyConnection, configuration: Any) -> None:
-        """Later consumers may verify the import digest; Process 01 never enters here."""
-        from .p01_05_import_store import ImportStore
-
+        """Verify legacy predecessor integrity for unmigrated later processes only."""
         summary = json.loads(connection.execute(
             "SELECT summary FROM experiment_processes WHERE process_id=1"
         ).fetchone()[0])
-        if summary.get("output_fingerprint") != ImportStore.fingerprint(connection):
+        queries = [
+            """SELECT dataset_id,series_id,source_series_id,source_row,frequency,start_timestamp,
+                      target,observation_count,content_hash FROM series ORDER BY dataset_id,series_id""",
+            """SELECT dataset_id,series_id,window_id,split_name,train_start,train_end,
+                      validation_start,validation_end,test_start,test_end,horizon,boundary_convention
+               FROM evaluation_windows ORDER BY dataset_id,series_id,window_id""",
+        ]
+        digest = hashlib.sha256()
+        for query in queries:
+            cursor = connection.execute(query)
+            while rows := cursor.fetchmany(100):
+                for row in rows:
+                    digest.update(json.dumps(row, default=str, separators=(",", ":")).encode())
+                    digest.update(b"\n")
+            digest.update(b"\0")
+        if summary.get("output_fingerprint") != digest.hexdigest():
             raise RuntimeError("stored import output fingerprint mismatch")
 
     @staticmethod

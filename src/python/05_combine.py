@@ -4,8 +4,7 @@
 # Purpose: Expose Process 05 forecast-combination orchestration.
 # Inputs: Path to an experiment DuckDB containing complete Process 04 base forecasts and authoritative combination settings.
 # Outputs: Existing Process 05 summary plus candidate forecasts, component lineage, and restart state written by ExperimentCoordinator using shared combination utilities.
-# Called from: 00_main.py through its numbered-wrapper loader.
-# Run from: Imported by 00_main.py; not run directly.
+# Run from: Legacy process API retained until Process 05 migration; not a researcher CLI.
 # ==============================================================================
 
 """Process 05 wrapper over shared forecast-combination orchestration."""
@@ -17,7 +16,7 @@ from util.shared_experiment_execution import ExperimentCoordinator, latest_exper
 from util.shared_execution_profiles import ExecutionProfile, ExecutionSettings
 
 
-# Code constant: process identity validated by the numbered-wrapper loader.
+# Code constant: legacy process identity.
 PROCESS_NUMBER = 5
 
 

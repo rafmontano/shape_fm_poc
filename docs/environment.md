@@ -54,16 +54,25 @@ complete pinned local checkpoint; ordinary execution is offline.
 ## Normal researcher commands
 
 ```sh
-.venv/bin/python src/python/00_main.py plan
-.venv/bin/python src/python/00_main.py run --processes 1-6
-.venv/bin/python src/python/00_main.py status --format human
-.venv/bin/python src/python/00_main.py export
+.venv/bin/python src/python/experiment.py plan --processes 1
+.venv/bin/python src/python/experiment.py run --processes 1
+.venv/bin/python src/python/experiment.py status
 ```
 
 The active experiment uses fixed configuration and output paths; normal commands
 do not require experiment names or database paths. Run only the process range
 needed. A change to Process 03 is validated through Process 03, not through
 Process 06.
+
+During Increment A, request Process 01 explicitly: the new flow path for later
+processes and `export` is not available until those increments migrate. The
+source layout uses `experiment.py`, importable `p01_import` through
+`p06_evaluate` process packages, and shared adapters in `util/`. Later legacy
+scientific modules remain for migration, not as an alternative researcher CLI.
+Setup acquires canonical data through `p01_import.acquisition`; import execution
+itself reads the local pinned source and does not acquire a second dataset.
+MLflow records one resumable research run using operational state under
+`.runtime/mlflow/`; DuckDB alone decides accepted work and restart.
 
 ## Failure and restart
 

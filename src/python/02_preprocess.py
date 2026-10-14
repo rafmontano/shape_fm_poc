@@ -4,8 +4,7 @@
 # Purpose: Expose Process 02 planning and preprocessing orchestration.
 # Inputs: Path to an experiment DuckDB containing a completed Process 01 import and authoritative configuration.
 # Outputs: Existing Process 02 summary plus preprocessed series and restart state written by ExperimentCoordinator; invokes the 02_01 R substep through shared execution utilities.
-# Called from: 00_main.py through its numbered-wrapper loader.
-# Run from: Imported by 00_main.py; not run directly.
+# Run from: Legacy process API retained until Process 02 migration; not a researcher CLI.
 # ==============================================================================
 
 """Process 02 wrapper over experiment planning and shared preprocessing orchestration."""
@@ -17,7 +16,7 @@ from util.shared_experiment_execution import ExperimentCoordinator
 from util.shared_execution_profiles import ExecutionProfile, ExecutionSettings
 
 
-# Code constant: process identity validated by the numbered-wrapper loader.
+# Code constant: legacy process identity.
 PROCESS_NUMBER = 2
 
 

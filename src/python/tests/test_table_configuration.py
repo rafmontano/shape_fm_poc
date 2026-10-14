@@ -154,36 +154,6 @@ class TableConfigurationTests(unittest.TestCase):
         with self.assertRaises(ExperimentConfigurationError):
             resolve_experiment_configuration(changed)
 
-    def test_full_source_count_guard_checks_unsliced_arrow_rows(self):
-        """A shortened or enlarged source fails even when a bounded reader could succeed."""
-        import pyarrow as pa
-        import pyarrow.ipc as ipc
-        from util.p01_03_gift_eval_source import GiftEvalSource, SOURCE_ARROW_NAME
-        from util.shared_configuration import ImportValidationError
-
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / "daily").mkdir()
-            configuration = SimpleNamespace(source_directory=Path("."),
-                resolved={"data": {"dataset_name": "daily", "selection": {"expected_source_total": 3}}},
-                import_settings={"benchmark": {"frequency": "D"}, "max_series": 3})
-            source = GiftEvalSource(configuration, root)
-            for count in (2, 3, 4):
-                table = pa.table({"value": list(range(count))})
-                with pa.OSFile(str(source.path / SOURCE_ARROW_NAME), "wb") as stream:
-                    with ipc.new_stream(stream, table.schema) as writer:
-                        writer.write_table(table)
-                with patch("util.p01_03_gift_eval_source.iter_source_series", return_value=iter(())) as reader:
-                    if count == 3:
-                        self.assertEqual(list(source.records()), [])
-                        reader.assert_called_once_with(
-                            source.path, "D", 3, exclude=frozenset(),
-                        )
-                    else:
-                        with self.assertRaises(ImportValidationError):
-                            source.records()
-                        reader.assert_not_called()
-
     def test_plan_preserves_directional_tasks_and_adds_point_tasks(self):
         """The real planner adds two point tasks per instance and one paper-table task."""
         with tempfile.TemporaryDirectory() as directory:

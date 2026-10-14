@@ -21,14 +21,28 @@ changing workflow, storage or scientific behaviour, read:
 
 - One researcher entry point and six processes: Import, Preprocess, Transform,
   Forecast, Combine and Evaluate.
+- Five layers, bottom to top: DuckDB, Python/R science, Dask execution, Prefect
+  orchestration and MLflow research tracking. The mandatory hierarchy is
+  Experiment → Process → meaningful subflow → work group → atomic item, with
+  exactly the approved subflows and order in `docs/architecture.md`.
 - Prefect owns orchestration and operational attempts.
 - Dask owns eligible local/distributed scheduling.
 - Python/R application objects own scientific behaviour.
 - The selected coordinator alone writes DuckDB.
 - DuckDB owns accepted scientific state and restart; Prefect history does not.
 - GIFT-Eval is the sole canonical benchmark-data authority.
-- Process-only Python code belongs in its numbered process folder; `util/`
+- Target entry point is `src/python/experiment.py`; process flows are importable
+  `p01_import/flow.py` through `p06_evaluate/flow.py`. Shared adapters are
+  `util/runtime.py`, `util/distributed_execution.py` and `util/research_tracking.py`.
+- Process-only Python code belongs in its owning process folder; `util/`
   contains only code used by at least two processes.
+- Exactly two scientific databases: `results/experiment.duckdb` and
+  `results/windows.duckdb`; create the child only when Process 03 needs it.
+  Membership, reusable features and representations belong in the parent;
+  rolling modelling inputs belong in the child.
+- MLflow is coordinator-only: one resumable `ShapeFM` run per experiment, its ID
+  stored in the parent, supported SQLite under `.runtime/mlflow/`. Tracking is
+  non-scientific; failures warn without invalidating science.
 
 Do not implement a second scheduler, queue, retry system, transaction protocol,
 validation framework or model-specific experiment runner. Do not preserve
@@ -52,6 +66,11 @@ The current contracts are in [data](docs/data-contract.md),
 
 ## Implementation rules
 
+Behaviour not named in the approved MVP is absent by default. Do not add
+calibration, automatic tuning, benchmark/environment probes, speculative
+validation/conversion, compatibility paths, monitoring frameworks, worker or
+nested MLflow runs, autologging or system metrics. New capabilities need approval.
+
 Prefer the simplest cohesive implementation. Use objects when they own state or
 an interchangeable responsibility and small functions for stateless numerical
 work. Validate at external input, provider return, transaction and completion
@@ -66,6 +85,13 @@ Validate a changed execution path with focused tests and a fresh isolated
 durable unit. Do not routinely execute later processes.
 
 ## Documentation
+
+Audit all retained active first-party Python/R, not only new files: module
+responsibility, owning process and principal inputs/outputs; public purpose and
+contract; Prefect hierarchy and durable restart boundary; formula meaning,
+assumptions and authority. Comments explain why, not syntax or history. Use
+descriptive typed private helpers without ceremony. Exclude vendored/generated
+files and locks. See `docs/code-standards.md` for the complete standard.
 
 `docs/` contains current guidance only. Update the owning living document; do
 not add AMP instruction, acceptance, calibration, failure-history or checkpoint

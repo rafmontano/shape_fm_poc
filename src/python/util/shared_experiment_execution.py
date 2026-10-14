@@ -5122,9 +5122,25 @@ def experiment_status(
         ).fetchall()
         table_summary = None
         if configuration[0] >= 12:
-            from .p00_04_progress import ProgressReader
-
-            table_summary = ProgressReader.paper_summary(connection, experiment_id)
+            tables = {row[0] for row in connection.execute("SHOW TABLES").fetchall()}
+            count = None
+            report = None
+            if "paper_metric_candidates" in tables:
+                count = connection.execute(
+                    """SELECT count(*) FROM paper_metric_candidates
+                       WHERE experiment_id=? AND lambda_up IS NOT NULL""",
+                    [experiment_id],
+                ).fetchone()[0]
+            if "paper_table_reports" in tables:
+                row = connection.execute(
+                    "SELECT report FROM paper_table_reports WHERE experiment_id=?", [experiment_id]
+                ).fetchone()
+                report = json.loads(row[0]) if row else None
+            table_summary = {
+                "diagnostic": "m4_paper_tables_v1", "scope": "Daily-only Table2; no All",
+                "ex_post": True, "deployable": False, "sensitivity_candidates": count,
+                "report": report,
+            }
         return {
             "experiment_id": experiment_id,
             **({"paper_tables": table_summary} if configuration[0] >= 12 else {}),

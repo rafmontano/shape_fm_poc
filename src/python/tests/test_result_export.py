@@ -9,19 +9,16 @@
 
 import csv
 import hashlib
-import io
 import json
 import shutil
 import tempfile
 import unittest
 from copy import deepcopy
-from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
 import duckdb
 
-from tests.test_main import MAIN
 from tests.test_paper_tables import CONFIG, input_fixture, install_fixture
 from util.shared_configuration import canonical_json, json_fingerprint
 from util.shared_database import initialize_experiment_database, load_database_configuration
@@ -165,7 +162,7 @@ class ResultExportTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.directory = Path(temporary.name).resolve() / "results"
         self.directory.mkdir()
-        boundary = patch("util.p00_02_researcher_cli.RESULTS_ROOT", self.directory)
+        boundary = patch("util.p06_04_result_export.RESULTS_ROOT", self.directory)
         boundary.start()
         self.addCleanup(boundary.stop)
         self.database = self.directory / "fixture.duckdb"
@@ -188,8 +185,8 @@ class ResultExportTests(unittest.TestCase):
             self.assertEqual(c.execute("SELECT input_fingerprint,result_fingerprint FROM paper_table_reports").fetchall(), before)
             self.assertEqual(load_database_configuration(self.database, c).scientific_hash, configuration.scientific_hash)
 
-    def test_entry_export_parity_readonly_and_recreation(self):
-        """Exact stored CSV/JSON parity and byte-stable regeneration traverse the actual entry action."""
+    def test_export_parity_readonly_and_recreation(self):
+        """Exact stored CSV/JSON parity and byte-stable regeneration use the export owner."""
         before = self.database.read_bytes()
         connect = duckdb.connect
         with connect(str(self.database), read_only=True) as c:
@@ -198,10 +195,9 @@ class ResultExportTests(unittest.TestCase):
         (self.output / "notes.txt").write_text("preserve me")
         with patch("util.p06_04_result_export.duckdb.connect", wraps=connect) as opened, \
              patch("util.p06_01_table_flow.evaluate_table_batch", side_effect=AssertionError("science repeated")), \
-             patch("util.shared_workflow_orchestration.run_gate_compute_flow", side_effect=AssertionError("scheduled")), \
-             redirect_stdout(io.StringIO()) as stdout:
-            self.assertEqual(MAIN.main(["export", "--database", str(self.database)]), 0)
-        self.assertFalse(json.loads(stdout.getvalue())["export"]["scientific_execution"])
+             patch("util.shared_workflow_orchestration.run_gate_compute_flow", side_effect=AssertionError("scheduled")):
+            result = ResultExport(self.database).run()
+        self.assertFalse(result["scientific_execution"])
         self.assertTrue(all(call.kwargs.get("read_only") is True for call in opened.call_args_list))
         self.assertEqual(before, self.database.read_bytes())
         self.assertEqual((self.output / "notes.txt").read_text(), "preserve me")

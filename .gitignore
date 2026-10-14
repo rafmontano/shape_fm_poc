@@ -81,6 +81,7 @@ __pycache__/
 
 # Coordinator-local Prefect operational history (SQLite, logs, and memo state)
 /.prefect/
+/.runtime/
 
 # renv private library and transient state (activation files remain tracked)
 /renv/library/

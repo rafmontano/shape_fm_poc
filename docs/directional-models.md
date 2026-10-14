@@ -27,7 +27,8 @@ DTW is direct one-nearest-neighbour classification using
 
 - float64 length-64 standardized inputs;
 - squared-Euclidean local cost;
-- Sakoe-Chiba proportion `0.10` (effective width 6);
+- fixed Sakoe-Chiba proportion `0.10` (effective width 6), identical across
+  horizons 1–14;
 - one nearest reference per evaluation input;
 - the neighbour's stored labels reused for horizons 1–14; and
 - equal distances resolved by the lowest stable reference identity.
@@ -38,6 +39,16 @@ worker holds no database connection and the coordinator commits results.
 
 DTW's fitted artifact contains the reference identities/arrays/labels and fixed
 width once per frequency. Prediction loads it and never recalibrates.
+
+This is the authoritative active POC2/POC3 baseline, with the shared configured
+maximum of 10,000 reference windows. Horizon-calibrated, uncapped version 12 is
+historical only, preserved through Git history; it is not an active alternative.
+Do not run calibration comparison, tune for prior results or force exact
+historical equivalence. Same-current-code local/distributed parity checks
+execution integrity with identical inputs/settings under the approved numerical
+policy. Historical aggregate results need only be approximately similar and
+support the same interpretation. Record ordinary differences; only material
+changes to rankings, conclusions or interpretations require researcher review.
 
 ## Mantis/Random Forest baseline
 
@@ -79,7 +90,11 @@ deleting an artifact makes that scope eligible for training again.
 
 ## Parallel and restart behavior
 
-Prefect orders preparation, representation/training and prediction. Dask places
+Prefect preserves Process 04's approved order: individual forecasts,
+representations, decision-model fitting, directional predictions and forecast-pool
+acceptance. Membership/features/representations are stored in the parent
+`experiment.duckdb`; rolling modelling inputs are in `windows.duckdb`, created
+only when Process 03 needs it. Dask places
 eligible work across configured machines. Completed artifacts and predictions
 are skipped on restart. Worker/host/batch changes do not change model identity or
 predictions. The coordinator alone writes DuckDB and owns the authoritative
