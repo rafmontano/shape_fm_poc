@@ -27,9 +27,16 @@ def calculate_forecast_batch(items: list[WorkItem]) -> list[tuple[str, dict[str,
     """Return capability-appropriate native metrics; reject unusable provider output."""
     settings = items[0].payload["execution"]
     response = subprocess.run([str(CODE_ROOT / settings["environment"] / "bin/python"),
-        "-m", "p06_evaluate.gift"], input=json.dumps({"jobs": [item.payload["job"] for item in items]}),
+        "-X", "faulthandler", "-m", "p06_evaluate.gift"],
+        input=json.dumps({"jobs": [item.payload["job"] for item in items]}),
         cwd=CODE_ROOT, env={**os.environ, "PYTHONPATH": str(CODE_ROOT / "src/python")},
-        capture_output=True, text=True, check=True, timeout=settings["timeout"])
+        capture_output=True, text=True, timeout=settings["timeout"])
+    try:
+        response.check_returncode()
+    except subprocess.CalledProcessError as error:
+        error.add_note(f"GIFT-Eval batch: {[item.key for item in items]}")
+        error.add_note(response.stderr)
+        raise
     rows = json.loads(response.stdout)["results"]
     if {row["key"] for row in rows} != {item.key for item in items}:
         raise ValueError("GIFT-Eval returned unexpected atomic identities")
