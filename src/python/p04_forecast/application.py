@@ -202,7 +202,8 @@ class Application:
                 request = {"dataset_id": source["dataset_id"], "series_id": row["series_id"],
                     "official_position": source["source_row"], "horizon": source["horizon"], "forecast_ids": [model]}
                 items.append(WorkItem(key, {"input_key": input_key, "model": model, "provider": "archived",
-                    "request": request, "execution": self._execution("r")}))
+                    "request": request, "execution": self._execution("r")},
+                    resources=self.context.execution.resources("archived")))
         return self.store.plan("04.01", items)
 
     def accept_individual_forecasts(self, results: list[tuple[str, dict[str, Any]]]) -> None:

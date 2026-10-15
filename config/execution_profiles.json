@@ -5,10 +5,11 @@
     "max_in_flight": 24,
     "providers": {
       "chronos": {"device": "cuda", "resources": {"GPU": 1}},
-      "mantis": {"device": "cuda", "resources": {"GPU": 1}}
+      "mantis": {"device": "cuda", "resources": {"GPU": 1}},
+      "archived": {"resources": {"CPU": 1, "ARCHIVED": 1}}
     },
     "workers": [
-      {"machine": "macbook_pro", "count": 8, "memory_limit": "4GiB", "resources": "CPU=1"},
+      {"machine": "macbook_pro", "count": 8, "memory_limit": "4GiB", "resources": "CPU=1,ARCHIVED=1"},
       {"machine": "ubuntu_primary", "count": 15, "memory_limit": "8GiB", "resources": "CPU=1"},
       {"machine": "ubuntu_primary", "count": 1, "memory_limit": "16GiB", "resources": "GPU=1"}
     ]
