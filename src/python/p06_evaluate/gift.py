@@ -63,6 +63,10 @@ def evaluate(job: dict) -> dict:
 
 def main() -> None:
     """Return one bounded native batch of per-series evaluation results on stdout."""
+    from tqdm import tqdm
+
+    # Short-lived scorers must not leave a monitor racing interpreter shutdown.
+    tqdm.monitor_interval = 0
     payload = json.load(sys.stdin)
     print(json.dumps({"results": [evaluate(job) for job in payload["jobs"]]}, allow_nan=False))
 
