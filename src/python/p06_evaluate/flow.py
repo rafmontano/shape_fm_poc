@@ -43,8 +43,15 @@ def evaluate_directional_performance(context: ProcessContext, candidates: DataRe
 def materialise_diagnostic_surfaces(context: ProcessContext, candidates: DataRef) -> None:
     """Subflow level: accept each declared sensitivity/baseline candidate independently."""
     service = context.evaluate
-    _execute(context, "06.03", "Materialise diagnostic surfaces", lambda: service.pending_diagnostic_candidates(candidates),
-        service.calculate_diagnostic_candidate, service.accept_diagnostic_candidates, service.calculate_diagnostic_batch)
+    with context.tracking.subflow("06.03", "Materialise diagnostic surfaces"):
+        if context.state.is_subflow_accepted("06.03"):
+            return
+        series = service.diagnostic_series()
+        context.execution.run(subflow_id="06.03", items=service.pending_diagnostic_candidates(candidates, series),
+            calculate=service.calculate_diagnostic_candidate, calculate_batch=service.calculate_diagnostic_batch,
+            shared_inputs={"series": series}, accept=service.accept_diagnostic_candidates,
+            on_progress=context.tracking.progress)
+        context.state.accept_subflow("06.03")
 
 
 @flow(name="06.04 Select and retain diagnostics")
@@ -57,6 +64,7 @@ def select_and_retain_diagnostics(context: ProcessContext, candidates: DataRef) 
         selection = service.select_diagnostic_settings(candidates)
         context.execution.run(subflow_id="06.04", items=service.pending_selected_diagnostics(selection),
             calculate=service.calculate_selected_diagnostic, accept=service.accept_selected_diagnostics,
+            shared_inputs={"series": service.diagnostic_series()},
             on_progress=context.tracking.progress)
         selected = service.finalise_selected_diagnostics(selection)
         context.state.accept_subflow("06.04")

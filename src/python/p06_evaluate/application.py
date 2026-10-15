@@ -67,20 +67,19 @@ def calculate_directional_evaluation(item: WorkItem) -> dict[str, Any]:
             "evaluation_count": 1}
 
 
-def calculate_diagnostic_candidate(item: WorkItem) -> dict[str, Any]:
+def calculate_diagnostic_candidate(item: WorkItem, *, series: list[dict[str, Any]]) -> dict[str, Any]:
     """Return one aggregate sensitivity/baseline record, without persistence.
 
     Stored raw cohort and candidate settings follow docs/evaluation.md; realized
     actuals are allowed here because adjustment selection is ex-post diagnostic.
     """
-    return calculate_diagnostic_batch([item])[0][1]
+    return calculate_diagnostic_batch([item], series=series)[0][1]
 
 
-def calculate_diagnostic_batch(items: list[WorkItem]) -> list[tuple[str, dict[str, Any]]]:
+def calculate_diagnostic_batch(items: list[WorkItem], *, series: list[dict[str, Any]]) -> list[tuple[str, dict[str, Any]]]:
     """Call the accepted R paper-table/Oracle kernel for bounded candidate groups."""
-    payload = items[0].payload
     response = run_r("src/r/p06_evaluate/evaluation_worker.R", {
-        "frequency": "Daily", "series": payload["series"],
+        "frequency": "Daily", "series": series,
         "jobs": [item.payload["job"] for item in items]}, timeout=1800, threads=1)
     rows = response["results"]
     if len(rows) != len(items):
@@ -90,7 +89,7 @@ def calculate_diagnostic_batch(items: list[WorkItem]) -> list[tuple[str, dict[st
         job = item.payload["job"]
         if any(row[field] != job[field] for field in ("model", "lambda_up", "lambda_down")):
             raise ValueError("paper evaluator returned a different candidate")
-        if (len(row["correct_counts"]) != 14 or row["evaluation_count"] != len(payload["series"])
+        if (len(row["correct_counts"]) != 14 or row["evaluation_count"] != len(series)
                 or any(not 0 <= count <= row["evaluation_count"] for count in row["correct_counts"])
                 or any(value is not None and not math.isfinite(value) for value in row["metrics"].values())):
             raise ValueError(f"unusable diagnostic output: {item.key}")
@@ -100,13 +99,13 @@ def calculate_diagnostic_batch(items: list[WorkItem]) -> list[tuple[str, dict[st
     return results
 
 
-def calculate_selected_diagnostic(item: WorkItem) -> dict[str, Any]:
+def calculate_selected_diagnostic(item: WorkItem, *, series: list[dict[str, Any]]) -> dict[str, Any]:
     """Retain selected-only adjusted paths, without rescoring the accepted surface."""
     response = run_r("src/r/p06_evaluate/diagnostic_worker.R", {"jobs": [
-        {"key": item.key, "series": item.payload["series"], **item.payload["job"]}]},
+        {"key": item.key, "series": series, **item.payload["job"]}]},
         timeout=1800, threads=1)["results"][0]
     rows = response["adjusted_means"]
-    if (response["key"] != item.key or len(rows) != len(item.payload["series"])
+    if (response["key"] != item.key or len(rows) != len(series)
             or any(len(row["mean"]) != 14 or not all(math.isfinite(v) for v in row["mean"]) for row in rows)):
         raise ValueError(f"unusable selected diagnostic: {item.key}")
     return {"candidate_id": item.payload["candidate_id"], "model": item.key, "adjusted_means": rows}
@@ -156,7 +155,8 @@ class Application:
                 "directions": {r["model"]: r["labels"] for r in directions.values() if r["input_key"] == key}})
         return output
 
-    def _paper_series(self) -> list[dict[str, Any]]:
+    def diagnostic_series(self) -> list[dict[str, Any]]:
+        """Read the unchanged raw cohort once for shared diagnostic transport."""
         return [{"series_id": s["series_id"], "context": s["context"], "actual": s["actual"],
                  "means": {m: r["mean"] for m, r in s["forecasts"].items()}, "directions": s["directions"]}
                 for s in self._series()]
@@ -195,9 +195,8 @@ class Application:
         """Commit complete per-origin directional count vectors."""
         self.store.accept("06.02", results)
 
-    def pending_diagnostic_candidates(self, candidates: DataRef) -> list[WorkItem]:
+    def pending_diagnostic_candidates(self, candidates: DataRef, series: list[dict[str, Any]]) -> list[WorkItem]:
         """Plan the declared seven baselines and 1,050 fixed diagnostic candidates."""
-        series = self._paper_series()
         jobs = [{"model": model, "lambda_up": None, "lambda_down": None, "retain_means": False}
                 for model in ("naive2", "m4_fforma", "m4_smyl", "chronos_2", "smyl_oracle",
                               "directional_dtw", "directional_mantis_rf")]
@@ -213,7 +212,7 @@ class Application:
         fingerprint = json_fingerprint(series)
         return self.store.plan("06.03", [WorkItem(
             f"Daily/{job['model']}/{job['lambda_up']}/{job['lambda_down']}",
-            {"job": job, "series": series, "input_fingerprint": fingerprint}) for job in jobs])
+            {"job": job, "input_fingerprint": fingerprint}) for job in jobs])
 
     def accept_diagnostic_candidates(self, results: list[tuple[str, dict[str, Any]]]) -> None:
         """Accept each aggregate surface candidate independently for restart."""
@@ -235,8 +234,7 @@ class Application:
 
     def pending_selected_diagnostics(self, selection: dict[str, dict[str, Any]]) -> list[WorkItem]:
         """Plan only selected adjusted paths and the declared ex-post Oracle output."""
-        series = self._paper_series()
-        return self.store.plan("06.04", [WorkItem(model, {"series": series,
+        return self.store.plan("06.04", [WorkItem(model, {
             "candidate_id": row["candidate_id"], "job": {k: row[k] for k in ("model", "lambda_up", "lambda_down")}})
             for model, row in selection.items() if row["lambda_up"] is not None or model == "m4_smyl_oracle"])
 
