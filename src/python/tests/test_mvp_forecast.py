@@ -4,6 +4,8 @@ Asymmetric queries and tied references check horizon reuse, stable identity ties
 and independent RF horizon labels through the real pinned provider environment.
 """
 
+import base64
+import hashlib
 import json
 import tempfile
 import unittest
@@ -91,14 +93,16 @@ class MVPForecastTests(unittest.TestCase):
                 {"identity": "z-tied", "values": query, "labels": [1 - value for value in labels]},
                 {"identity": "b-other", "values": other, "labels": [0] * 14},
                 {"identity": "a-tied", "values": query, "labels": labels}]})
+        content = base64.b64decode(fitted["artifact"])
+        identity = hashlib.sha256(content).hexdigest()
         result = native_request("classifiers", settings, {"command": "predict", "model": "directional_dtw",
-            "artifacts": [fitted["artifact"]], "values": query})
+            "artifact_ids": [identity], "values": query}, artifacts={identity: content})
         self.assertEqual(result["labels"], labels)
         self.assertEqual(result["nearest_reference"], "a-tied")
         self.assertEqual(result["effective_width"], 6)
         self.assertEqual(result["distance"], 0.0)
         result = native_request("classifiers", settings, {"command": "predict", "model": "directional_dtw",
-            "artifacts": [fitted["artifact"]], "values": other})
+            "artifact_ids": [identity], "values": other}, artifacts={})
         self.assertEqual(result["nearest_reference"], "b-other")
         self.assertEqual(result["labels"], [0] * 14)
 
@@ -108,15 +112,19 @@ class MVPForecastTests(unittest.TestCase):
         settings = {"environment": "environments/classifiers/.venv", "timeout": 120}
         values = [[float(sign * (i % 7 + 2)) for i in range(256)]
                   for sign in [-1] * 12 + [1] * 12]
-        artifacts = []
+        artifacts = {}
+        artifact_ids = []
         for horizon in range(14):
             labels = [horizon % 2] * 12 + [1 - horizon % 2] * 12
             result = native_request("classifiers", settings, {"command": "fit", "model": "directional_mantis_rf",
                 "values": values, "labels": labels,
                 "parameters": document["classifiers"]["random_forest"]["parameters"]})
-            artifacts.append(result["artifact"])
+            content = base64.b64decode(result["artifact"])
+            identity = hashlib.sha256(content).hexdigest()
+            artifacts[identity] = content
+            artifact_ids.append(identity)
         for index, expected in ((0, [h % 2 for h in range(14)]),
                                 (23, [1 - h % 2 for h in range(14)])):
             result = native_request("classifiers", settings, {"command": "predict", "model": "directional_mantis_rf",
-                "values": values[index], "artifacts": artifacts})
+                "values": values[index], "artifact_ids": artifact_ids}, artifacts=artifacts if index == 0 else {})
             self.assertEqual(result["labels"], expected)

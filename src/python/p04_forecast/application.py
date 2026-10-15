@@ -99,10 +99,10 @@ def calculate_decision_model(item: WorkItem) -> dict[str, Any]:
             "reference_keys": item.payload["reference_keys"]}
 
 
-def calculate_directional_prediction(item: WorkItem) -> dict[str, Any]:
+def calculate_directional_prediction(item: WorkItem, *, artifacts: dict[str, bytes]) -> dict[str, Any]:
     """Return complete binary labels from accepted artifacts, never fit on queries."""
     response = native_request("classifiers", item.payload["execution"],
-        {"command": "predict", **item.payload["request"]})
+        {"command": "predict", **item.payload["request"]}, artifacts=artifacts)
     labels = response["labels"]
     if len(labels) != 14 or any(type(value) is not int or value not in (0, 1) for value in labels):
         raise ValueError(f"invalid directional labels: {item.key}")
@@ -273,17 +273,22 @@ class Application:
                 "sha256": hashlib.sha256(content).hexdigest()}))
         self.store.accept("04.03", accepted)
 
-    def _artifact(self, row: dict[str, Any]) -> str:
+    def _artifact(self, row: dict[str, Any]) -> bytes:
         content = (self.context.request.root / row["path"]).read_bytes()
         if len(content) != row["size"] or hashlib.sha256(content).hexdigest() != row["sha256"]:
             raise ValueError(f"fitted artifact integrity mismatch: {row['path']}")
-        return base64.b64encode(content).decode("ascii")
+        return content
+
+    def directional_artifacts(self, items: list[WorkItem]) -> dict[str, bytes]:
+        """Read verified accepted fitted bytes once for the pending prediction plan."""
+        required = {key for item in items for key in item.payload["request"]["artifact_ids"]}
+        return {row["sha256"]: self._artifact(row) for row in self.store.rows("04.03").values()
+                if row["sha256"] in required}
 
     def pending_directional_predictions(self, modelling: DataRef) -> list[WorkItem]:
         """Plan complete official vectors using accepted model artifacts and no actuals."""
         inputs = self.context.windows().rows("03.02")
         models, representations = self.store.rows("04.03"), self.store.rows("04.02")
-        artifacts = {key: self._artifact(row) for key, row in models.items()}
         items = []
         for input_key, row in inputs.items():
             if row["kind"] != "official":
@@ -292,7 +297,7 @@ class Application:
                 key = f"{input_key}/{model}"
                 model_keys = [f"{row['frequency']}/{model}/{h}" for h in
                               (["all"] if model == "directional_dtw" else range(1, 15))]
-                request = {"model": model, "artifacts": [artifacts[k] for k in model_keys],
+                request = {"model": model, "artifact_ids": [models[k]["sha256"] for k in model_keys],
                     "values": row["values"] if model == "directional_dtw" else representations[input_key]["values"]}
                 items.append(WorkItem(key, {"input_key": input_key, "model": model, "model_keys": model_keys,
                     "request": request, "execution": self._execution("classifiers")}))

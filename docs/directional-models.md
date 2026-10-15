@@ -114,3 +114,10 @@ are skipped on restart. Worker/host/batch/hardware/backend are operational
 provenance, not model identity or grounds to recalculate accepted predictions.
 The coordinator alone writes DuckDB and owns the authoritative
 model-file copy.
+
+Prediction work items reference fitted artifacts by their accepted SHA-256.
+The shared executor scatters the verified immutable bytes once per invocation,
+rather than embedding them in every task graph. Each native provider session
+registers and loads each required artifact once; subsequent predictions send
+only artifact references and query values. These caches are disposable transport
+state, not another fitted-model store or a scientific restart authority.

@@ -9,17 +9,12 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import importlib.metadata
 import json
 import pickle
 import sys
-from functools import lru_cache
 from typing import Any
-
-
-@lru_cache(maxsize=64)
-def _fitted_model(artifact: str) -> Any:
-    return pickle.loads(base64.b64decode(artifact))
 
 
 def fit_directional(request: dict[str, Any]) -> dict[str, Any]:
@@ -48,7 +43,7 @@ def fit_directional(request: dict[str, Any]) -> dict[str, Any]:
             "provider": {package: importlib.metadata.version(package), "numpy": np.__version__}}
 
 
-def predict_directional(request: dict[str, Any]) -> dict[str, Any]:
+def predict_directional(request: dict[str, Any], models: dict[str, Any]) -> dict[str, Any]:
     """Predict one complete horizon vector from accepted fitted state, never refit.
 
     Direct aeon squared-Euclidean DTW at .10 selects one nearest reference; sorted
@@ -58,7 +53,7 @@ def predict_directional(request: dict[str, Any]) -> dict[str, Any]:
     import numpy as np
     if request["model"] == "directional_dtw":
         from aeon.distances import dtw_distance
-        model = _fitted_model(request["artifacts"][0])
+        model = models[request["artifact_ids"][0]]
         query = np.asarray(request["values"], dtype=np.float64)
         distances = [float(dtw_distance(query, reference, window=model["window"]))
                      for reference in model["values"]]
@@ -69,8 +64,8 @@ def predict_directional(request: dict[str, Any]) -> dict[str, Any]:
     if request["model"] != "directional_mantis_rf":
         raise ValueError(f"unsupported directional model: {request['model']}")
     query = np.asarray([request["values"]], dtype=np.float32)
-    return {"labels": [int(_fitted_model(artifact).predict(query)[0])
-                       for artifact in request["artifacts"]]}
+    return {"labels": [int(models[identity].predict(query)[0])
+                       for identity in request["artifact_ids"]]}
 
 
 def serve(kind: str, device: str) -> None:
@@ -80,6 +75,7 @@ def serve(kind: str, device: str) -> None:
     coordinator-supplied accepted inputs/artifacts, not database connections.
     """
     provider = None
+    models = {}
     if kind == "mantis":
         import torch
         # The directional contract requires float32, not hardware-dependent
@@ -98,10 +94,17 @@ def serve(kind: str, device: str) -> None:
                 if kind == "mantis":
                     response = {"vectors": provider.transform(request["values"]).tolist(),
                                 "provider": provider.describe()}
+                elif request["command"] == "register_artifact":
+                    content = base64.b64decode(request["artifact"], validate=True)
+                    if hashlib.sha256(content).hexdigest() != request["sha256"]:
+                        raise ValueError("fitted artifact integrity mismatch")
+                    models[request["sha256"]] = pickle.loads(content)
+                    del content
+                    response = {"type": "registered", "sha256": request["sha256"]}
                 elif request["command"] == "fit":
                     response = fit_directional(request)
                 else:
-                    response = predict_directional(request)
+                    response = predict_directional(request, models)
                 print(json.dumps(response), flush=True)
             except Exception as error:
                 print(json.dumps({"error": f"{type(error).__name__}: {error}"}), flush=True)

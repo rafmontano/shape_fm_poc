@@ -30,8 +30,9 @@ class GroupResult:
 
 
 @task(name="Calculate scientific work group", cache_policy=NO_CACHE, persist_result=False)
-def calculate_group(items: list[WorkItem], calculate: Callable[[WorkItem], dict[str, Any]],
-                    calculate_batch: Callable | None = None) -> GroupResult:
+def calculate_group(items: list[WorkItem], calculate: Callable[..., dict[str, Any]],
+                    calculate_batch: Callable | None = None,
+                    shared_inputs: dict[str, Any] | None = None) -> GroupResult:
     """Work-group task: calculate atomic items without scientific persistence.
 
     The coordinator commits each returned completed item before surfacing a later
@@ -40,7 +41,7 @@ def calculate_group(items: list[WorkItem], calculate: Callable[[WorkItem], dict[
     if calculate_batch is not None:
         results = []
         try:
-            for result in calculate_batch(items):
+            for result in calculate_batch(items, **(shared_inputs or {})):
                 results.append(result)
             return GroupResult(results)
         except Exception as error:
@@ -48,7 +49,7 @@ def calculate_group(items: list[WorkItem], calculate: Callable[[WorkItem], dict[
     results = []
     for item in items:
         try:
-            results.append((item.key, calculate(item)))
+            results.append((item.key, calculate(item, **(shared_inputs or {}))))
         except Exception as error:
             return GroupResult(results, error, item.key)
     return GroupResult(results)
@@ -79,11 +80,13 @@ class WorkGroupExecutor:
             self.cluster.close()
 
     def run(self, *, subflow_id: str, items: list[WorkItem], calculate: Callable,
-            accept: Callable, on_progress: Callable, calculate_batch: Callable | None = None) -> None:
+            accept: Callable, on_progress: Callable, calculate_batch: Callable | None = None,
+            shared_inputs: dict[str, Any] | None = None) -> None:
         """Execute only pending atomic keys and preserve commits across failure.
 
         Completion progress is derived from the owning database after commits.
         Periodic tracking is separately gated by the stored experiment setting.
+        Immutable shared inputs are scattered once, not embedded in each task.
         """
         started = time.monotonic()
         repository = self.context.windows() if subflow_id == "03.02" else self.context.repository
@@ -116,7 +119,7 @@ class WorkGroupExecutor:
         profile = self.context.request.execution_profile
         if profile == "sequential_safe":
             for group in groups:
-                receive(calculate_group.fn(group, calculate, calculate_batch))
+                receive(calculate_group.fn(group, calculate, calculate_batch, shared_inputs))
         elif groups:
             settings = self.settings
             address = settings.get("scheduler_address")
@@ -132,6 +135,9 @@ class WorkGroupExecutor:
                           "processes": False, "dashboard_address": None,
                           "local_directory": str(CODE_ROOT / ".runtime/dask")})))
             with runner:
+                shared = shared_inputs
+                if shared_inputs:
+                    [shared] = runner.client.scatter([shared_inputs], hash=False, broadcast=False)
                 limit = int(settings.get("max_in_flight", 4))
                 for offset in range(0, len(groups), limit):
                     futures = []
@@ -141,7 +147,7 @@ class WorkGroupExecutor:
                         with dask.annotate(resources=resources):
                             futures.append(runner.submit(calculate_group,
                                 parameters={"items": group, "calculate": calculate,
-                                            "calculate_batch": calculate_batch}))
+                                            "calculate_batch": calculate_batch, "shared_inputs": shared}))
                     first_error = None
                     for future in as_completed(futures):
                         try:

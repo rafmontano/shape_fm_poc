@@ -56,9 +56,15 @@ def fit_decision_models(context: ProcessContext, modelling: DataRef) -> None:
 def materialise_directional_predictions(context: ProcessContext, modelling: DataRef) -> None:
     """Meaningful-subflow level: accept complete label vectors by model/input key."""
     service = context.forecast
-    _execute(context, "04.04", "Materialise directional predictions", modelling,
-        service.pending_directional_predictions, service.calculate_directional_prediction,
-        service.accept_directional_predictions)
+    with context.tracking.subflow("04.04", "Materialise directional predictions"):
+        if context.state.is_subflow_accepted("04.04"):
+            return
+        items = service.pending_directional_predictions(modelling)
+        context.execution.run(subflow_id="04.04", items=items,
+            calculate=service.calculate_directional_prediction,
+            shared_inputs={"artifacts": service.directional_artifacts(items)},
+            accept=service.accept_directional_predictions, on_progress=context.tracking.progress)
+        context.state.accept_subflow("04.04")
 
 
 @flow(name="04.05 Accept forecast pool")

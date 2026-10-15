@@ -7,6 +7,7 @@ return to the coordinator. No provider receives DuckDB writers or MLflow state.
 from __future__ import annotations
 
 import atexit
+import base64
 import json
 import os
 import select
@@ -35,6 +36,7 @@ class NativeSession:
         self.ready = self._receive()
         if self.ready.get("type") != "ready":
             raise RuntimeError(f"native provider did not become ready: {self.ready}")
+        self.registered_artifacts: set[str] = set()
 
     def _receive(self) -> dict[str, Any]:
         if not select.select([self.process.stdout], [], [], self.timeout)[0]:
@@ -47,8 +49,18 @@ class NativeSession:
             raise RuntimeError(response["error"])
         return response
 
-    def request(self, request: dict[str, Any]) -> dict[str, Any]:
+    def request(self, request: dict[str, Any], *, artifacts: dict[str, bytes] | None = None) -> dict[str, Any]:
         """Return one native result without changing inputs or retrying failures."""
+        for identity in request.get("artifact_ids", []):
+            if identity not in self.registered_artifacts:
+                registration = {"command": "register_artifact", "sha256": identity,
+                    "artifact": base64.b64encode(artifacts[identity]).decode("ascii")}
+                self.process.stdin.write(json.dumps(registration) + "\n")
+                self.process.stdin.flush()
+                response = self._receive()
+                if response != {"type": "registered", "sha256": identity}:
+                    raise RuntimeError(f"native artifact registration failed: {response}")
+                self.registered_artifacts.add(identity)
         self.process.stdin.write(json.dumps(request) + "\n")
         self.process.stdin.flush()
         return self._receive()
@@ -66,7 +78,8 @@ class NativeSession:
 _sessions = threading.local()
 
 
-def native_request(kind: str, settings: dict[str, Any], request: dict[str, Any]) -> dict[str, Any]:
+def native_request(kind: str, settings: dict[str, Any], request: dict[str, Any], *,
+                   artifacts: dict[str, bytes] | None = None) -> dict[str, Any]:
     """Reuse the native session owned by this calculation worker and environment."""
     command = [str(CODE_ROOT / settings["environment"] / "bin/python")]
     if kind == "chronos":
@@ -82,4 +95,4 @@ def native_request(kind: str, settings: dict[str, Any], request: dict[str, Any])
         session = NativeSession(command, settings["timeout"])
         _sessions.providers[key] = session
         atexit.register(session.close)
-    return _sessions.providers[key].request(request)
+    return _sessions.providers[key].request(request, artifacts=artifacts)
