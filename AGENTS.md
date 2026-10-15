@@ -13,9 +13,7 @@ changing workflow, storage or scientific behaviour, read:
 - [architecture](docs/architecture.md);
 - [code standards](docs/code-standards.md);
 - [working agreement](docs/working-agreement.md);
-- the relevant scientific contract; and
-- [POC2-X01](docs/poc2-x01-architecture-transformation.md) while the current
-  transformation is active.
+- the relevant scientific contract.
 
 ## Standing architecture
 
@@ -70,7 +68,9 @@ The current contracts are in [data](docs/data-contract.md),
 
 ## Implementation rules
 
-Behaviour not named in the approved MVP is absent by default. Do not add
+Scope is closed by default. Behaviour not named in the approved MVP is absent.
+If an unrequested capability is genuinely required to deliver approved scope,
+explain why and obtain researcher approval before implementing it. Do not add
 calibration, automatic tuning, benchmark/environment probes, speculative
 validation/conversion, compatibility paths, monitoring frameworks, worker or
 nested MLflow runs, autologging or system metrics. New capabilities need approval.
@@ -88,13 +88,9 @@ Validate a changed execution path with focused tests and a fresh isolated
 100-series run only through the affected process. Prove restart at the smallest
 durable unit. Do not routinely execute later processes.
 
-X01 A–F execution is complete; D is researcher-accepted and the complete candidate
-awaits final researcher review. Use canonical root databases, models and outputs;
-temporary test packages are not final delivery. Do not rerun Processes 01–06,
-calculate scientific items, restart or regenerate outputs for completion/review.
-Final review presents produced tables and figures, with no automatic historical
-comparison or second scientific workload.
-Stop for a material final-result issue only when the researcher identifies it.
+The architecture transformation is researcher-accepted. Use canonical root
+databases, models and outputs; temporary test packages are not final delivery.
+Do not recalculate accepted scientific items merely to validate implementation.
 
 ## Documentation
 

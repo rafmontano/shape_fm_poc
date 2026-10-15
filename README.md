@@ -44,8 +44,7 @@ use fixed paths:
 Use only the process range needed. Existing accepted items are skipped on
 restart. The completed 100-series experiment is delivered at the canonical root
 paths below. Inspect it with `status` or open its existing tables/figures; do not
-rerun, restart or regenerate it for X01 review. Increment D is researcher-accepted;
-the complete A–F candidate awaits final researcher review, not another workload.
+recalculate accepted science merely to inspect it.
 
 ## Repository layout
 
@@ -89,7 +88,5 @@ no review workspace or symlink is needed by the delivered experiment.
 
 ## Current work
 
-POC2 scientific Part B is accepted; POC2 remains open for the exit backlog. The
-active item is [POC2-X01](docs/poc2-x01-architecture-transformation.md), which is
-simplifying the six processes without changing accepted science. See
-[POC2 scope and status](docs/poc2.md).
+POC2 scientific Part B and the architecture transformation are accepted. POC2
+remains open for the reduced exit backlog in [POC2 scope and status](docs/poc2.md).

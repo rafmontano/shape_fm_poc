@@ -13,6 +13,22 @@ to reproduce production-enterprise ceremony.
 
 When rules conflict, stop and ask the researcher rather than silently choosing.
 
+## MVP scope control
+
+Scope is closed by default. The MVP contains only outcomes and capabilities the
+researcher has approved. An unrequested feature, check, abstraction, report or
+operational mechanism is not part of the implementation merely because it might
+be useful.
+
+If an unrequested capability is genuinely necessary to deliver an approved
+outcome, explain the need, effect and simplest option to the researcher and wait
+for scope approval before implementing it. Do not disguise scope expansion as
+an implementation detail. Optional robustness, future reuse and hypothetical
+users are not necessity.
+
+The default response to a nice-to-have is omission. The default response to a
+new material choice is a recommendation, not code.
+
 ## Simplicity rule
 
 Add a file, class, wrapper, validation or state record only when it owns a clear
@@ -31,6 +47,19 @@ Remove:
 
 Inactive or superseded code is removed. Git history preserves it for possible
 future reuse.
+
+## Research value and structural evidence
+
+Code exists to produce trustworthy research results. A change adds value when it
+improves approved scientific capability, necessary reproducibility, clarity,
+restart, scalability or execution efficiency. Code volume, test count and
+validation count are not measures of quality.
+
+For a material architecture change, report before/after files, folders, lines
+and active call paths. These measurements expose whether complexity actually
+moved or disappeared; they are evidence, not reduction quotas. Acceptance also
+requires that the researcher can follow the process flow and locate its inputs,
+state, models and outputs without reconstructing implementation history.
 
 ## Object and function design
 
@@ -124,6 +153,23 @@ Runtime-derived endpoints and paths are operational values. They do not enter
 scientific identity. After experiment creation, the resolved configuration in
 DuckDB is authoritative.
 
+## Repository and artifact hygiene
+
+- Keep one obvious canonical location for configuration, source data, scientific
+  databases, fitted models, outputs and runtime state.
+- Use stable semantic filenames. Experiment identity, date and execution detail
+  belong inside DuckDB or MLflow, not duplicated in paths.
+- Python and R mirror the approved process ownership and naming conventions.
+  A process owns its code; `util/` is reserved for code used by two or more
+  processes; tests stay in the language's central test folder.
+- Generated packaging metadata, IDE state, caches, scratch work, runtime logs and
+  obsolete experiment copies are not authored source and do not remain in the
+  visible project structure.
+- Derived CSV and figure outputs live only under `results/`; fitted artifacts live
+  only under `models/`; operational state lives only under `.runtime/`.
+- Do not retain compatibility copies, aliases or historical folders in the active
+  tree. Git is the archive for removed source and documentation.
+
 ## Validation policy
 
 Validate once at a real trust boundary. Normal checks are proportional:
@@ -173,7 +219,7 @@ Use the smallest test that proves the changed behaviour:
 2. a fresh isolated 100-series run only through the affected process; and
 3. interruption/restart at the smallest durable boundary when execution changed.
 
-The completed X01 experiment is authoritative in the canonical root locations.
+The accepted architecture experiment is authoritative in the canonical root locations.
 Completion checks are non-scientific: compilation, mocked interfaces and read-only
 inspection. Do not rerun processes, scientific calculations, no-new-work restarts
 or output generation for final review. Temporary test roots must clean up and

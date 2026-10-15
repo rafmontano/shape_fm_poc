@@ -67,11 +67,9 @@ do not require experiment names or database paths. Run only the process range
 needed. A change to Process 03 is validated through Process 03, not through
 Process 06.
 
-Increment D (`94e12b3`) is researcher-accepted. E/F have completed their bounded
-100-series continuations; the complete X01 candidate awaits researcher review.
-Do not rerun any scientific process, restart or output regeneration for that
-review. The accepted experiment is in canonical `results/`, `models/` and
-`.runtime/mlflow/`, not a review workspace. The normal entry point defaults to
+The accepted experiment is in canonical `results/`, `models/` and
+`.runtime/mlflow/`, not a review workspace. Do not recalculate accepted science
+merely to inspect or review it. The normal entry point defaults to
 these repository-root locations. The source layout uses `experiment.py`,
 importable `p01_import` through `p06_evaluate` process packages, and shared
 adapters in `util/`; superseded execution paths have been retired.

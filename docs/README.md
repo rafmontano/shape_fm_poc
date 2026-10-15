@@ -13,7 +13,6 @@ calibration outputs and earlier diagrams.
 | Coding and workflow rules | [Code standards](code-standards.md) |
 | Roles, approvals and hand-offs | [Working agreement](working-agreement.md) |
 | Current POC2 scope and status | [POC2](poc2.md) |
-| Current architecture transformation | [POC2-X01](poc2-x01-architecture-transformation.md) |
 | Data, windows and transformations | [Data contract](data-contract.md) |
 | Experiment configuration, storage and restart | [Experiment configuration](experiment-configuration.md) |
 | Forecast model contract and pool | [Forecast contract](forecast-black-box-contract.md) |

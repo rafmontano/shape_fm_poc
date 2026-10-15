@@ -23,6 +23,12 @@ An approval covers only its stated scope. Passing tests is not researcher
 acceptance. When new evidence reopens a decision, update the living contract and
 record the accepted result; do not preserve competing current rules.
 
+The MVP scope is closed by default. If delivery appears to require an outcome or
+capability not already approved, the implementer presents the need and simplest
+option for researcher approval before writing it. Routine implementation choices
+may resolve how approved behaviour works; they may not enlarge what the system
+does.
+
 ## Communication
 
 - Lead with the outcome, risk or decision needed.

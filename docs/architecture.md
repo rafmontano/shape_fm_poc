@@ -176,6 +176,14 @@ reference. Unlisted MVP behaviour is absent by default: no calibration, tuning,
 speculative validation/conversion, benchmark/environment probes, compatibility
 paths or monitoring frameworks. New capabilities need researcher approval.
 
+## MVP scope boundary
+
+The architecture is scope-closed: it implements the researcher-approved MVP and
+does not silently grow through implementation choices. If an unrequested
+capability is necessary to deliver an approved outcome, its need and simplest
+form are presented for researcher approval before implementation. Optional
+generality, defensive ceremony and anticipated future use remain outside scope.
+
 ## Source ownership
 
 ```text
@@ -228,5 +236,5 @@ only operational model-path fields in DuckDB change.
 - **Scientifically stable:** operational topology never changes scientific
   identity or triggers recalculation of accepted results.
 
-The active simplification work is governed by
-[POC2-X01](poc2-x01-architecture-transformation.md).
+This architecture is the accepted baseline for POC2, later ShapeFM POCs and
+future research projects unless the researcher explicitly approves a change.

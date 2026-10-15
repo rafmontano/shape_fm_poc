@@ -28,30 +28,30 @@ reproduction, not improving forecast accuracy.
 POC2 Part B is scientifically accepted: the reproduced results were sufficiently
 similar for the POC2 objective, all 1,057 sensitivity candidates completed, the
 tables/exports completed, and a no-new-work restart passed. This accepts the
-research result, not the current software structure.
+research result; the architecture transformation was accepted separately.
 
-POC2 remains open for the exit backlog:
+The five-layer architecture transformation is researcher-accepted. It delivered
+the approved workflow hierarchy, readable process ownership, canonical paths,
+minimal validation boundaries, restartable item state and pragmatic MLflow
+visibility. POC2 remains open for the reduced exit backlog:
 
 | ID | Exit item | Required outcome |
 | --- | --- | --- |
-| X01 | Five-layer MVP architecture | Implement the mandatory approved hierarchy/subflow order and DuckDB/Python-R/Dask/Prefect/MLflow ownership; remove superseded paths and speculative behaviour. Open for researcher review. |
-| X08 | Exact visual reproduction | Match approved names, fonts, colours, dimensions and separate figure files; discuss any discrepancy. |
-| X18 | Researcher usability and workspace | One obvious command, readable progress, fixed paths and a clean comprehensible root/results layout. |
-| X19 | Failure containment | Bounded retry and restart from committed work without repeating completed science. |
-| X20 | Ubuntu R-worker qualification | Diagnose and qualify the native R path independently of scientific acceptance. |
-| QA | Standards and reproducibility | Verify current contracts, six-process ownership, clean installation and reproduction from an empty generated workspace. |
+| 06 | Pragmatic execution tuning | Use observed utilisation and throughput to select sensible worker settings without making host contribution a scientific gate. |
+| 07 | Golden-output inventory | Finish mapping every in-scope POC2 table, CSV and figure to its current output and owner. |
+| 08 | Output reproduction | Match approved names, fonts, colours, dimensions, layouts and separate figure files; discuss any material discrepancy. |
+| 10 | Standards QA | Complete the remaining output, documentation and reproducibility checks against the accepted standards. |
+| 12 | Clean-room reconstruction | Recreate the accepted POC2 experiment and outputs from a clean checkout and empty generated workspace. |
+| 14 | Final documentation and sync | Record final evidence and limitations, obtain sign-off and synchronize Mac, Ubuntu and GitHub. |
+| 19 | Failure containment | Confirm restart preserves committed work; decide whether an additional bounded transient retry adds MVP value. |
+| 20 | Ubuntu R-worker qualification | Diagnose and qualify the native R path independently of scientific acceptance. |
 
 The researcher decides whether newly found work belongs to POC2 or the POC3
 backlog. Execution logs are not living documentation.
 
-The cleanup checkpoint `c498dc6` and its recorded structural baseline are
-preserved in [X01](poc2-x01-architecture-transformation.md). Increments A–C retain
-their recorded status; D (`94e12b3`) is researcher-accepted. E/F have completed
-their process-bounded continuations and the complete candidate is ready for
-researcher review. Canonical DuckDB state, fitted artifacts, tables, figures and
-the existing MLflow run are delivered at the repository root. Do not rerun
-science, restart, regenerate outputs or compare executions for this review.
-Approval of the five-layer design does not close X01 or POC2.
+Canonical DuckDB state, fitted artifacts, tables, figures and the existing MLflow
+run are delivered at the repository root. Git history preserves the transformation
+evidence; it is not retained as a competing living design document.
 
 ## Exit criteria
 
@@ -64,5 +64,4 @@ after explicit approval.
 Present final produced tables/figures to the researcher; do not run automatic
 historical comparison or a second scientific workload for final review. Stop for
 a material final-result issue only when the researcher identifies it. No
-calibration or tuning to prior results. X01 remains open until final researcher
-acceptance.
+calibration or tuning to prior results.
