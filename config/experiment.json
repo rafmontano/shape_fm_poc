@@ -1,9 +1,9 @@
 {
   "configuration_version": 12,
   "experiment": {
-    "name": "poc2_m4_daily_100_paper_tables",
-    "date": "2026-10-07",
-    "description": "Bounded Daily paper-table diagnostics with unchanged directional and point providers; not historical numerical reproduction."
+    "name": "poc2_m4_daily",
+    "date": "2026-10-15",
+    "description": "Full M4 Daily POC2 end-to-end architecture acceptance run"
   },
   "reproducibility": {"seed": 1234},
   "data": {
@@ -19,7 +19,7 @@
       }
     },
     "benchmark": {"configuration": "m4_daily/D/short", "frequency": "D", "term": "short", "domain": "Econ/Fin", "num_variates": 1, "prediction_length": 14, "evaluation_windows": 1, "boundary_convention": "zero-based, end-exclusive"},
-    "selection": {"method": "first_official", "count": 100}
+    "selection": {"method": "first_official", "count": 4227}
   },
   "pipeline": {
     "processes": [{"id": 1, "name": "import"}, {"id": 2, "name": "preprocess"}, {"id": 3, "name": "transform"}, {"id": 4, "name": "forecast"}, {"id": 5, "name": "combine"}, {"id": 6, "name": "evaluate"}],
