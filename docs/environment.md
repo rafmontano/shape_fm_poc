@@ -54,6 +54,11 @@ R and Python providers run in their pinned environments with one internal thread
 where Dask owns parallelism. Chronos uses one persistent GPU model process and a
 complete pinned local checkpoint; ordinary execution is offline.
 
+The two-machine profile bounds Dask's `worker.connections.incoming` to 1 on
+both hosts to limit outgoing large-data service requests. Dask permits twice
+that limit for same-host peers. This network-transfer bound does not reduce
+worker counts, threads or the maximum in-flight scientific work groups.
+
 ## Normal researcher commands
 
 ```sh

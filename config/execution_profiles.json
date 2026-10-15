@@ -3,6 +3,7 @@
   "mvp_two_machine": {
     "coordinator": "macbook_pro",
     "max_in_flight": 24,
+    "worker_connections_incoming": 1,
     "providers": {
       "chronos": {"device": "cuda", "resources": {"GPU": 1}},
       "mantis": {"device": "cuda", "resources": {"GPU": 1}},

@@ -96,8 +96,10 @@ def serve(kind: str, device: str) -> None:
                                 "provider": provider.describe()}
                 elif request["command"] == "register_artifact":
                     content = base64.b64decode(request["artifact"], validate=True)
-                    if hashlib.sha256(content).hexdigest() != request["sha256"]:
-                        raise ValueError("fitted artifact integrity mismatch")
+                    actual = hashlib.sha256(content).hexdigest()
+                    if actual != request["sha256"]:
+                        raise ValueError(f"native fitted artifact integrity mismatch: expected {request['sha256']}, "
+                                         f"received {actual}, {len(content)} bytes")
                     models[request["sha256"]] = pickle.loads(content)
                     del content
                     response = {"type": "registered", "sha256": request["sha256"]}

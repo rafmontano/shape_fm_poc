@@ -101,14 +101,17 @@ class DistributedCluster:
                 "--nworkers", str(allocation["count"]), "--nthreads", "1", "--no-dashboard",
                 "--memory-limit", allocation["memory_limit"],
                 "--resources", allocation["resources"], "--local-directory", str(root / ".runtime/dask")]
-            environment = {**os.environ, "PYTHONPATH": str(root / "src/python"),
+            environment = {"PYTHONPATH": str(root / "src/python"),
                            "PREFECT_HOME": str(root / ".runtime/prefect")}
+            if "worker_connections_incoming" in self.settings:
+                environment["DASK_DISTRIBUTED__WORKER__CONNECTIONS__INCOMING"] = str(
+                    self.settings["worker_connections_incoming"])
             if allocation["machine"] != self.settings["coordinator"]:
                 target = f"{machine['ssh_user']}@{machine['hostname']}"
-                remote = (f"cd {shlex.quote(str(root))} && PYTHONPATH={shlex.quote(str(root / 'src/python'))} "
-                          f"PREFECT_HOME={shlex.quote(str(root / '.runtime/prefect'))} " + shlex.join(command))
+                remote = (f"cd {shlex.quote(str(root))} && " + shlex.join(
+                    ["env", *(f"{key}={value}" for key, value in environment.items()), *command]))
                 command = ["ssh", "-o", "BatchMode=yes", target, remote]
-            self.processes.append(subprocess.Popen(command, cwd=CODE_ROOT, env=environment))
+            self.processes.append(subprocess.Popen(command, cwd=CODE_ROOT, env={**os.environ, **environment}))
             total += allocation["count"]
         self.client.wait_for_workers(total, timeout=120)
         return address

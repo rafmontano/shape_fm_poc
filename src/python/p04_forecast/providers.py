@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import atexit
 import base64
+import hashlib
 import json
 import os
 import select
@@ -53,8 +54,13 @@ class NativeSession:
         """Return one native result without changing inputs or retrying failures."""
         for identity in request.get("artifact_ids", []):
             if identity not in self.registered_artifacts:
+                content = artifacts[identity]
+                actual = hashlib.sha256(content).hexdigest()
+                if actual != identity:
+                    raise ValueError(f"worker fitted artifact integrity mismatch: expected {identity}, "
+                                     f"received {actual}, {len(content)} bytes")
                 registration = {"command": "register_artifact", "sha256": identity,
-                    "artifact": base64.b64encode(artifacts[identity]).decode("ascii")}
+                    "artifact": base64.b64encode(content).decode("ascii")}
                 self.process.stdin.write(json.dumps(registration) + "\n")
                 self.process.stdin.flush()
                 response = self._receive()
