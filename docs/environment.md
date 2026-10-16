@@ -33,27 +33,29 @@ capacity live in `config/execution_profiles.json`.
 
 Current topology:
 
-- MacBook Pro: coordinator and CPU worker capacity;
-- Ubuntu: CPU workers and the CUDA/Chronos/Mantis worker;
+- Ubuntu: selected coordinator, CPU workers and CUDA/Chronos/Mantis workers;
+- MacBook Pro: CPU worker capacity;
 - future Mac Studio: intended coordinator, added by configuration rather than a
   source-code branch.
 
 The definitive `mvp_two_machine` operational profile has six Mac CPU workers,
 28 Ubuntu CPU workers and sixteen logical GPU workers sharing the RTX 5090.
-One Mac CPU worker retains the restricted `ARCHIVED` resource for coordinator-host
-reference retrieval. Worker counts are operational configuration, not scientific
+The first single-worker CPU allocation on the selected coordinator receives the
+restricted `ARCHIVED` resource for coordinator-host reference retrieval. All its
+CPU allocations receive `COORDINATOR_CPU`. Worker counts are operational configuration, not scientific
 identity. Do not automatically reduce the sixteen GPU workers: GPU startup,
 memory or execution failure requires preserving progress and researcher
 direction. CPU sensitivity investigation does not start GPU model processes.
 
-The profile's `subflows.06.03.resources` requires `CPU` and `MAC_CPU`; only Mac
-CPU allocations advertise `MAC_CPU`. The shared executor applies that resource
-constraint to every sensitivity group. When this is the first pending workload,
-only eligible Mac allocations start; subsequent CPU selection work reuses them.
-An already running full cluster retains its workers, but Ubuntu workers remain
-ineligible for 06.03. Mac placement is supported; the unestablished Ubuntu crash
-cause is a limitation, not a separate qualification requirement. The POC2 closure
-policy is defined in [evaluation](evaluation.md#parallel-execution-and-restart).
+The profile's `subflows.06.03.resources` requires `CPU` and `COORDINATOR_CPU`.
+The shared executor applies that constraint to every sensitivity group, without
+fallback to the peer. Worker allocations start when eligible work first needs
+them; GPU services do not start for CPU-only work. Selecting a different
+coordinator moves archived retrieval, sensitivity, database writes, tracking and
+publication together without changing scientific functions or identities.
+Remote SSH worker startup includes the native R executable paths and keeps Mac
+workers awake with `caffeinate`. Run the normal entry point in a persistent
+terminal and inhibit Ubuntu sleep while the experiment is active.
 
 Normal execution derives Prefect/Dask addresses from the selected coordinator
 and machine inventory. The researcher does not manually manage

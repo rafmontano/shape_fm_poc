@@ -33,11 +33,20 @@ class ResearcherInterfaceTests(unittest.TestCase):
     """Protect researcher-visible defaults after retiring the old entry points."""
 
     def test_sensitivity_placement_and_accepted_candidate_exclusion(self):
-        """Pending bounded groups use Mac resources even with Ubuntu available."""
+        """Pending bounded groups stay on the coordinator and exclude accepted keys."""
         from distributed import Client, Scheduler, SpecCluster, Worker
+        from util.distributed_cluster import DistributedCluster
         from util.runtime import ExperimentRequest, open_experiment
 
         profile = json.loads((CODE_ROOT / "config/execution_profiles.json").read_text())["mvp_two_machine"]
+        for coordinator in ("macbook_pro", "ubuntu_primary"):
+            allocations = DistributedCluster({**profile, "coordinator": coordinator}).allocations
+            local_cpu = [allocation for allocation in allocations
+                         if "COORDINATOR_CPU=1" in allocation["resources"]]
+            archived = [allocation for allocation in allocations if "ARCHIVED=1" in allocation["resources"]]
+            self.assertEqual({allocation["machine"] for allocation in local_cpu}, {coordinator})
+            self.assertEqual([(allocation["machine"], allocation["count"]) for allocation in archived],
+                             [(coordinator, 1)])
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "config").mkdir()
@@ -52,8 +61,8 @@ class ResearcherInterfaceTests(unittest.TestCase):
                 self.assertEqual(len(pending), 9)
                 self.assertFalse({item.key for item in pending} & {key for key, _ in stored})
                 with SpecCluster(scheduler={"cls": Scheduler, "options": {"dashboard_address": None}},
-                        workers={"mac": {"cls": Worker, "options": {"resources": {"CPU": 1, "MAC_CPU": 1}}},
-                                 "ubuntu": {"cls": Worker, "options": {"resources": {"CPU": 1}}}}) as cluster:
+                        workers={"mac": {"cls": Worker, "options": {"resources": {"CPU": 1}}},
+                                 "ubuntu": {"cls": Worker, "options": {"resources": {"CPU": 1, "COORDINATOR_CPU": 1}}}}) as cluster:
                     with Client(cluster):
                         context.execution.settings = {
                             "scheduler_address": cluster.scheduler_address, "subflows": profile["subflows"]}
@@ -61,7 +70,7 @@ class ResearcherInterfaceTests(unittest.TestCase):
                             calculate=_calculation_worker, accept=service.accept_diagnostic_candidates,
                             on_progress=lambda snapshot: None)
                 rows = context.repository.rows("06.03")
-                self.assertEqual({rows[item.key]["worker"] for item in pending}, {"mac"})
+                self.assertEqual({rows[item.key]["worker"] for item in pending}, {"ubuntu"})
                 self.assertTrue(all(rows[key] == result for key, result in stored))
             finally:
                 context.close()

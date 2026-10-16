@@ -105,15 +105,15 @@ differences are accepted, without parity workloads or tolerance gates.
 
 Sensitivity follows the placement principle in [architecture](architecture.md#placement-and-degree-of-parallelism):
 the same bounded candidate batches can run on one or several machines through
-the shared Prefect/Dask executor. Mac CPU workers are the supported operational
-placement for 06.03, retaining local parallelism and the existing R kernel.
-Other provider placements and the approved worker profile are unchanged.
+the shared Prefect/Dask executor. Selected-coordinator CPU workers are the
+operational placement for 06.03, retaining local parallelism and the existing R
+kernel. There is no fallback to peer workers. Other provider placements and the
+approved scientific batch definitions are unchanged.
 Successful completion of the declared outputs and no-new-work restart resolves
 the sensitivity execution issue for POC2. The underlying Ubuntu crash cause was
 not established; this is a limitation, not an open investigation, backlog item or
-acceptance blocker. No further Ubuntu qualification or optimisation is required.
-If future approved work needs Ubuntu sensitivity execution and fails, assess that
-failure using its new evidence.
+acceptance blocker. The fresh Ubuntu-coordinated full-Daily exercise is approved
+to execute sensitivity on Ubuntu; assess any new failure using its own evidence.
 
 Each candidate identity is committed independently. Restart submits only missing
 candidates and continues to selection, tables and exports once prerequisites are

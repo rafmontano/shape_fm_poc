@@ -3,6 +3,7 @@
   "machines": {
     "macbook_pro": {
       "hostname": "RMMacbookPro.local",
+      "ssh_user": "monta",
       "project_root": "/Users/monta/Documents/Projects/shape_fm_poc",
       "capabilities": ["cpu", "mps"]
     },

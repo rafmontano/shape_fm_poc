@@ -139,6 +139,8 @@ class WorkGroupExecutor:
                     self.cluster = DistributedCluster(settings)
                     self.cluster.address = self.cluster.start(resources=placement)
                 address = self.cluster.address
+                for group_resources in {tuple(sorted(group[0].resources.items())) for group in groups}:
+                    self.cluster.ensure_workers({**(dict(group_resources) or {"CPU": 1}), **placement})
             runner = (DaskTaskRunner(address=address) if address else
                       DaskTaskRunner(cluster_kwargs=settings.get("cluster_kwargs", {
                           "n_workers": 2, "threads_per_worker": 1,

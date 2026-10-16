@@ -85,23 +85,38 @@ class DistributedCluster:
         inventory = json.loads((CODE_ROOT / "config/machines.json").read_text())
         self.machines = inventory["machines"]
         self.port = inventory["services"]["dask_scheduler_port"]
+        self.started_allocations: set[int] = set()
+        self.allocations = []
+        archived_assigned = False
+        for allocation in settings["workers"]:
+            allocation = dict(allocation)
+            if allocation["machine"] == settings["coordinator"] and "CPU=" in allocation["resources"]:
+                allocation["resources"] += ",COORDINATOR_CPU=1"
+                if not archived_assigned:
+                    allocation["resources"] += ",ARCHIVED=1"
+                    archived_assigned = True
+            self.allocations.append(allocation)
 
     def start(self, resources: dict[str, float] | None = None) -> str:
         """Start configured workers eligible for the opening workload's resources."""
         host = _coordinator_host(self.settings, self.machines)
         self.scheduler = LocalCluster(n_workers=0, host=host,
             scheduler_port=self.port, dashboard_address=None)
-        address = self.scheduler.scheduler_address
         self.client = Client(self.scheduler)
-        total = 0
-        for allocation in self.settings["workers"]:
+        self.ensure_workers(resources or {"CPU": 1})
+        return self.scheduler.scheduler_address
+
+    def ensure_workers(self, resources: dict[str, float]) -> None:
+        """Start eligible allocations once, deferring GPU services until needed."""
+        for index, allocation in enumerate(self.allocations):
+            if index in self.started_allocations:
+                continue
             available = dict(part.split("=") for part in allocation["resources"].split(","))
-            if resources and any(float(available.get(key, 0)) < value
-                                 for key, value in resources.items()):
+            if any(float(available.get(key, 0)) < value for key, value in resources.items()):
                 continue
             machine = self.machines[allocation["machine"]]
             root = Path(machine["project_root"])
-            command = [str(root / ".venv/bin/python"), "-X", "faulthandler", "-m", "distributed.cli.dask_worker", address,
+            command = [str(root / ".venv/bin/python"), "-X", "faulthandler", "-m", "distributed.cli.dask_worker", self.scheduler.scheduler_address,
                 "--nworkers", str(allocation["count"]), "--nthreads", "1", "--no-dashboard",
                 "--memory-limit", allocation["memory_limit"],
                 "--resources", allocation["resources"], "--local-directory", str(root / ".runtime/dask")]
@@ -112,13 +127,16 @@ class DistributedCluster:
                     self.settings["worker_connections_incoming"])
             if allocation["machine"] != self.settings["coordinator"]:
                 target = f"{machine['ssh_user']}@{machine['hostname']}"
-                remote = (f"cd {shlex.quote(str(root))} && " + shlex.join(
+                if "mps" in machine["capabilities"]:
+                    command = ["caffeinate", "-i", *command]
+                remote = ('export PATH=/opt/homebrew/bin:/usr/local/bin:"$PATH"; '
+                    f"cd {shlex.quote(str(root))} && exec " + shlex.join(
                     ["env", *(f"{key}={value}" for key, value in environment.items()), *command]))
                 command = ["ssh", "-o", "BatchMode=yes", target, remote]
             self.processes.append(subprocess.Popen(command, cwd=CODE_ROOT, env={**os.environ, **environment}))
-            total += allocation["count"]
+            self.started_allocations.add(index)
+        total = sum(self.allocations[index]["count"] for index in self.started_allocations)
         self.client.wait_for_workers(total, timeout=120)
-        return address
 
     def close(self) -> None:
         """Stop only this invocation's Dask services; never touch another cluster."""
