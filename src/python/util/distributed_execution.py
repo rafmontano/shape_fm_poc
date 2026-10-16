@@ -8,6 +8,7 @@ accepts returned scientific results into DuckDB. No scientific setting changes.
 from __future__ import annotations
 
 import json
+import socket
 import time
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -45,6 +46,13 @@ def calculate_group(items: list[WorkItem], calculate: Callable[..., dict[str, An
                 results.append(result)
             return GroupResult(results)
         except Exception as error:
+            from distributed import get_worker
+            try:
+                worker = get_worker().address
+            except ValueError:
+                worker = "sequential"
+            error.add_note(f"ShapeFM work group {[item.key for item in items]}, "
+                           f"host={socket.gethostname()}, worker={worker}")
             return GroupResult(results, error)
     results = []
     for item in items:

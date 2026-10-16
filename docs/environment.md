@@ -108,6 +108,12 @@ batch/item and native cause. Stop only the affected work when possible. Do not
 delete both databases or repeat completed processes merely to troubleshoot a
 later failure.
 
+Dask workers enable Python's fault handler. Failed native batches identify their
+candidate keys, host and worker in exception notes. Integer-limit serialization
+failures additionally report suspect field paths, types and bit lengths without
+decimal-formatting the integers. This inspection runs only after serialization
+fails; it does not add a normal full-cohort validation pass or repair input.
+
 Infrastructure retry may repeat an uncommitted item but cannot change data,
 model, seed or settings. Native crashes and environment qualification belong to
 focused diagnostics before another expensive full run. Memory/swap thresholds

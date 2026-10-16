@@ -97,7 +97,7 @@ class DistributedCluster:
         for allocation in self.settings["workers"]:
             machine = self.machines[allocation["machine"]]
             root = Path(machine["project_root"])
-            command = [str(root / ".venv/bin/python"), "-m", "distributed.cli.dask_worker", address,
+            command = [str(root / ".venv/bin/python"), "-X", "faulthandler", "-m", "distributed.cli.dask_worker", address,
                 "--nworkers", str(allocation["count"]), "--nthreads", "1", "--no-dashboard",
                 "--memory-limit", allocation["memory_limit"],
                 "--resources", allocation["resources"], "--local-directory", str(root / ".runtime/dask")]

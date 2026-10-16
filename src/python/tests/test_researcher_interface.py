@@ -47,6 +47,20 @@ class ResearcherInterfaceTests(unittest.TestCase):
         self.assertEqual(json.loads(output.getvalue()),
                          {"metrics": {"model.da": 0.7}, "artifacts": ["results/tables/table_1.csv"]})
 
+    def test_failed_r_request_identifies_large_integer_without_concealing_error(self):
+        """A malformed nested field remains rejected and is locatable without its decimal value."""
+        from util.providers import run_r
+
+        value = 1 << 16000
+        payload = {"series": [{"context": [1.25, value]}]}
+        with self.assertRaisesRegex(ValueError, "integer string conversion") as failure:
+            run_r("unused.R", payload, timeout=1, threads=1)
+        notes = "\n".join(failure.exception.__notes__)
+        self.assertIn("$['series'][0]['context'][1]", notes)
+        self.assertIn("type=int", notes)
+        self.assertIn("size_bits=16001", notes)
+        self.assertIs(payload["series"][0]["context"][1], value)
+
     def test_period_transport_uses_existing_process_owned_cli(self):
         """The pinned-environment request preserves frequency and optional override."""
         configuration = json.loads((CODE_ROOT / "config/experiment.json").read_text())
