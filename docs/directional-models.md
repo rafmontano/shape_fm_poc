@@ -121,3 +121,9 @@ rather than embedding them in every task graph. Each native provider session
 registers and loads each required artifact once; subsequent predictions send
 only artifact references and query values. These caches are disposable transport
 state, not another fitted-model store or a scientific restart authority.
+
+SHA-256 verification is mandatory and is never bypassed. Each required artifact
+is transferred and registered once per native worker session. If a checksum
+mismatch recurs, retry only the unaccepted transfer once with a fresh worker.
+If that retry also fails, remove that worker from the eligible pool and continue
+with healthy workers. Never resubmit an already accepted prediction.

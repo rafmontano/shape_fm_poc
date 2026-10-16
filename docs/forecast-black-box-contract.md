@@ -48,6 +48,12 @@ visibly. Chronos-2 uses its pinned local checkpoint and native probabilistic
 provider; ordinary execution is offline and does not download the model for each
 job.
 
+Archived M4 reference forecasts are fixed source/reference retrieval, not
+distributed scientific computation. They are loaded on the coordinator host;
+the two-machine profile restricts retrieval to its single `ARCHIVED` CPU worker.
+Ubuntu's archived-package loader is not an eligible execution path. Accepted
+archived forecasts are reused from DuckDB without reloading them for validation.
+
 FFORMA methods preserve the approved native scientific definitions and settings,
 not exact floating-point identity across hardware/backends or retired code.
 Provider boundaries check output shape and scientifically usable values;

@@ -1,4 +1,4 @@
-"""Process 06 Prefect hierarchy for evaluation, diagnostics and final publication.
+"""Process 06 Prefect hierarchy for evaluation, sensitivity and final publication.
 
 Seven approved subflows restart on parent metric/candidate/selected-output keys
 and durable assembled/published references. Evaluation never refits forecasts.
@@ -39,11 +39,11 @@ def evaluate_directional_performance(context: ProcessContext, candidates: DataRe
         service.calculate_directional_evaluation, service.accept_directional_evaluations)
 
 
-@flow(name="06.03 Materialise diagnostic surfaces")
+@flow(name="06.03 Materialise sensitivity surface")
 def materialise_diagnostic_surfaces(context: ProcessContext, candidates: DataRef) -> None:
     """Subflow level: accept each declared sensitivity/baseline candidate independently."""
     service = context.evaluate
-    with context.tracking.subflow("06.03", "Materialise diagnostic surfaces"):
+    with context.tracking.subflow("06.03", "Materialise sensitivity surface"):
         if context.state.is_subflow_accepted("06.03"):
             return
         series = service.diagnostic_series()
@@ -54,10 +54,10 @@ def materialise_diagnostic_surfaces(context: ProcessContext, candidates: DataRef
         context.state.accept_subflow("06.03")
 
 
-@flow(name="06.04 Select and retain diagnostics")
+@flow(name="06.04 Select and retain sensitivity results")
 def select_and_retain_diagnostics(context: ProcessContext, candidates: DataRef) -> DataRef:
     """Subflow level: select stored settings and accept only selected output keys."""
-    with context.tracking.subflow("06.04", "Select and retain diagnostics"):
+    with context.tracking.subflow("06.04", "Select and retain sensitivity results"):
         service = context.evaluate
         if context.state.is_subflow_accepted("06.04"):
             return service.selected_diagnostics()

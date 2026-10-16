@@ -47,13 +47,13 @@ lambda_up:   1.000, 1.005, ..., 1.120  (25)
 lambda_down: 1.000, 0.995, ..., 0.900  (21)
 ```
 
-SMYL and Chronos-2 each evaluate all 525 pairs: 1,050 candidates. Selection is
+SMYL and Chronos-2 each evaluate all 525 pairs: 1,050 sensitivity candidates. Selection is
 from the stored surface, ordered by lowest OWA, distance from `(1,1)`, upward
 departure, downward departure and stable lambda values. Only selected adjusted
-forecast vectors are retained. This is a diagnostic using realized actuals, not
+forecast vectors are retained. This is sensitivity analysis using realized actuals, not
 a deployable forecast-time method.
 
-SMYL Oracle is also an ex-post diagnostic: it evaluates the approved fixed
+SMYL Oracle is also an ex-post sensitivity analysis: it evaluates the approved fixed
 multiplier grid and selects the first minimum sMAPE. It is never presented as an
 available forecast.
 
@@ -106,6 +106,10 @@ differences are accepted, without parity workloads or tolerance gates.
 Each candidate identity is committed independently. Restart submits only missing
 candidates and continues to selection, tables and exports once prerequisites are
 complete.
+
+The durable identifiers remain `06.03` (Materialise sensitivity surface) and
+`06.04` (Select and retain sensitivity results). The complete surface contains
+1,057 sensitivity candidates, including the seven baseline/oracle candidates.
 
 ## Final review
 

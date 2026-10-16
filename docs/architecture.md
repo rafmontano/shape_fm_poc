@@ -48,7 +48,7 @@ scientific work.
 | 03 | 03.01 Assign research membership → 03.02 Materialise modelling inputs → 03.03 Materialise reusable features → 03.04 Accept modelling dataset |
 | 04 | 04.01 Materialise individual forecasts → 04.02 Materialise representations → 04.03 Fit decision models → 04.04 Materialise directional predictions → 04.05 Accept forecast pool |
 | 05 | 05.01 Materialise forecast combinations → 05.02 Materialise approved deployable adjustments → 05.03 Accept forecast candidates |
-| 06 | 06.01 Evaluate forecast accuracy → 06.02 Evaluate directional performance → 06.03 Materialise diagnostic surfaces → 06.04 Select and retain diagnostics → 06.05 Assemble research results → 06.06 Publish approved outputs → 06.07 Accept experiment |
+| 06 | 06.01 Evaluate forecast accuracy → 06.02 Evaluate directional performance → 06.03 Materialise sensitivity surface → 06.04 Select and retain sensitivity results → 06.05 Assemble research results → 06.06 Publish approved outputs → 06.07 Accept experiment |
 
 ## Five technical layers
 
