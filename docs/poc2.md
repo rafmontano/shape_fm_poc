@@ -30,6 +30,12 @@ similar for the POC2 objective, all 1,057 sensitivity candidates completed, the
 tables/exports completed, and a no-new-work restart passed. This accepts the
 research result; the architecture transformation was accepted separately.
 
+The sensitivity execution issue is closed for POC2: the full Daily experiment
+completed through the supported parallel Mac placement, published its declared
+outputs and passed the no-new-work restart. The underlying Ubuntu crash cause
+was not established. This is a limitation, not an investigation, backlog item or
+acceptance blocker; the operational policy is in [evaluation](evaluation.md#parallel-execution-and-restart).
+
 The five-layer architecture transformation is researcher-accepted. It delivered
 the approved workflow hierarchy, readable process ownership, canonical paths,
 minimal validation boundaries, restartable item state and pragmatic MLflow
@@ -44,7 +50,6 @@ visibility. POC2 remains open for the reduced exit backlog:
 | 12 | Clean-room reconstruction | Recreate the accepted POC2 experiment and outputs from a clean checkout and empty generated workspace. |
 | 14 | Final documentation and sync | Record final evidence and limitations, obtain sign-off and synchronize Mac, Ubuntu and GitHub. |
 | 19 | Failure containment | Confirm restart preserves committed work; decide whether an additional bounded transient retry adds MVP value. |
-| 20 | Ubuntu R-worker qualification | Diagnose and qualify the native R path independently of scientific acceptance. |
 
 The researcher decides whether newly found work belongs to POC2 or the POC3
 backlog. Execution logs are not living documentation.

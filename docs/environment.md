@@ -51,7 +51,9 @@ CPU allocations advertise `MAC_CPU`. The shared executor applies that resource
 constraint to every sensitivity group. When this is the first pending workload,
 only eligible Mac allocations start; subsequent CPU selection work reuses them.
 An already running full cluster retains its workers, but Ubuntu workers remain
-ineligible for 06.03. This placement does not qualify or repair Ubuntu sensitivity.
+ineligible for 06.03. Mac placement is supported; the unestablished Ubuntu crash
+cause is a limitation, not a separate qualification requirement. The POC2 closure
+policy is defined in [evaluation](evaluation.md#parallel-execution-and-restart).
 
 Normal execution derives Prefect/Dask addresses from the selected coordinator
 and machine inventory. The researcher does not manually manage
