@@ -23,8 +23,48 @@ from p02_preprocess.application import resolve_r_period
 from util.runtime import CODE_ROOT, FinalResearchSummary
 
 
+def _calculation_worker(item):
+    """Return execution placement without running a scientific provider."""
+    from distributed import get_worker
+    return {"worker": get_worker().name}
+
+
 class ResearcherInterfaceTests(unittest.TestCase):
     """Protect researcher-visible defaults after retiring the old entry points."""
+
+    def test_sensitivity_placement_and_accepted_candidate_exclusion(self):
+        """Pending bounded groups use Mac resources even with Ubuntu available."""
+        from distributed import Client, Scheduler, SpecCluster, Worker
+        from util.runtime import ExperimentRequest, open_experiment
+
+        profile = json.loads((CODE_ROOT / "config/execution_profiles.json").read_text())["mvp_two_machine"]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "config").mkdir()
+            (root / "config/experiment.json").write_text((CODE_ROOT / "config/experiment.json").read_text())
+            context = open_experiment(ExperimentRequest((6,), root, execution_profile="mvp_two_machine"))
+            try:
+                service = context.evaluate
+                planned = service.pending_diagnostic_candidates(None, [])
+                stored = [(item.key, {"already": "accepted"}) for item in planned[:-9]]
+                service.accept_diagnostic_candidates(stored)
+                pending = service.pending_diagnostic_candidates(None, [])
+                self.assertEqual(len(pending), 9)
+                self.assertFalse({item.key for item in pending} & {key for key, _ in stored})
+                with SpecCluster(scheduler={"cls": Scheduler, "options": {"dashboard_address": None}},
+                        workers={"mac": {"cls": Worker, "options": {"resources": {"CPU": 1, "MAC_CPU": 1}}},
+                                 "ubuntu": {"cls": Worker, "options": {"resources": {"CPU": 1}}}}) as cluster:
+                    with Client(cluster):
+                        context.execution.settings = {
+                            "scheduler_address": cluster.scheduler_address, "subflows": profile["subflows"]}
+                        context.execution.run(subflow_id="06.03", items=pending,
+                            calculate=_calculation_worker, accept=service.accept_diagnostic_candidates,
+                            on_progress=lambda snapshot: None)
+                rows = context.repository.rows("06.03")
+                self.assertEqual({rows[item.key]["worker"] for item in pending}, {"mac"})
+                self.assertTrue(all(rows[key] == result for key, result in stored))
+            finally:
+                context.close()
 
     def test_normal_run_uses_canonical_repository_root(self):
         """The ordinary command must not select a review/test experiment package."""

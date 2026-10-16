@@ -84,6 +84,23 @@ repository reads pending identities
 Dask placement, network transport and worker discovery are infrastructure
 details. Workers never write the research databases.
 
+## Placement and degree of parallelism
+
+Execution placement and concurrency are operational choices for each workload,
+not changes to the architecture. One machine may run several Dask workers and
+bounded work groups in parallel; one machine does not imply one task. Prefer
+the simplest placement that meets the workload's needs, with distribution across
+machines when it provides research value.
+
+Prefect retains process/subflow orchestration, Dask retains eligible work-group
+scheduling, Python/R retains calculations, and the coordinator retains DuckDB
+writes. Placement belongs in the execution layer/profile, not scientific code.
+Changing eligible hosts or concurrency preserves scientific identities, formulas
+and atomic completion/restart boundaries. Do not collapse a restartable workload
+into one all-or-nothing task merely to use one machine, or bypass the shared
+executor solely because a workload is local. Inherently coordinator-owned work,
+such as source retrieval or publication, need not be parallelised.
+
 ## Storage and authority
 
 One experiment uses fixed paths:

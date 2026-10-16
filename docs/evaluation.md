@@ -103,6 +103,13 @@ parallel frameworks. The coordinator writes aggregate results. Each atomic item
 is calculated once on its assigned worker; ordinary valid floating-point
 differences are accepted, without parity workloads or tolerance gates.
 
+Sensitivity follows the placement principle in [architecture](architecture.md#placement-and-degree-of-parallelism):
+the same bounded candidate batches can run on one or several machines through
+the shared Prefect/Dask executor. For the current experiment's recovery, restrict
+06.03 to Mac CPU workers, retaining local parallelism and the existing R kernel.
+Ubuntu sensitivity placement remains disabled pending resolution of its worker
+crashes; other provider placements and the approved worker profile are unchanged.
+
 Each candidate identity is committed independently. Restart submits only missing
 candidates and continues to selection, tables and exports once prerequisites are
 complete.

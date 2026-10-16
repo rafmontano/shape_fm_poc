@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import socket
 import time
+import traceback
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -130,12 +131,13 @@ class WorkGroupExecutor:
                 receive(calculate_group.fn(group, calculate, calculate_batch, shared_inputs))
         elif groups:
             settings = self.settings
+            placement = settings.get("subflows", {}).get(subflow_id, {}).get("resources", {})
             address = settings.get("scheduler_address")
             if "workers" in settings:
                 if self.cluster is None:
                     from util.distributed_cluster import DistributedCluster
                     self.cluster = DistributedCluster(settings)
-                    self.cluster.address = self.cluster.start()
+                    self.cluster.address = self.cluster.start(resources=placement)
                 address = self.cluster.address
             runner = (DaskTaskRunner(address=address) if address else
                       DaskTaskRunner(cluster_kwargs=settings.get("cluster_kwargs", {
@@ -152,6 +154,7 @@ class WorkGroupExecutor:
                     for group in groups[offset:offset + limit]:
                         import dask
                         resources = group[0].resources or ({"CPU": 1} if "workers" in settings else {})
+                        resources = {**resources, **placement}
                         with dask.annotate(resources=resources):
                             futures.append(runner.submit(calculate_group,
                                 parameters={"items": group, "calculate": calculate,
@@ -161,6 +164,8 @@ class WorkGroupExecutor:
                         try:
                             receive(future.result())
                         except Exception as error:
+                            # Retain every failed group's notes while draining successful commits.
+                            traceback.print_exception(error)
                             if first_error is None:
                                 first_error = error
                     if first_error is not None:

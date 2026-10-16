@@ -46,6 +46,13 @@ identity. Do not automatically reduce the sixteen GPU workers: GPU startup,
 memory or execution failure requires preserving progress and researcher
 direction. CPU sensitivity investigation does not start GPU model processes.
 
+The profile's `subflows.06.03.resources` requires `CPU` and `MAC_CPU`; only Mac
+CPU allocations advertise `MAC_CPU`. The shared executor applies that resource
+constraint to every sensitivity group. When this is the first pending workload,
+only eligible Mac allocations start; subsequent CPU selection work reuses them.
+An already running full cluster retains its workers, but Ubuntu workers remain
+ineligible for 06.03. This placement does not qualify or repair Ubuntu sensitivity.
+
 Normal execution derives Prefect/Dask addresses from the selected coordinator
 and machine inventory. The researcher does not manually manage
 `PREFECT_API_URL` or hard-code an IP for each run. A hostname/IP problem is an

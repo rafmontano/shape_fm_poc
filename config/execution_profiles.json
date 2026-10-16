@@ -4,14 +4,17 @@
     "coordinator": "macbook_pro",
     "max_in_flight": 24,
     "worker_connections_incoming": 1,
+    "subflows": {
+      "06.03": {"resources": {"CPU": 1, "MAC_CPU": 1}}
+    },
     "providers": {
       "chronos": {"device": "cuda", "resources": {"GPU": 1}},
       "mantis": {"device": "cuda", "resources": {"GPU": 1}},
       "archived": {"resources": {"CPU": 1, "ARCHIVED": 1}}
     },
     "workers": [
-      {"machine": "macbook_pro", "count": 1, "memory_limit": "4GiB", "resources": "CPU=1,ARCHIVED=1"},
-      {"machine": "macbook_pro", "count": 5, "memory_limit": "4GiB", "resources": "CPU=1"},
+      {"machine": "macbook_pro", "count": 1, "memory_limit": "4GiB", "resources": "CPU=1,MAC_CPU=1,ARCHIVED=1"},
+      {"machine": "macbook_pro", "count": 5, "memory_limit": "4GiB", "resources": "CPU=1,MAC_CPU=1"},
       {"machine": "ubuntu_primary", "count": 28, "memory_limit": "8GiB", "resources": "CPU=1"},
       {"machine": "ubuntu_primary", "count": 16, "memory_limit": "16GiB", "resources": "GPU=1"}
     ]

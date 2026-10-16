@@ -86,8 +86,8 @@ class DistributedCluster:
         self.machines = inventory["machines"]
         self.port = inventory["services"]["dask_scheduler_port"]
 
-    def start(self) -> str:
-        """Start scheduler and configured CPU/GPU workers, then connect through Dask."""
+    def start(self, resources: dict[str, float] | None = None) -> str:
+        """Start configured workers eligible for the opening workload's resources."""
         host = _coordinator_host(self.settings, self.machines)
         self.scheduler = LocalCluster(n_workers=0, host=host,
             scheduler_port=self.port, dashboard_address=None)
@@ -95,6 +95,10 @@ class DistributedCluster:
         self.client = Client(self.scheduler)
         total = 0
         for allocation in self.settings["workers"]:
+            available = dict(part.split("=") for part in allocation["resources"].split(","))
+            if resources and any(float(available.get(key, 0)) < value
+                                 for key, value in resources.items()):
+                continue
             machine = self.machines[allocation["machine"]]
             root = Path(machine["project_root"])
             command = [str(root / ".venv/bin/python"), "-X", "faulthandler", "-m", "distributed.cli.dask_worker", address,
