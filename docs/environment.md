@@ -57,6 +57,16 @@ Remote SSH worker startup includes the native R executable paths and keeps Mac
 workers awake with `caffeinate`. Run the normal entry point in a persistent
 terminal and inhibit Ubuntu sleep while the experiment is active.
 
+Ubuntu coordination has executed Processes 01–03 with the approved CPU profile
+and started all sixteen logical GPU workers for Process 04. Full Ubuntu
+completion is not established: the current experiment is stopped in 04.01 after
+the initial archived-provider failure and two authorised recovery attempts.
+Rebuilding locked M4comp2018 0.2.0, including xz lazy-data compression, did not
+resolve native R loading failures; the cause remains unestablished. The two
+canonical databases retain accepted work, including 559 individual forecasts.
+Owned execution services are stopped. Further recovery requires researcher
+direction; do not reset this experiment or move archived work to the Mac.
+
 Normal execution derives Prefect/Dask addresses from the selected coordinator
 and machine inventory. The researcher does not manually manage
 `PREFECT_API_URL` or hard-code an IP for each run. A hostname/IP problem is an
