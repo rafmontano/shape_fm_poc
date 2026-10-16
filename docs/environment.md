@@ -38,6 +38,14 @@ Current topology:
 - future Mac Studio: intended coordinator, added by configuration rather than a
   source-code branch.
 
+The definitive `mvp_two_machine` operational profile has six Mac CPU workers,
+28 Ubuntu CPU workers and sixteen logical GPU workers sharing the RTX 5090.
+One Mac CPU worker retains the restricted `ARCHIVED` resource for coordinator-host
+reference retrieval. Worker counts are operational configuration, not scientific
+identity. Do not automatically reduce the sixteen GPU workers: GPU startup,
+memory or execution failure requires preserving progress and researcher
+direction. CPU sensitivity investigation does not start GPU model processes.
+
 Normal execution derives Prefect/Dask addresses from the selected coordinator
 and machine inventory. The researcher does not manually manage
 `PREFECT_API_URL` or hard-code an IP for each run. A hostname/IP problem is an
