@@ -30,11 +30,30 @@ similar for the POC2 objective, all 1,057 sensitivity candidates completed, the
 tables/exports completed, and a no-new-work restart passed. This accepts the
 research result; the architecture transformation was accepted separately.
 
+The fresh full M4 Daily operational test is completed and technically accepted:
+Processes 01–06 and all thirty process/subflow milestones are complete, all
+4,227 series and 1,057 sensitivity candidates are accepted, zero scientific items
+are pending, and five CSVs and six figures are published. The no-new-work restart
+submitted zero scientific calculation tasks and preserved accepted rows and
+timestamps, all fifteen fitted models and published file hashes/mtimes. The two
+canonical databases and existing MLflow run are retained; execution services and
+database writers are stopped on both machines. The operational capacity and
+failure-containment requirements (exit items 06 and 19) are satisfied for this
+test; no additional tuning or retry mechanism is required for its closeout.
+
 The sensitivity execution issue is closed for POC2: the full Daily experiment
 completed through the supported parallel Mac placement, published its declared
 outputs and passed the no-new-work restart. The underlying Ubuntu crash cause
 was not established. This is a limitation, not an investigation, backlog item or
 acceptance blocker; the operational policy is in [evaluation](evaluation.md#parallel-execution-and-restart).
+
+Captured Ubuntu failures occurred in Python parameter handling and native memory
+cleanup; the originating defect was not established. After accepted closeout,
+the four test-owned core dumps, debugger/native/launcher logs, temporary transport
+and request probes, obsolete investigation snapshots/reports and stale Dask
+scratch files were removed. Final execution/restart evidence, scientific state,
+model assets and MLflow state were preserved. Ubuntu-only execution is deferred
+to a future researcher decision; no further qualification is required here.
 
 The five-layer architecture transformation is researcher-accepted. It delivered
 the approved workflow hierarchy, readable process ownership, canonical paths,
@@ -43,16 +62,16 @@ visibility. POC2 remains open for the reduced exit backlog:
 
 | ID | Exit item | Required outcome |
 | --- | --- | --- |
-| 06 | Pragmatic execution tuning | Use observed utilisation and throughput to select sensible worker settings without making host contribution a scientific gate. |
-| 07 | Golden-output inventory | Finish mapping every in-scope POC2 table, CSV and figure to its current output and owner. |
-| 08 | Output reproduction | Match approved names, fonts, colours, dimensions, layouts and separate figure files; discuss any material discrepancy. |
+| 07 | Golden-output inventory | Review and sign off the produced five-CSV/six-figure inventory and its Process 06 ownership. |
+| 08 | Output reproduction | Researcher presentation review of approved names, fonts, colours, dimensions, layouts and separate figure files; discuss any material discrepancy. |
 | 10 | Standards QA | Complete the remaining output, documentation and reproducibility checks against the accepted standards. |
 | 12 | Clean-room reconstruction | Recreate the accepted POC2 experiment and outputs from a clean checkout and empty generated workspace. |
-| 14 | Final documentation and sync | Record final evidence and limitations, obtain sign-off and synchronize Mac, Ubuntu and GitHub. |
-| 19 | Failure containment | Confirm restart preserves committed work; decide whether an additional bounded transient retry adds MVP value. |
+| 14 | Final documentation and sync | Obtain remaining POC2 sign-off and maintain final documentation/synchronization; the operational test closeout is already documented and synchronized. |
 
 The researcher decides whether newly found work belongs to POC2 or the POC3
-backlog. Execution logs are not living documentation.
+backlog. Completed operational execution does not by itself establish clean-room
+dependency reconstruction or researcher presentation acceptance. Execution logs
+are not living documentation. No remaining exit item begins as part of closeout.
 
 Canonical DuckDB state, fitted artifacts, tables, figures and the existing MLflow
 run are delivered at the repository root. Git history preserves the transformation
