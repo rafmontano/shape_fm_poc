@@ -14,9 +14,9 @@ import traceback
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from distributed import as_completed
 from prefect import task
 from prefect.cache_policies import NO_CACHE
-from prefect.futures import as_completed
 from prefect_dask import DaskTaskRunner
 
 from util.runtime import CODE_ROOT, ProgressSnapshot, WorkItem
@@ -157,32 +157,50 @@ class WorkGroupExecutor:
                 if shared_inputs:
                     [shared] = runner.client.scatter([shared_inputs], hash=False, broadcast=False)
                 limit = int(settings.get("max_in_flight", 4))
-                for offset in range(0, len(groups), limit):
-                    futures = {}
-                    for group in groups[offset:offset + limit]:
-                        import dask
-                        resources = group[0].resources or ({"CPU": 1} if "workers" in settings else {})
-                        resources = {**resources, **placement}
-                        with dask.annotate(resources=resources):
-                            future = runner.submit(calculate_group,
-                                parameters={"items": group, "calculate": calculate,
-                                            "calculate_batch": calculate_batch, "shared_inputs": shared})
-                            futures[future] = group
-                    first_error = None
-                    for future in as_completed(list(futures)):
-                        group = futures.pop(future)
-                        try:
-                            receive(future.result())
-                        except Exception as error:
-                            # Retain every failed group's notes while draining successful commits.
-                            traceback.print_exception(error)
-                            if first_error is None:
+                pending = iter(groups)
+                futures = {}
+                completed = as_completed(loop=runner.client.loop)
+
+                def submit(group: list[WorkItem]) -> None:
+                    import dask
+                    resources = group[0].resources or ({"CPU": 1} if "workers" in settings else {})
+                    resources = {**resources, **placement}
+                    with dask.annotate(resources=resources):
+                        future = runner.submit(calculate_group,
+                            parameters={"items": group, "calculate": calculate,
+                                        "calculate_batch": calculate_batch, "shared_inputs": shared})
+                    futures[future.wrapped_future] = (future, group)
+                    completed.add(future.wrapped_future)
+
+                first_error = None
+                try:
+                    for _ in range(min(limit, len(groups))):
+                        submit(next(pending))
+                except Exception as error:
+                    traceback.print_exception(error)
+                    first_error = error
+                for wrapped in completed:
+                    future, group = futures.pop(wrapped)
+                    try:
+                        receive(future.result())
+                    except Exception as error:
+                        # Retain every failed group's notes while draining successful commits.
+                        traceback.print_exception(error)
+                        if first_error is None:
+                            first_error = error
+                    finally:
+                        for item in group:
+                            item.payload.clear()
+                        wrapped.release()
+                    if first_error is None:
+                        group = next(pending, None)
+                        if group is not None:
+                            try:
+                                submit(group)
+                            except Exception as error:
+                                traceback.print_exception(error)
                                 first_error = error
-                        finally:
-                            for item in group:
-                                item.payload.clear()
-                            future.wrapped_future.release()
-                    if first_error is not None:
-                        raise first_error
+                if first_error is not None:
+                    raise first_error
         repository.require_complete(subflow_id)
         progress()

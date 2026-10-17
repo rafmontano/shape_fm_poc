@@ -96,8 +96,10 @@ official contexts; representations load the required cohort/official values;
 training loads the reference cohort; prediction/evaluation load official inputs.
 The shared executor consumes each returned group's input payloads after accepting
 its results and releases its supported Dask futures. Atomic keys remain intact;
-restart reconstructs missing requests from DuckDB. Fixed group sizes, waves,
-resource placement and successful-group draining on failure are unchanged.
+restart reconstructs missing requests from DuckDB. Bounded continuous refill
+replaces wave barriers as described in [architecture](architecture.md#restart-and-progress).
+Group sizes, worker counts, resource placement, calculations and model delivery
+remain unchanged; this is an operational execution change only.
 
 The two-machine profile bounds Dask's `worker.connections.incoming` to 1 on
 both hosts to limit outgoing large-data service requests. Dask permits twice

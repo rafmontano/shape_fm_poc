@@ -156,9 +156,13 @@ visibility. Neither display reruns validation or infers a live worker from a
 persisted state tag.
 
 One shared executor plans missing atomic keys, divides them into bounded work
-groups and accepts pure results through coordinator transactions. A later failure
-preserves earlier commits; no accepted atomic key is resubmitted. Only explicitly
-configured bounded item retry is allowed, with no hidden scientific fallback.
+groups and accepts pure results through coordinator transactions. Distributed
+submission continuously refills up to the profile's `max_in_flight` limit: each
+completed group is accepted and released before the next group is submitted.
+The first observed failure stops refill; already submitted groups drain and
+their successful results remain committed. No accepted atomic key is resubmitted.
+Sequential execution is unchanged. Only explicitly configured bounded item retry
+is allowed, with no hidden scientific fallback.
 Workers receive neither writer connections nor MLflow clients; foundation-model
 assets are reused from worker-local caches, not downloaded per item.
 

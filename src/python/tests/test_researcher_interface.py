@@ -11,6 +11,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -28,8 +29,86 @@ def _calculation_worker(item):
     return {"worker": get_worker().name}
 
 
+def _completion_worker(item):
+    """Coordinate synthetic work with Dask events, without scientific providers."""
+    from distributed import Event
+    started = time.monotonic()
+    operation = item.payload.get("operation")
+    released = None
+    if operation == "wait":
+        released = Event(item.payload["event"]).wait(timeout=10)
+    elif operation == "signal":
+        Event(item.payload["event"]).set()
+    elif operation == "fail":
+        raise ValueError("synthetic atomic failure")
+    time.sleep(0.1)
+    return {"started": started, "finished": time.monotonic(), "released": released}
+
+
 class ResearcherInterfaceTests(unittest.TestCase):
     """Protect researcher-visible defaults after retiring the old entry points."""
+
+    def test_bounded_refill_and_failure_restart(self):
+        """Refill precedes slow completion; failures drain commits, not new work."""
+        from distributed import Client, Event
+        from util.runtime import ExperimentRequest, WorkItem, open_experiment
+
+        for failure in (False, True):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory, \
+                    Client(n_workers=4, threads_per_worker=1, processes=False,
+                           dashboard_address=None, set_as_default=False) as client:
+                root = Path(directory)
+                (root / "config").mkdir()
+                (root / "config/experiment.json").write_text((CODE_ROOT / "config/experiment.json").read_text())
+                context = open_experiment(ExperimentRequest((6,), root, execution_profile="mvp_two_machine"))
+                try:
+                    context.configuration["execution"]["default"]["work_group_size"] = 2 if failure else 1
+                    context.execution.settings = {"max_in_flight": 2,
+                        "scheduler_address": client.scheduler.address}
+                    event = f"completion-{root.name}"
+                    operations = ([None, "fail", "wait", None, None, None] if failure else
+                                  ["wait", None, "signal", None, None, None])
+                    items = [WorkItem(str(i), {"operation": operation, "event": event})
+                             for i, operation in enumerate(operations)]
+                    repository = context.repository
+                    pending = repository.plan("06.03", items)
+
+                    def accept(rows):
+                        repository.accept("06.03", rows)
+                        if failure and any(key == "0" for key, _ in rows):
+                            Event(event, client=client).set()
+
+                    def execute(work):
+                        context.execution.run(subflow_id="06.03", items=work,
+                            calculate=_completion_worker, accept=accept, on_progress=lambda snapshot: None)
+
+                    if failure:
+                        with self.assertRaisesRegex(ValueError, "synthetic atomic failure"):
+                            execute(pending)
+                        before = repository.rows("06.03")
+                        self.assertEqual(set(before), {"0", "2", "3"})
+                        self.assertTrue(before["2"]["released"])
+                        self.assertTrue(items[4].payload)
+                        resumed = repository.plan("06.03", [WorkItem(str(i), {}) for i in range(6)])
+                        self.assertEqual({item.key for item in resumed}, {"1", "4", "5"})
+                        execute(resumed)
+                        after = repository.rows("06.03")
+                        self.assertEqual({key: after[key] for key in before}, before)
+                    else:
+                        execute(pending)
+                        rows = repository.rows("06.03")
+                        self.assertTrue(rows["0"]["released"])
+                        self.assertLess(rows["2"]["started"], rows["0"]["finished"])
+                        events = [(row["started"], 1) for row in rows.values()]
+                        events += [(row["finished"], -1) for row in rows.values()]
+                        active = peak = 0
+                        for _, change in sorted(events):
+                            active += change
+                            peak = max(peak, active)
+                        self.assertEqual(peak, 2)
+                    self.assertEqual(repository.counts("06.03"), (6, 6))
+                finally:
+                    context.close()
 
     def test_sensitivity_placement_and_accepted_candidate_exclusion(self):
         """Pending bounded groups stay on the coordinator and exclude accepted keys."""
