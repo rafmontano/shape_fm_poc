@@ -41,20 +41,6 @@ M4_forec_methods <- function() {
   if (is.null(value)) default else value
 }
 
-# Purpose: Validate a scalar identity and normalise it for JSON output.
-# Inputs: Candidate value and field name used in errors.
-# Outputs: One non-empty character value; invalid identities raise an error.
-.identity_value <- function(value, field) {
-  if (is.null(value) || length(value) != 1L || is.list(value) || is.na(value)) {
-    stop(sprintf("%s must be one non-empty identifier", field), call. = FALSE)
-  }
-  value <- as.character(value)
-  if (!nzchar(value)) {
-    stop(sprintf("%s must be one non-empty identifier", field), call. = FALSE)
-  }
-  value
-}
-
 # Purpose: Validate a positive whole-number request field.
 # Inputs: Candidate value and field name used in errors.
 # Outputs: Positive integer scalar; malformed values raise an error.
@@ -162,7 +148,7 @@ validate_forecast_request <- function(request, expected_method_id = NULL) {
     stop("forecast request must not contain future actual observations", call. = FALSE)
   }
 
-  method_id <- .identity_value(request$method_id, "method_id")
+  method_id <- request$method_id
   if (!method_id %in% M4_forec_methods()) {
     stop(sprintf("unknown forecast method_id: %s", method_id), call. = FALSE)
   }
@@ -200,10 +186,10 @@ validate_forecast_request <- function(request, expected_method_id = NULL) {
   settings <- .validate_fforma_settings(method_id, settings)
 
   list(
-    task_id = if (is.null(request$task_id)) NULL else .identity_value(request$task_id, "task_id"),
-    run_id = if (is.null(request$run_id)) NULL else .identity_value(request$run_id, "run_id"),
-    dataset_id = .identity_value(request$dataset_id, "dataset_id"),
-    series_id = .identity_value(request$series_id, "series_id"),
+    task_id = request$task_id,
+    run_id = request$run_id,
+    dataset_id = request$dataset_id,
+    series_id = request$series_id,
     context = context,
     horizon = horizon,
     frequency = frequency,
@@ -301,33 +287,9 @@ validate_forecast_request <- function(request, expected_method_id = NULL) {
 #' Inputs: Result list containing identities, method/fallback fields, horizon vectors,
 #'   ordered quantile levels, quantile matrix, status, and provenance.
 #' Outputs: Result unchanged; invalid dimensions, non-finite values, crossing
-#'   quantiles, inconsistent fallback metadata, or actual observations raise an error.
+#'   quantiles raise an error. Internally produced metadata is trusted.
 validate_forecast_result <- function(result) {
-  required <- c(
-    "dataset_id", "series_id", "requested_method_id", "executed_method_id",
-    "horizon", "mean", "median", "quantile_levels", "quantiles",
-    "fallback_used", "fallback_reason", "provenance", "status"
-  )
-  missing <- setdiff(required, names(result))
-  if (length(missing) > 0L) {
-    stop(sprintf("forecast result is missing fields: %s", paste(missing, collapse = ", ")), call. = FALSE)
-  }
-  forbidden_actuals <- intersect(
-    names(result), c("actual", "actuals", "future", "future_actuals", "labels")
-  )
-  if (length(forbidden_actuals) > 0L) {
-    stop("forecast result must not contain actual observations", call. = FALSE)
-  }
-
-  .identity_value(result$dataset_id, "result dataset_id")
-  .identity_value(result$series_id, "result series_id")
-  requested_method_id <- .identity_value(
-    result$requested_method_id, "result requested_method_id"
-  )
-  executed_method_id <- .identity_value(
-    result$executed_method_id, "result executed_method_id"
-  )
-  horizon <- .positive_integer(result$horizon, "result horizon")
+  horizon <- result$horizon
   if (!is.numeric(result$mean) || !is.numeric(result$median)) {
     stop("forecast result mean and median must be numeric", call. = FALSE)
   }
@@ -337,12 +299,6 @@ validate_forecast_result <- function(result) {
       any(levels <= 0 | levels >= 1) || is.unsorted(levels, strictly = TRUE)
   ) {
     stop("forecast result quantile levels are invalid", call. = FALSE)
-  }
-  if (
-    !requested_method_id %in% M4_forec_methods() ||
-      !executed_method_id %in% M4_forec_methods()
-  ) {
-    stop("forecast result method identifiers are not registered", call. = FALSE)
   }
   quantiles <- result$quantiles
   if (!is.matrix(quantiles) || !is.numeric(quantiles)) {
@@ -367,40 +323,6 @@ validate_forecast_result <- function(result) {
       any(abs(as.numeric(quantiles[median_row, ]) - as.numeric(result$median)) > 1e-10)
   ) {
     stop("forecast result median does not equal its q0.5 row", call. = FALSE)
-  }
-  if (length(result$status) != 1L || !identical(result$status, "success")) {
-    stop("successful forecast result status must be 'success'", call. = FALSE)
-  }
-  if (
-    !is.logical(result$fallback_used) || length(result$fallback_used) != 1L ||
-      is.na(result$fallback_used)
-  ) {
-    stop("forecast result fallback_used must be one logical value", call. = FALSE)
-  }
-  if (!is.list(result$provenance)) {
-    stop("forecast result provenance must be a list", call. = FALSE)
-  }
-  if (isTRUE(result$fallback_used)) {
-    fallback_settings <- result$provenance$settings
-    if (
-      !identical(result$requested_method_id, "stlm_ar_forec") ||
-        !identical(result$executed_method_id, "auto_arima_forec") ||
-        !is.character(result$fallback_reason) || !nzchar(result$fallback_reason) ||
-        !identical(result$provenance$original_stl_error, result$fallback_reason) ||
-        !identical(
-          fallback_settings,
-          list(selected_branch = "auto_arima_d0_D0", d = 0L, D = 0L)
-        ) ||
-        !is.character(result$provenance$package_version) ||
-        !nzchar(result$provenance$package_version)
-    ) {
-      stop("fallback forecast result has inconsistent provenance", call. = FALSE)
-    }
-  } else if (
-    !identical(result$requested_method_id, result$executed_method_id) ||
-      !is.null(result$fallback_reason)
-  ) {
-    stop("normal forecast result has inconsistent fallback provenance", call. = FALSE)
   }
   result
 }
@@ -429,7 +351,7 @@ validate_forecast_result <- function(result) {
     provenance = provenance,
     status = "success"
   )
-  validate_forecast_result(result)
+  result
 }
 
 # Purpose: Execute one central-interval adapter under the common result contract.
@@ -605,11 +527,6 @@ auto_arima_forec <- function(request) {
 #' Outputs: Common result using forecast-package central intervals and their
 #'   symmetric transformed-scale mean/median, without an internal transformation.
 ets_forec <- function(request) {
-  settings <- request$settings %||% list()
-  opt_crit <- settings$opt_crit %||% "mae"
-  if (length(opt_crit) != 1L || !identical(as.character(opt_crit), "mae")) {
-    stop("settings.opt_crit must be 'mae' for ets_forec", call. = FALSE)
-  }
   .run_interval_adapter(
     request,
     "ets_forec",
@@ -784,7 +701,7 @@ stlm_ar_forec <- function(request) {
   )
   provenance$original_stl_error <- stl_error
   provenance$r_period <- request$frequency
-  validate_forecast_result(list(
+  list(
     task_id = request$task_id,
     run_id = request$run_id,
     dataset_id = request$dataset_id,
@@ -801,7 +718,7 @@ stlm_ar_forec <- function(request) {
     fallback_reason = stl_error,
     provenance = provenance,
     status = "success"
-  ))
+  )
 }
 
 #' Forecast with a random walk including drift.
@@ -940,9 +857,10 @@ forecast_method_registry <- function() {
 #' Outputs: One validated result. Model and output-validation failures propagate;
 #'   STL-AR owns its sole approved fitting fallback inside its method adapter.
 run_forecast_method <- function(request, registry = forecast_method_registry()) {
-  registry <- .validated_registry(registry)
-  request <- validate_forecast_request(request)
   method_id <- request$method_id
+  if (!method_id %in% names(registry)) {
+    stop("unknown forecast method_id: ", method_id, call. = FALSE)
+  }
   validate_forecast_result(registry[[method_id]](request))
 }
 
@@ -976,7 +894,6 @@ forecast_result_to_json <- function(result) {
   if (!requireNamespace("jsonlite", quietly = TRUE)) {
     stop("R package 'jsonlite' is required", call. = FALSE)
   }
-  result <- validate_forecast_result(result)
   jsonlite::toJSON(
     result,
     auto_unbox = TRUE,

@@ -162,6 +162,13 @@ configured bounded item retry is allowed, with no hidden scientific fallback.
 Workers receive neither writer connections nor MLflow clients; foundation-model
 assets are reused from worker-local caches, not downloaded per item.
 
+Ordinary requests and numerical results use JSON. Large fitted models remain
+files: providers save temporary fits, the coordinator publishes canonical files
+before accepting completion, and incremental rsync prepares worker-local copies
+once before pending prediction work. Classifier sessions load and reuse local
+models across groups. No model-byte registration, runtime checksum gate or
+automatic reopening of completed training is part of this path.
+
 ## Research tracking
 
 The explicit `MLflowResearchTracking` adapter uses the official MLflow package,
@@ -189,7 +196,10 @@ Normal execution validates only:
 
 Trusted internal objects are not repeatedly revalidated. Acceptance checks only
 planned atomic identities, accepted predecessors and the required next output
-reference. Unlisted MVP behaviour is absent by default: no calibration, tuning,
+reference. Native loaders and ordinary file operations own internal model-file
+handling. Output checks retain scientifically usable dimensions/values, not
+exact internal envelope/version/provenance policing or content attestation.
+Unlisted MVP behaviour is absent by default: no calibration, tuning,
 speculative validation/conversion, benchmark/environment probes, compatibility
 paths or monitoring frameworks. New capabilities need researcher approval.
 

@@ -9,15 +9,16 @@ and affine inversion) and docs/directional-models.md (representations/classifier
 
 from __future__ import annotations
 
-import base64
-import hashlib
-import math
+import json
+import shutil
+import socket
+import subprocess
 from typing import Any, Iterator
 
 from p04_forecast.providers import native_request
 from p04_forecast.contract import ForecastContract
 from util.providers import run_r
-from util.runtime import DataRef, WorkItem
+from util.runtime import CODE_ROOT, DataRef, WorkItem
 from util.transformations import inverse_transformation
 
 
@@ -70,29 +71,25 @@ def calculate_representation_batch(items: list[WorkItem]) -> list[tuple[str, dic
     """Reuse a worker's pinned Mantis model for a bounded group of inputs."""
     response = native_request("mantis", items[0].payload["execution"],
         {"command": "encode", "values": [item.payload["values"] for item in items]})
-    if len(response["vectors"]) != len(items):
-        raise ValueError("Mantis returned an unexpected number of embeddings")
     outputs = []
     for item, vector in zip(items, response["vectors"], strict=True):
-        if len(vector) != 256 or not all(math.isfinite(value) for value in vector):
-            raise ValueError(f"invalid Mantis embedding: {item.key}")
         outputs.append((item.key, {"input_key": item.payload["input_key"], "values": vector,
             "method": "mantis_8m_legacy_cls", "provider": response["provider"]}))
     return outputs
 
 
 def calculate_decision_model(item: WorkItem) -> dict[str, Any]:
-    """Fit one configured training unit; return trusted native bytes and lineage."""
+    """Fit one configured training unit; return a temporary file and lineage."""
     response = native_request("classifiers", item.payload["execution"],
         {"command": "fit", **item.payload["request"]})
     return {**response, "model": item.payload["model"], "horizon": item.payload["horizon"],
             "reference_keys": item.payload["reference_keys"]}
 
 
-def calculate_directional_prediction(item: WorkItem, *, artifacts: dict[str, bytes]) -> dict[str, Any]:
+def calculate_directional_prediction(item: WorkItem) -> dict[str, Any]:
     """Return complete binary labels from accepted artifacts, never fit on queries."""
     response = native_request("classifiers", item.payload["execution"],
-        {"command": "predict", **item.payload["request"]}, artifacts=artifacts)
+        {"command": "predict", **item.payload["request"]})
     labels = response["labels"]
     if len(labels) != 14 or any(type(value) is not int or value not in (0, 1) for value in labels):
         raise ValueError(f"invalid directional labels: {item.key}")
@@ -127,28 +124,6 @@ class Application:
     def forecast_pool(self) -> DataRef:
         """Return the stored individual/directional pool consumed by Process 05."""
         return self.context.ref("04.05")
-
-    def reconcile_fitted_models(self) -> None:
-        """Make missing fitted files eligible again without repeating stored predictions.
-
-        Per docs/directional-models.md, an artifact is part of a fitted unit's
-        durable boundary. Existing forecasts/embeddings/predictions stay accepted;
-        only missing model units and their enclosing completion are reopened.
-        """
-        missing = [key for key, row in self.store.rows("04.03").items()
-                   if not (self.context.request.root / row["path"]).is_file()]
-        if not missing:
-            return
-        connection = self.store.connection
-        connection.begin()
-        try:
-            connection.executemany("DELETE FROM atomic_results WHERE subflow_id='04.03' AND atomic_key=?",
-                                   [(key,) for key in missing])
-            connection.execute("DELETE FROM milestones WHERE milestone_id IN ('04','04.03','04.05')")
-            connection.commit()
-        except BaseException:
-            connection.rollback()
-            raise
 
     def _execution(self, provider: str) -> dict[str, Any]:
         execution = self.configuration["execution"]
@@ -255,7 +230,6 @@ class Application:
         """
         accepted = []
         for key, result in results:
-            content = base64.b64decode(result["artifact"], validate=True)
             frequency, model, _ = key.split("/")
             frequency_name = {"D": "daily", "W": "weekly", "M": "monthly",
                               "Q": "quarterly", "Y": "yearly", "H": "hourly"}[frequency]
@@ -263,24 +237,42 @@ class Application:
             path = self.model_root / model / frequency_name / filename
             path.parent.mkdir(parents=True, exist_ok=True)
             temporary = path.with_suffix(".partial")
-            temporary.write_bytes(content)
+            source = result["temporary_path"]
+            remote = result["host"].split(".")[0].lower() != socket.gethostname().split(".")[0].lower()
+            if remote:
+                machines = json.loads((CODE_ROOT / "config/machines.json").read_text())["machines"]
+                machine = next(m for m in machines.values()
+                    if m["hostname"].split(".")[0].lower() == result["host"].split(".")[0].lower())
+                target = f"{machine['ssh_user']}@{machine['hostname']}"
+                subprocess.run(["rsync", "-t", "-e", "ssh -o BatchMode=yes",
+                    f"{target}:{source}", str(temporary)], check=True)
+            else:
+                shutil.move(source, temporary)
             temporary.replace(path)
-            accepted.append((key, {k: value for k, value in result.items() if k != "artifact"} | {
-                "path": str(path.relative_to(self.context.request.root)), "size": len(content),
-                "sha256": hashlib.sha256(content).hexdigest()}))
+            if remote:
+                subprocess.run(["ssh", "-o", "BatchMode=yes", target, "rm", source], check=True)
+            accepted.append((key, {k: value for k, value in result.items() if k != "temporary_path"} | {
+                "path": str(path.relative_to(self.context.request.root))}))
         self.store.accept("04.03", accepted)
 
-    def _artifact(self, row: dict[str, Any]) -> bytes:
-        content = (self.context.request.root / row["path"]).read_bytes()
-        if len(content) != row["size"] or hashlib.sha256(content).hexdigest() != row["sha256"]:
-            raise ValueError(f"fitted artifact integrity mismatch: {row['path']}")
-        return content
+    def prepare_directional_models(self, items: list[WorkItem]) -> None:
+        """Copy required canonical files once to eligible prediction hosts via rsync.
 
-    def directional_artifacts(self, items: list[WorkItem]) -> dict[str, bytes]:
-        """Read verified accepted fitted bytes once for the pending prediction plan."""
-        required = {key for item in items for key in item.payload["request"]["artifact_ids"]}
-        return {row["sha256"]: self._artifact(row) for row in self.store.rows("04.03").values()
-                if row["sha256"] in required}
+        Default rsync temporary-file publication keeps partial files out of final
+        paths. Completed training is never reopened when a copy/load fails.
+        """
+        paths = sorted({path for item in items for path in item.payload["request"]["model_paths"]})
+        if not paths:
+            return
+        settings = self.context.execution.settings
+        machines = json.loads((CODE_ROOT / "config/machines.json").read_text())["machines"]
+        hosts = {allocation["machine"] for allocation in settings.get("workers", [])
+                 if "CPU=" in allocation["resources"] and allocation["machine"] != settings["coordinator"]}
+        for host in sorted(hosts):
+            machine = machines[host]
+            target = f"{machine['ssh_user']}@{machine['hostname']}:{machine['project_root']}/"
+            subprocess.run(["rsync", "-rtR", "-e", "ssh -o BatchMode=yes", *paths, target],
+                           cwd=self.context.request.root, check=True)
 
     def pending_directional_predictions(self, modelling: DataRef) -> list[WorkItem]:
         """Plan complete official vectors using accepted model artifacts and no actuals."""
@@ -296,7 +288,7 @@ class Application:
                     continue
                 model_keys = [f"{row['frequency']}/{model}/{h}" for h in
                               (["all"] if model == "directional_dtw" else range(1, 15))]
-                request = {"model": model, "artifact_ids": [models[k]["sha256"] for k in model_keys],
+                request = {"model": model, "model_paths": [models[k]["path"] for k in model_keys],
                     "values": row["values"] if model == "directional_dtw" else representations[input_key]["values"]}
                 items.append(WorkItem(key, {"input_key": input_key, "model": model, "model_keys": model_keys,
                     "request": request, "execution": self._execution("classifiers")}))

@@ -4,11 +4,10 @@ Mocked execution and rendering verify canonical defaults and JSON contracts;
 no scientific process, native calculation or output regeneration is invoked.
 """
 
-import base64
-import hashlib
 import io
 import json
 import os
+import socket
 import subprocess
 import sys
 import tempfile
@@ -140,15 +139,32 @@ class ResearcherInterfaceTests(unittest.TestCase):
                      ("directional_mantis_rf", 14, "horizon_14.pickle")]
             for model, horizon, filename in cases:
                 key = f"D/{model}/{horizon or 'all'}"
+                source = root / "temporary.pickle"
+                source.write_bytes(content)
                 Application(context).accept_decision_models([(key, {"model": model, "horizon": horizon,
-                    "artifact": base64.b64encode(content).decode("ascii")})])
+                    "temporary_path": str(source), "host": socket.gethostname()})])
                 relative = f"models/{model}/daily/{filename}"
                 self.assertEqual(accepted[key]["path"], relative)
                 self.assertEqual((root / relative).read_bytes(), content)
-                self.assertEqual(accepted[key]["size"], len(content))
-                self.assertEqual(accepted[key]["sha256"], hashlib.sha256(content).hexdigest())
+                self.assertFalse(source.exists())
             self.assertEqual(len(list((root / "models").rglob("*.pickle"))), 3)
             self.assertEqual(list(root.rglob("*.partial")), [])
+
+    def test_native_session_keeps_concurrent_responses_with_their_requests(self):
+        """Concurrent callers cannot consume another request's provider response."""
+        from concurrent.futures import ThreadPoolExecutor
+        from p04_forecast.providers import NativeSession
+
+        code = ("import json,sys; print(json.dumps({'type':'ready'}),flush=True); "
+                "exec(\"for line in sys.stdin:\\n r=json.loads(line)\\n "
+                "if r.get('command')=='shutdown': break\\n print(json.dumps(r),flush=True)\")")
+        session = NativeSession([sys.executable, "-u", "-c", code], 10)
+        try:
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                results = list(pool.map(lambda i: session.request({"value": i}), range(20)))
+            self.assertEqual(results, [{"value": i} for i in range(20)])
+        finally:
+            session.close()
 
     def test_researcher_import_sets_canonical_prefect_home_before_settings_load(self):
         """A fresh entry-point import resolves Prefect settings inside hidden runtime."""

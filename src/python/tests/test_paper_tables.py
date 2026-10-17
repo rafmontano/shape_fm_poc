@@ -31,14 +31,14 @@ class PaperTableTests(unittest.TestCase):
         for h, scores in ((1, (4, 4, 2)), (2, (2, 4, 2))):
             for model, correct in zip(("a", "b", "c"), scores):
                 rows.append({"frequency": "Daily", "model": model, "horizon": h,
-                             "correct_count": correct, "evaluation_count": 4,
-                             "accuracy": correct / 4, "result_fingerprint": f"{model}/{h}/{correct}"})
+                             "correct_count": correct, "evaluation_count": 4})
         result = TableReports.directional_profile(rows, ["a", "b", "c"], {"Daily": [1, 2]})
         self.assertEqual(result["mean_ranks"], {"a": 2, "b": 1.25, "c": 2.75})
+        self.assertEqual([row["accuracy"] for row in result["matrix"]], [1, 1, .5, .5, 1, .5])
         incomplete = TableReports.directional_profile(rows[:-1], ["a", "b", "c"], {"Daily": [1, 2]})
         self.assertIsNone(incomplete["mean_ranks"])
         self.assertEqual(incomplete["incomplete_models"], {"c": [("Daily", 2)]})
-        self.assertNotEqual(incomplete["matrix_fingerprint"], result["matrix_fingerprint"])
+        self.assertEqual(incomplete["matrix"], result["matrix"][:-1])
         with self.assertRaisesRegex(ValueError, "duplicate"):
             TableReports.directional_profile(rows + rows[:1], ["a", "b", "c"], {"Daily": [1, 2]})
 

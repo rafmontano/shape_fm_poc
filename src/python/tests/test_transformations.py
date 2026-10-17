@@ -83,23 +83,17 @@ class StandardisationContractTests(unittest.TestCase):
         self.assert_vector_close(inverse_transformation(transformed, state), held_out)
         self.assertEqual(state["count"], len(history))
 
-    def test_invalid_inputs_and_malformed_states_fail_clearly(self) -> None:
-        """Empty/nonfinite values, aliases, versions, and bad fields never fabricate output."""
+    def test_invalid_inputs_fail_clearly(self) -> None:
+        """Empty/nonfinite observations never fabricate fitted output."""
         for values in ([], [1.0, float("nan")], [1.0, float("inf")]):
             with self.subTest(values=values), self.assertRaisesRegex(ValueError, "finite|empty"):
                 fit_transformation(values, STANDARDISATION_RECIPE)
-        valid = fit_transformation([1.0, 2.0], STANDARDISATION_RECIPE)
-        invalid_states = [
-            {**valid, "version": 2},
-            {**valid, "version": 1.0},
-            {**valid, "recipe": "standardize_sample_v1"},
-            {**valid, "scale": 0.0},
-            {key: value for key, value in valid.items() if key != "count"},
-            {**valid, "extra": True},
-        ]
-        for state in invalid_states:
-            with self.subTest(state=state), self.assertRaises(ValueError):
-                apply_transformation([3.0], state)
+
+    def test_apply_and_inverse_use_trusted_affine_parameters(self) -> None:
+        """Internal apply/inverse need fitted numbers, not portable metadata policing."""
+        state = {"centre": 20.0, "scale": 10.0}
+        self.assertEqual(apply_transformation([10.0, 30.0], state), (-1.0, 1.0))
+        self.assertEqual(inverse_transformation([-1.0, 1.0], state), (10.0, 30.0))
 
     def test_ordered_steps_apply_forward_and_inverse_reverse(self) -> None:
         """The small registered interface composes state without formula strings."""

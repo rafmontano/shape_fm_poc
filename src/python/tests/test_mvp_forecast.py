@@ -4,9 +4,8 @@ Asymmetric queries and tied references check horizon reuse, stable identity ties
 and independent RF horizon labels through the real pinned provider environment.
 """
 
-import base64
-import hashlib
 import json
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -63,18 +62,20 @@ class MVPForecastTests(unittest.TestCase):
                 {"identity": "z-tied", "values": query, "labels": [1 - value for value in labels]},
                 {"identity": "b-other", "values": other, "labels": [0] * 14},
                 {"identity": "a-tied", "values": query, "labels": labels}]})
-        content = base64.b64decode(fitted["artifact"])
-        identity = hashlib.sha256(content).hexdigest()
-        result = native_request("classifiers", settings, {"command": "predict", "model": "directional_dtw",
-            "artifact_ids": [identity], "values": query}, artifacts={identity: content})
-        self.assertEqual(result["labels"], labels)
-        self.assertEqual(result["nearest_reference"], "a-tied")
-        self.assertEqual(result["effective_width"], 6)
-        self.assertEqual(result["distance"], 0.0)
-        result = native_request("classifiers", settings, {"command": "predict", "model": "directional_dtw",
-            "artifact_ids": [identity], "values": other}, artifacts={})
-        self.assertEqual(result["nearest_reference"], "b-other")
-        self.assertEqual(result["labels"], [0] * 14)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "model.pickle"
+            shutil.move(fitted["temporary_path"], path)
+            result = native_request("classifiers", settings, {"command": "predict", "model": "directional_dtw",
+                "model_paths": [str(path)], "values": query})
+            self.assertEqual(result["labels"], labels)
+            self.assertEqual(result["nearest_reference"], "a-tied")
+            self.assertEqual(result["effective_width"], 6)
+            self.assertEqual(result["distance"], 0.0)
+            path.unlink()  # Later queries reuse the loaded object, not another file read.
+            result = native_request("classifiers", settings, {"command": "predict", "model": "directional_dtw",
+                "model_paths": [str(path)], "values": other})
+            self.assertEqual(result["nearest_reference"], "b-other")
+            self.assertEqual(result["labels"], [0] * 14)
 
     def test_random_forest_uses_independent_horizon_labels(self):
         """Opposite horizon labels cannot collapse into one reused classifier."""
@@ -82,19 +83,18 @@ class MVPForecastTests(unittest.TestCase):
         settings = {"environment": "environments/classifiers/.venv", "timeout": 120}
         values = [[float(sign * (i % 7 + 2)) for i in range(256)]
                   for sign in [-1] * 12 + [1] * 12]
-        artifacts = {}
-        artifact_ids = []
-        for horizon in range(14):
-            labels = [horizon % 2] * 12 + [1 - horizon % 2] * 12
-            result = native_request("classifiers", settings, {"command": "fit", "model": "directional_mantis_rf",
-                "values": values, "labels": labels,
-                "parameters": document["classifiers"]["random_forest"]["parameters"]})
-            content = base64.b64decode(result["artifact"])
-            identity = hashlib.sha256(content).hexdigest()
-            artifacts[identity] = content
-            artifact_ids.append(identity)
-        for index, expected in ((0, [h % 2 for h in range(14)]),
-                                (23, [1 - h % 2 for h in range(14)])):
-            result = native_request("classifiers", settings, {"command": "predict", "model": "directional_mantis_rf",
-                "values": values[index], "artifact_ids": artifact_ids}, artifacts=artifacts if index == 0 else {})
-            self.assertEqual(result["labels"], expected)
+        with tempfile.TemporaryDirectory() as directory:
+            paths = []
+            for horizon in range(14):
+                labels = [horizon % 2] * 12 + [1 - horizon % 2] * 12
+                result = native_request("classifiers", settings, {"command": "fit", "model": "directional_mantis_rf",
+                    "values": values, "labels": labels,
+                    "parameters": document["classifiers"]["random_forest"]["parameters"]})
+                path = Path(directory) / f"horizon_{horizon + 1:02d}.pickle"
+                shutil.move(result["temporary_path"], path)
+                paths.append(str(path))
+            for index, expected in ((0, [h % 2 for h in range(14)]),
+                                    (23, [1 - h % 2 for h in range(14)])):
+                result = native_request("classifiers", settings, {"command": "predict", "model": "directional_mantis_rf",
+                    "values": values[index], "model_paths": paths})
+                self.assertEqual(result["labels"], expected)

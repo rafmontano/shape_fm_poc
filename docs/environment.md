@@ -57,89 +57,22 @@ Remote SSH worker startup includes the native R executable paths and keeps Mac
 workers awake with `caffeinate`. Run the normal entry point in a persistent
 terminal and inhibit Ubuntu sleep while the experiment is active.
 
-### Preserved Ubuntu experiment
+### Runtime model files
 
-Experiment `f78d1042-bc9f-434a-b162-daacb9c25d71` retains its canonical parent and
-child databases and MLflow run `79f69155d77b43a2892844bf560d0267`. Processes 01–03
-remain accepted: 4,227 canonical/prepared series, 128,933 modelling inputs and
-14,227 reusable-feature items. Their accepted records and timestamps, and all
-559 forecasts accepted before archived-ingestion implementation, are unchanged.
+The coordinator owns canonical directional models. Remote fits return temporary
+file references; rsync over the existing SSH connection retrieves complete files
+for canonical publication before DuckDB accepts training completion. At 04.04
+entry, ordinary incremental rsync prepares the required files on participating
+CPU hosts. Providers load local files and retain models for their process-owned
+session lifetime; requests and numerical results remain JSON.
 
-Subflow 01.04 imports archives into common forecast storage with atomic
-completion references, not duplicate vectors. The full Ubuntu invocation loaded
-M4comp2018 once and imported 8,390 missing forecasts, reusing 64; all 8,454
-SMYL/FFORMA inputs are now accepted. A common canonical-series/window query
-returns AutoARIMA, Chronos, SMYL and FFORMA together. Focused checks passed for
-association, partial restart, unchanged timestamps, common retrieval and
-Forecast's prerequisite/reuse behaviour. An isolated Process 01 run imported 200
-forecasts for 100 real Daily series; repeated import added zero items without
-reopening the archive or fitting models. Its temporary experiment was removed.
+There are no model-content checksum gates, Base64 model messages, registration
+handshakes or automatic retraining of completed items. Copy/load errors surface
+with their native path/host context. Missing worker copies can be recopied;
+loss of an authoritative completed model requires researcher direction.
 
-The continuation is stopped in 04.01 with **35,460 of 67,632** forecasts
-accepted (27,006 calculated and 8,454 imported); 32,172 remain pending. The
-researcher-authorized input-loading/payload correction selects required windows
-and fields before Python decoding and releases consumed groups/futures. Focused
-non-scientific checks passed: unchanged forecast/representation/model/prediction
-requests and evaluation inputs, released input ownership, and partial failure
-preserving 15 commits before resuming exactly three missing fixture identities.
-The real pending plan selected 2,307 official inputs rather than decoding all
-128,933 inputs. No accepted science or archive loading was repeated.
-
-The single additional recovery committed **112** forecasts, preserving all
-35,348 previously accepted forecasts and timestamps and every earlier accepted
-subflow/child record. It stopped on an Ubuntu native-R subprocess SIGSEGV at
-14:37:21 on 17 October 2026, in the first wave of 04.01. Evidence is in
-`.runtime/dask/full_daily_payload_recovery_1.log` (first failure at lines 888–911)
-and the kernel journal. The R provider was
-`src/r/p04_forecast/forecast_worker.R`, called by `calculate_forecast_batch` via
-`util.providers.run_r`; worker `tcp://192.168.1.44:46807` was processing series
-`D/2729`, official window `000004197`, methods `stlm_ar`, `rw_drift`, `thetaf`,
-`naive`, `snaive`, `ses`, `holt`, `damped`. R reported address `0x13`,
-"memory not mapped". The kernel instruction resolves in the installed
-`libR.so` to `Rf_allocVector3`, `src/main/memory.c:2872`; no R traceback identifies
-which method or startup operation reached it. The coordinator drained successful
-in-flight groups and exited normally with status 1 after propagating the error.
-No second recovery was submitted.
-
-The earlier coordinator Python SIGSEGV during `cloudpickle.reducer_override` →
-Dask serialization remains undiagnosed; its evidence is
-`.runtime/dask/full_daily_ingestion_recovery_2.log`. It did not recur during this
-short attempt. Narrower reads/released payloads are confirmed improvements, not
-an established fix for that crash. The earlier ordinary-R crash in
-`renv_scope_lock` during sandbox activation is separate evidence; the new R
-allocator fault alone does not establish the same failing R operation. Native-R
-backtrace diagnosis in the existing pinned environment is recommended before
-authorizing another experiment attempt.
-
-Both machines participated in the preserved experiment; all 50 approved workers
-registered again. Ubuntu owned ingestion, commits, tracking and GPU forecasts.
-The latest attempt accepted nine additional Chronos forecasts and 103 native-R
-forecasts. Exact per-host CPU item totals are not recorded by the existing
-forecast envelope. No worker counts, scientific settings, dependencies or accepted
-values were changed; there is no evidence justifying a CPU reduction or reboot.
-
-Owned execution services and writers are stopped, and the same resumable MLflow
-run is marked failed. Both databases remain on Ubuntu. Required fitted models,
-five CSVs and six figures have not been produced; later subflows and Processes
-05–06 were not reached. A full no-new-work restart cannot be claimed while the
-experiment is incomplete. Further execution requires researcher direction under
-the exhausted bounded recovery rule, not a reset or archive retrieval on Mac.
-
-Recorded flow timings (seconds; accepted earlier science was not repeated):
-
-| Process / subflow | Elapsed |
-| --- | ---: |
-| 01 canonical import, before archive addition | 101.501 |
-| 01.01 / 01.02 / 01.03 | 2.002 / 97.415 / 1.002 |
-| 01.04 full archived import, including planning/commit | 92.024 |
-| 02 Preprocess | 191.438 |
-| 02.01 / 02.02 | 188.388 / 1.002 |
-| 03 Transform | 6,481.968 |
-| 03.01 / 03.02 / 03.03 / 03.04 | 8.219 / 5,798.722 / 672.850 / 1.003 |
-| 04.01 prior serialization-failed continuation, to last pre-crash task log | 5,919.176 (incomplete) |
-| Additional recovery experiment invocation | 146.058 (failed) |
-| 04 Forecast / 04.01 additional recovery | 141.051 / 140.053 (failed) |
-| 04.02–04.05 / 05 / 06 | Not reached |
+XMP remains researcher-reported disabled. Runtime does not change firmware,
+qualify the environment or infer the cause of earlier native failures.
 
 Normal execution derives Prefect/Dask addresses from the selected coordinator
 and machine inventory. The researcher does not manually manage

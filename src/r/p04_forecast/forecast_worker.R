@@ -13,13 +13,7 @@ source("src/r/p04_forecast/forecast_methods.R")
 
 payload <- jsonlite::fromJSON(file("stdin"), simplifyVector = FALSE)
 
-# Code constants: exact cross-language fields and point-only M4 allowlist.
-.FORECAST_REQUEST_FIELDS <- c(
-  "contract_version", "experiment_id", "task_id", "forecast_instance_id",
-  "variant_id", "dataset_id", "series_id", "model_id", "required_capability",
-  "context", "horizon", "frequency", "seasonal_period", "input_scale",
-  "quantile_levels", "seed", "model_settings"
-)
+# Approved point-only M4 methods; other pool methods use the native registry.
 .M4_POINT_METHODS <- c(
   naive2 = "naive2_forec", ses = "ses_forec", holt = "holt_forec",
   damped = "damped_forec"
@@ -40,12 +34,9 @@ r_method_id <- function(model_id) {
 }
 
 # Purpose: Execute one common request through the registered or M4 point pool.
-# Inputs: Exact language-neutral forecast request.
-# Outputs: Exact language-neutral successful forecast result.
+# Inputs: Internal past-only forecast request.
+# Outputs: Successful forecast result with native provenance.
 forecast_one <- function(job) {
-  if (!identical(sort(names(job)), sort(.FORECAST_REQUEST_FIELDS))) {
-    stop("forecast request must contain exactly the common contract fields", call. = FALSE)
-  }
   method_id <- r_method_id(job$model_id)
   started <- proc.time()[["elapsed"]]
   if (identical(job$required_capability, "mean_only")) {

@@ -14,9 +14,6 @@ from typing import Any, Iterable, Mapping, Sequence
 REGISTERED_TRANSFORMATION_STEPS = ("identity", "standardise_sample_v1")
 STANDARDISATION_RECIPE = "standardise_sample_v1"
 STANDARDISATION_VERSION = 1
-STANDARDISATION_STATE_KEYS = frozenset(
-    {"recipe", "version", "centre", "scale", "count", "constant"}
-)
 
 
 @dataclass(frozen=True)
@@ -41,47 +38,6 @@ def _finite_values(values: Iterable[float], purpose: str) -> tuple[float, ...]:
     if any(not isfinite(value) for value in source):
         raise ValueError(f"{purpose} values must be finite")
     return source
-
-
-def _validated_state(state: Mapping[str, Any]) -> dict[str, Any]:
-    """Validate and normalize the exact portable standardisation-state schema."""
-    if not isinstance(state, Mapping) or set(state) != STANDARDISATION_STATE_KEYS:
-        raise ValueError(
-            "standardisation state must contain exactly recipe, version, centre, "
-            "scale, count, and constant"
-        )
-    if state["recipe"] != STANDARDISATION_RECIPE:
-        raise ValueError(f"unsupported transformation state recipe: {state['recipe']!r}")
-    if (
-        isinstance(state["version"], bool)
-        or not isinstance(state["version"], int)
-        or state["version"] != STANDARDISATION_VERSION
-    ):
-        raise ValueError(f"unsupported {STANDARDISATION_RECIPE} state version")
-    count = state["count"]
-    if isinstance(count, bool) or not isinstance(count, int) or count < 1:
-        raise ValueError("standardisation state count must be a positive integer")
-    if not isinstance(state["constant"], bool):
-        raise ValueError("standardisation state constant must be boolean")
-    try:
-        centre = float(state["centre"])
-        scale = float(state["scale"])
-    except (TypeError, ValueError) as exc:
-        raise ValueError("standardisation state centre and scale must be numeric") from exc
-    if not isfinite(centre) or not isfinite(scale) or scale <= 0.0:
-        raise ValueError("standardisation state centre must be finite and scale positive")
-    if state["constant"] and scale != 1.0:
-        raise ValueError("constant standardisation state must use effective scale 1")
-    if not state["constant"] and count < 2:
-        raise ValueError("nonconstant standardisation state requires at least two observations")
-    return {
-        "recipe": STANDARDISATION_RECIPE,
-        "version": STANDARDISATION_VERSION,
-        "centre": centre,
-        "scale": scale,
-        "count": count,
-        "constant": state["constant"],
-    }
 
 
 def fit_transformation(values: Iterable[float], recipe: str) -> dict[str, Any]:
@@ -119,13 +75,12 @@ def fit_transformation(values: Iterable[float], recipe: str) -> dict[str, Any]:
 def apply_transformation(
     values: Iterable[float], state: Mapping[str, Any]
 ) -> tuple[float, ...]:
-    """Apply one already-fitted state without inspecting or refitting other values."""
+    """Apply trusted fitted state without revalidating its portable metadata."""
     source = _finite_values(values, "transformation apply")
     if not state:
         return source
-    fitted = _validated_state(state)
     output = tuple(
-        (value - fitted["centre"]) / fitted["scale"] for value in source
+        (value - state["centre"]) / state["scale"] for value in source
     )
     if any(not isfinite(value) for value in output):
         raise ValueError("standardisation produced a non-finite result")
@@ -135,13 +90,12 @@ def apply_transformation(
 def inverse_transformation(
     values: Iterable[float], state: Mapping[str, Any]
 ) -> tuple[float, ...]:
-    """Invert one already-fitted positive affine state without refitting it."""
+    """Invert trusted fitted positive affine state without refitting it."""
     source = _finite_values(values, "transformation inverse")
     if not state:
         return source
-    fitted = _validated_state(state)
     output = tuple(
-        fitted["centre"] + fitted["scale"] * value for value in source
+        state["centre"] + state["scale"] * value for value in source
     )
     if any(not isfinite(value) for value in output):
         raise ValueError("inverse standardisation produced a non-finite result")

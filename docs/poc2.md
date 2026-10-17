@@ -30,30 +30,14 @@ similar for the POC2 objective, all 1,057 sensitivity candidates completed, the
 tables/exports completed, and a no-new-work restart passed. This accepts the
 research result; the architecture transformation was accepted separately.
 
-The fresh full M4 Daily operational test is completed and technically accepted:
-Processes 01–06 and all thirty process/subflow milestones are complete, all
-4,227 series and 1,057 sensitivity candidates are accepted, zero scientific items
-are pending, and five CSVs and six figures are published. The no-new-work restart
-submitted zero scientific calculation tasks and preserved accepted rows and
-timestamps, all fifteen fitted models and published file hashes/mtimes. The two
-canonical databases and existing MLflow run are retained; execution services and
-database writers are stopped on both machines. The operational capacity and
-failure-containment requirements (exit items 06 and 19) are satisfied for this
-test; no additional tuning or retry mechanism is required for its closeout.
-
-The sensitivity execution issue is closed for POC2: the full Daily experiment
-completed through the supported parallel Mac placement, published its declared
-outputs and passed the no-new-work restart. The underlying Ubuntu crash cause
-was not established. This is a limitation, not an investigation, backlog item or
-acceptance blocker; the operational policy is in [evaluation](evaluation.md#parallel-execution-and-restart).
-
-Captured Ubuntu failures occurred in Python parameter handling and native memory
-cleanup; the originating defect was not established. After accepted closeout,
-the four test-owned core dumps, debugger/native/launcher logs, temporary transport
-and request probes, obsolete investigation snapshots/reports and stale Dask
-scratch files were removed. Final execution/restart evidence, scientific state,
-model assets and MLflow state were preserved. Ubuntu-only execution is deferred
-to a future researcher decision; no further qualification is required here.
+The approved runtime simplification keeps fitted models as files, uses ordinary
+SSH/rsync delivery and local session loading, and removes redundant internal
+qualification and content attestation. The researcher authorized clearing the
+previous generated experiment once and executing a fresh Ubuntu-coordinated
+4,227-series Daily experiment through Processes 01–06, publication and one
+no-new-work restart. Completion must be established from that fresh run, not
+from historical execution. Scientific configuration and calculations remain
+unchanged; sensitivity remains on coordinator CPU workers.
 
 The five-layer architecture transformation is researcher-accepted. It delivered
 the approved workflow hierarchy, readable process ownership, canonical paths,
@@ -73,9 +57,9 @@ backlog. Completed operational execution does not by itself establish clean-room
 dependency reconstruction or researcher presentation acceptance. Execution logs
 are not living documentation. No remaining exit item begins as part of closeout.
 
-Canonical DuckDB state, fitted artifacts, tables, figures and the existing MLflow
-run are delivered at the repository root. Git history preserves the transformation
-evidence; it is not retained as a competing living design document.
+Canonical DuckDB state, fitted artifacts, tables, figures and the new MLflow
+run belong at the repository root. Git history preserves superseded execution
+and transformation evidence, not a competing living design document.
 
 ## Exit criteria
 

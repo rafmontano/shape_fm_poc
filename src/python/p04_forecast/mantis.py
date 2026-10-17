@@ -30,16 +30,6 @@ REPRESENTATION_DIMENSION = 256
 REPRESENTATION_DTYPE = "float32"
 CHECKPOINT_REPOSITORY = "paris-noah/Mantis-8M"
 CHECKPOINT_REVISION = "bc7d5ab40c02133386a28e2c127f35c17c86901d"
-CHECKPOINT_FILES = {
-    "config.json": "c9e8b1e5d9b95510c7d446d1e1ef46d5d36c3eae0c7a9b409c8d3c6c7ce7837c",
-    "model.safetensors": "d5077b60438c477a627feeef0e7365588bdb351eaa5b5bcfb0b3d5fc5804f8c8",
-}
-EXPECTED_RUNTIME = {
-    "mantis-tsfm": "1.1.0",
-    "numpy": "2.3.5",
-    "torch": "2.12.0",
-    "transformers": "4.57.6",
-}
 
 
 def canonical_json(value: Any) -> str:
@@ -52,21 +42,12 @@ def content_fingerprint(value: Any) -> str:
     return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
 
 
-def _file_sha256(path: Path) -> str:
-    """Hash one exact checkpoint file without loading it into memory."""
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for block in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
 def dependency_versions() -> dict[str, str]:
-    """Report and validate the exact native Mantis runtime."""
-    versions = {name: importlib.metadata.version(name) for name in EXPECTED_RUNTIME}
-    if versions != EXPECTED_RUNTIME:
-        raise RuntimeError(f"Mantis runtime differs from the locked contract: {versions!r}")
-    return versions
+    """Report installed package versions as operational provenance only."""
+    return {
+        name: importlib.metadata.version(name)
+        for name in ("mantis-tsfm", "numpy", "torch", "transformers")
+    }
 
 
 def default_checkpoint_path() -> Path:
@@ -83,19 +64,6 @@ def default_checkpoint_path() -> Path:
         / "snapshots"
         / CHECKPOINT_REVISION
     )
-
-
-def checkpoint_fingerprint(checkpoint_path: Path) -> str:
-    """Verify every required local checkpoint file and return a combined fingerprint."""
-    observed = {}
-    for name, expected in CHECKPOINT_FILES.items():
-        path = checkpoint_path / name
-        if not path.is_file():
-            raise FileNotFoundError(f"pinned Mantis checkpoint file is missing: {path}")
-        observed[name] = _file_sha256(path)
-        if observed[name] != expected:
-            raise RuntimeError(f"pinned Mantis checkpoint fingerprint differs for {name}")
-    return content_fingerprint(observed)
 
 
 def validate_device(device: str) -> torch.device:
@@ -148,16 +116,12 @@ def resize_for_mantis(values: Sequence[Sequence[float]]) -> np.ndarray:
 def representation_description(
     device: torch.device,
     runtime: Mapping[str, str],
-    checkpoint_content_fingerprint: str,
 ) -> dict[str, Any]:
     """Build the stable scientific definition and operational runtime description."""
     definition = {
         "provider": "mantis.Mantis8M",
-        "package_version": runtime["mantis-tsfm"],
         "checkpoint_repository": CHECKPOINT_REPOSITORY,
         "checkpoint_revision": CHECKPOINT_REVISION,
-        "checkpoint_files": CHECKPOINT_FILES,
-        "checkpoint_fingerprint": checkpoint_content_fingerprint,
         "input_length": INPUT_LENGTH,
         "resize": {
             "length": RESIZE_LENGTH,
@@ -178,12 +142,11 @@ def representation_description(
     }
 
 
-def describe_runtime(device: str, checkpoint_path: Path | None = None) -> dict[str, Any]:
-    """Validate runtime, requested device and checkpoint bytes without loading the network."""
+def describe_runtime(device: str) -> dict[str, Any]:
+    """Describe scientific settings and requested device without loading the network."""
     resolved_device = validate_device(device)
     runtime = dependency_versions()
-    fingerprint = checkpoint_fingerprint(checkpoint_path or default_checkpoint_path())
-    return representation_description(resolved_device, runtime, fingerprint)
+    return representation_description(resolved_device, runtime)
 
 
 class MantisRepresentationProvider:
@@ -196,14 +159,13 @@ class MantisRepresentationProvider:
         checkpoint_path: Path | None = None,
         batch_size: int = 256,
     ):
-        """Validate runtime/device/checkpoint and load the offline model exactly once."""
+        """Select the requested device and load the offline model exactly once."""
         if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1:
             raise ValueError("Mantis batch_size must be a positive integer")
         self.device = validate_device(device)
         self.batch_size = batch_size
         self.checkpoint_path = checkpoint_path or default_checkpoint_path()
         self.runtime = dependency_versions()
-        self.checkpoint_content_fingerprint = checkpoint_fingerprint(self.checkpoint_path)
         # The native loader prints an informational line to stdout. Keep stdout
         # reserved for the worker's single JSON response.
         with contextlib.redirect_stdout(sys.stderr):
@@ -223,7 +185,7 @@ class MantisRepresentationProvider:
     def describe(self) -> dict[str, Any]:
         """Return the exact scientific and runtime representation definition."""
         return representation_description(
-            self.device, self.runtime, self.checkpoint_content_fingerprint
+            self.device, self.runtime
         )
 
     def transform(self, values: Sequence[Sequence[float]]) -> np.ndarray:

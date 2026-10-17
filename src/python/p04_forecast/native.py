@@ -1,20 +1,23 @@
-"""Process 04 isolated native directional provider, without storage or scheduling.
+"""Process 04 isolated native directional provider with local fitted-model files.
 
-JSON-lines requests contain accepted inputs/settings or trusted fitted bytes.
-Responses contain frozen Mantis embeddings, fitted artifacts or binary labels.
+JSON-lines requests contain inputs/settings and ordinary local model paths.
+Responses contain embeddings, temporary fitted-file references or binary labels.
 Provider libraries stay in their pinned native environments.
 """
 
 from __future__ import annotations
 
 import argparse
-import base64
-import hashlib
 import importlib.metadata
 import json
 import pickle
+import socket
 import sys
+import tempfile
+from pathlib import Path
 from typing import Any
+
+CODE_ROOT = Path(__file__).resolve().parents[3]
 
 
 def fit_directional(request: dict[str, Any]) -> dict[str, Any]:
@@ -39,7 +42,12 @@ def fit_directional(request: dict[str, Any]) -> dict[str, Any]:
     else:
         raise ValueError(f"unsupported directional model: {request['model']}")
     package = "aeon" if request["model"] == "directional_dtw" else "scikit-learn"
-    return {"artifact": base64.b64encode(pickle.dumps(model, protocol=5)).decode("ascii"),
+    directory = CODE_ROOT / ".runtime/dask/model-fits"
+    directory.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(dir=directory, suffix=".pickle", delete=False) as stream:
+        pickle.dump(model, stream, protocol=5)
+        path = stream.name
+    return {"temporary_path": path, "host": socket.gethostname(),
             "provider": {package: importlib.metadata.version(package), "numpy": np.__version__}}
 
 
@@ -51,9 +59,13 @@ def predict_directional(request: dict[str, Any], models: dict[str, Any]) -> dict
     RF predictions use the independently fitted classifier for each horizon.
     """
     import numpy as np
+    for path in request["model_paths"]:
+        if path not in models:
+            with (CODE_ROOT / path).open("rb") as stream:
+                models[path] = pickle.load(stream)
     if request["model"] == "directional_dtw":
         from aeon.distances import dtw_distance
-        model = models[request["artifact_ids"][0]]
+        model = models[request["model_paths"][0]]
         query = np.asarray(request["values"], dtype=np.float64)
         distances = [float(dtw_distance(query, reference, window=model["window"]))
                      for reference in model["values"]]
@@ -65,7 +77,7 @@ def predict_directional(request: dict[str, Any], models: dict[str, Any]) -> dict
         raise ValueError(f"unsupported directional model: {request['model']}")
     query = np.asarray([request["values"]], dtype=np.float32)
     return {"labels": [int(models[identity].predict(query)[0])
-                       for identity in request["artifact_ids"]]}
+                       for identity in request["model_paths"]]}
 
 
 def serve(kind: str, device: str) -> None:
@@ -94,22 +106,13 @@ def serve(kind: str, device: str) -> None:
                 if kind == "mantis":
                     response = {"vectors": provider.transform(request["values"]).tolist(),
                                 "provider": provider.describe()}
-                elif request["command"] == "register_artifact":
-                    content = base64.b64decode(request["artifact"], validate=True)
-                    actual = hashlib.sha256(content).hexdigest()
-                    if actual != request["sha256"]:
-                        raise ValueError(f"native fitted artifact integrity mismatch: expected {request['sha256']}, "
-                                         f"received {actual}, {len(content)} bytes")
-                    models[request["sha256"]] = pickle.loads(content)
-                    del content
-                    response = {"type": "registered", "sha256": request["sha256"]}
                 elif request["command"] == "fit":
                     response = fit_directional(request)
                 else:
                     response = predict_directional(request, models)
                 print(json.dumps(response), flush=True)
             except Exception as error:
-                print(json.dumps({"error": f"{type(error).__name__}: {error}"}), flush=True)
+                print(json.dumps({"error": f"{socket.gethostname()}: {type(error).__name__}: {error}"}), flush=True)
     finally:
         if provider is not None:
             provider.close()

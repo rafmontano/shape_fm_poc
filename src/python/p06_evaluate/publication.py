@@ -58,13 +58,14 @@ def publish_stored_outputs(root: Path, report: dict[str, Any] | None = None) -> 
         tables.mkdir()
         figures.mkdir()
         table1 = [{**{k: row[k] for k in ("frequency", "model", "candidate_id", "lambda_up", "lambda_down",
-                    "evaluation_count", "input_fingerprint", "result_fingerprint")},
+                    "evaluation_count")},
                    **row["metrics"], **{f"{k}_improvement_vs_smyl_pct": v
                     for k, v in row["improvement_vs_smyl_pct"].items()}} for row in report["Table1"]]
         _csv(tables / "table_1.csv", list(table1[0]), table1)
         table2 = [{"panel": panel, **row} for panel, rows in report["Table2"].items() for row in rows]
         _csv(tables / "table_2_daily.csv", ["panel", "frequency", "model", "value"], table2)
-        rows = report["directional_rows"]
+        rows = [{**row, "accuracy": row["correct_count"] / row["evaluation_count"]}
+                for row in report["directional_rows"]]
         _csv(tables / "directional_accuracy_by_horizon.csv", list(rows[0]), rows)
         profile = report["figure_2"]["cd"]
         matrix = _matrix(profile)

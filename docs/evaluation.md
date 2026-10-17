@@ -122,6 +122,10 @@ complete.
 The durable identifiers remain `06.03` (Materialise sensitivity surface) and
 `06.04` (Select and retain sensitivity results). The complete surface contains
 1,057 sensitivity candidates, including the seven baseline/oracle candidates.
+Candidates and reports retain scientific identities and lineage, not internal
+input/result/report fingerprints. Horizon accuracy is derived from stored
+correct and evaluation counts; reports do not store and police a duplicate
+accuracy value. This does not change sensitivity execution or selection.
 
 ## Final review
 

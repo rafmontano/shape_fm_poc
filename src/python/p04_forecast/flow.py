@@ -60,9 +60,9 @@ def materialise_directional_predictions(context: ProcessContext, modelling: Data
         if context.state.is_subflow_accepted("04.04"):
             return
         items = service.pending_directional_predictions(modelling)
+        service.prepare_directional_models(items)
         context.execution.run(subflow_id="04.04", items=items,
             calculate=service.calculate_directional_prediction,
-            shared_inputs={"artifacts": service.directional_artifacts(items)},
             accept=service.accept_directional_predictions, on_progress=context.tracking.progress)
         context.state.accept_subflow("04.04")
 
@@ -83,7 +83,6 @@ def run_forecast(context: ProcessContext) -> DataRef:
     """Process level: order 04.01–04.05; accepted DuckDB keys own restart."""
     with context.tracking.process("04", "Forecast"):
         context.state.require_prerequisites("04")
-        context.forecast.reconcile_fitted_models()
         if context.state.is_process_accepted("04"):
             return context.forecast.forecast_pool()
         modelling = context.forecast.modelling_dataset()

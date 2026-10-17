@@ -62,11 +62,9 @@ Check series/method/window identity, horizon and usable numeric values once at
 ingestion. Source package/version and submission identity are provenance. Source
 retrieval is not model fitting or a comparison against GIFT-Eval histories.
 
-For the preserved experiment, completed canonical import remains completed.
-Run only the newly required missing-reference subflow, retaining completed
-Processes 02–03 and all existing forecast values, identities and timestamps.
-Reconcile Process 01 completion with its configured subflows rather than letting
-its previous completion flag skip missing references. Do not reset the experiment.
+Process 01 completion requires its configured subflows, including archived
+import. Resume preserves accepted canonical data and imports only missing
+forecast items; it does not reset the experiment.
 
 ## Process 02 — Preprocess
 
@@ -85,7 +83,8 @@ seasonality test and not GIFT-Eval's scoring seasonality.
 `standardise_sample_v1` fits on the finite prepared historical input. A
 nonconstant input uses sample standard deviation (`n-1`); constant/singleton
 inputs use scale 1. Store the fitted state so forecasts can be inverted without
-refitting.
+refitting. Internally produced affine parameters are trusted on application and
+inversion, without repeated portable-schema validation.
 
 Rolling windows are created only inside the official training boundary. Split
 membership is assigned to the original series before windows are generated, so

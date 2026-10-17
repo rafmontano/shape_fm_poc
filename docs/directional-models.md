@@ -73,20 +73,22 @@ Dask, not scikit-learn, owns parallelism.
 ## Fitted model lifecycle
 
 Ordinary forecast models are not persisted. Expensive directional fitted state
-is stored under the fixed `models/` root through one model-storage interface.
-Provider environments save/load their own trusted artifacts. The coordinator
-verifies the logical relative path, size, checksum and lineage without importing
-provider libraries.
+is stored under the fixed `models/` root. The fitting provider serializes its
+native object to a temporary local file and returns its path, host and provider
+metadata. The coordinator moves a local fit or retrieves a remote fit with
+rsync over SSH, publishes the complete canonical file, then commits model
+completion and lineage in DuckDB. Successful publication removes the temporary
+fit. No model bytes are carried inside JSON messages.
 
-- Existing valid artifact + overwrite disabled: skip training.
-- Missing artifact: train and publish atomically.
-- Explicit overwrite: replace only after the new artifact is valid.
-- Missing artifact at prediction: stop and require training; do not fit inside
-  prediction.
+- An accepted training item is reused, never silently reopened.
+- Only pending training items are fitted and published.
+- Missing worker copies may be recopied from the coordinator.
+- Loss of an authoritative accepted model stops execution and requires researcher
+  direction before retraining; prediction never fits models.
 
 DTW stores one multi-horizon artifact per frequency. Random Forest stores one
-classifier per frequency/horizon. Adding a model calculates only the new delta;
-deleting an artifact makes that scope eligible for training again.
+classifier per frequency/horizon. Adding an approved model calculates only its
+pending delta; deleting a file does not delete its completed training record.
 
 The canonical Daily paths are:
 
@@ -96,11 +98,9 @@ models/directional_mantis_rf/daily/horizon_01.pickle ... horizon_14.pickle
 ```
 
 Scientific experiment IDs and lineage live in DuckDB, not visible model paths.
-Path normalization moves these fifteen artifacts byte-for-byte, without training
-or prediction, and updates only operational model-path fields in the accepted
-database. Scientific settings, stored configuration, identities and checksums
-are preserved. Models are not MLflow artifacts; none exist there, so no MLflow
-metadata changes are needed for this normalization.
+Models are not MLflow artifacts. The downloaded frozen Mantis checkpoint stays
+in the setup-owned pretrained-model cache and is loaded offline by its native
+library; runtime does not qualify package versions or hash checkpoint contents.
 
 ## Parallel and restart behavior
 
@@ -115,15 +115,17 @@ provenance, not model identity or grounds to recalculate accepted predictions.
 The coordinator alone writes DuckDB and owns the authoritative
 model-file copy.
 
-Prediction work items reference fitted artifacts by their accepted SHA-256.
-The shared executor scatters the verified immutable bytes once per invocation,
-rather than embedding them in every task graph. Each native provider session
-registers and loads each required artifact once; subsequent predictions send
-only artifact references and query values. These caches are disposable transport
-state, not another fitted-model store or a scientific restart authority.
+Before pending 04.04 work is submitted, the coordinator prepares required model
+files once on eligible CPU hosts using incremental rsync over SSH, retaining the
+same relative paths under each project root. Rsync publishes complete files
+through its ordinary temporary-file rename; there is no bidirectional merge,
+checksum gate, registration protocol or prepared-host ledger.
 
-SHA-256 verification is mandatory and is never bypassed. Each required artifact
-is transferred and registered once per native worker session. If a checksum
-mismatch recurs, retry only the unaccepted transfer once with a fresh worker.
-If that retry also fails, remove that worker from the eligible pool and continue
-with healthy workers. Never resubmit an already accepted prediction.
+Prediction requests contain input values and local model paths. Each worker
+process owns one classifier session per environment, reused across work groups.
+A lock prevents concurrent callers from interleaving requests and responses on
+its stream. The provider loads each local file once and keeps the model in
+memory until that session ends. JSON carries ordinary requests/results only.
+Copy/load failures retain the native error and path/host context. Ordinary file
+operations and completed prerequisites are trusted; ShapeFM does not separately
+attest that an internal file remained unchanged between saving and loading.

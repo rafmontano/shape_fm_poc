@@ -13,7 +13,7 @@ import os
 import subprocess
 from typing import Any
 
-from p06_evaluate.reports import TableReports, json_fingerprint
+from p06_evaluate.reports import TableReports
 from util.providers import run_r
 from util.runtime import CODE_ROOT, DataRef, FinalResearchSummary, WorkItem
 
@@ -93,9 +93,7 @@ def calculate_diagnostic_batch(items: list[WorkItem], *, series: list[dict[str, 
                 or any(not 0 <= count <= row["evaluation_count"] for count in row["correct_counts"])
                 or any(value is not None and not math.isfinite(value) for value in row["metrics"].values())):
             raise ValueError(f"unusable diagnostic output: {item.key}")
-        content = {**row, "frequency": "Daily", "candidate_id": item.key,
-                   "input_fingerprint": item.payload["input_fingerprint"]}
-        results.append((item.key, {**content, "result_fingerprint": json_fingerprint(content)}))
+        results.append((item.key, {**row, "frequency": "Daily", "candidate_id": item.key}))
     return results
 
 
@@ -208,10 +206,9 @@ class Application:
         for model in self.science["adjusted_base_models"]:
             jobs.extend({"model": model, "lambda_up": up, "lambda_down": down, "retain_means": False}
                         for up in axes[0] for down in axes[1])
-        fingerprint = json_fingerprint(series)
         return self.store.plan("06.03", [WorkItem(
             f"Daily/{job['model']}/{job['lambda_up']}/{job['lambda_down']}",
-            {"job": job, "input_fingerprint": fingerprint}) for job in jobs])
+            {"job": job}) for job in jobs])
 
     def accept_diagnostic_candidates(self, results: list[tuple[str, dict[str, Any]]]) -> None:
         """Accept each aggregate surface candidate independently for restart."""
@@ -255,8 +252,7 @@ class Application:
         for model, row in selected.items():
             for index, correct in enumerate(row["correct_counts"], 1):
                 directional.append({"frequency": "Daily", "model": model, "horizon": index,
-                    "correct_count": correct, "evaluation_count": row["evaluation_count"],
-                    "accuracy": correct / row["evaluation_count"], "result_fingerprint": row["result_fingerprint"]})
+                    "correct_count": correct, "evaluation_count": row["evaluation_count"]})
         rows = [{**row, "model": model} for model, row in selected.items()]
         horizons = {"Daily": list(range(1, 15))}
         figure = self.science["figure_2"]

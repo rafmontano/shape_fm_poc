@@ -98,12 +98,15 @@ incompatible child is a recovery error.
 Only expensive reusable meta-learner state is stored outside DuckDB: currently
 DTW fitted reference state and one Mantis/Random-Forest classifier per horizon.
 Ordinary forecast-pool fits are disposable. Provider environments serialize and
-load their own objects; the coordinator stores/verifies path, size, checksum and
-lineage without deserializing them.
+load their own objects from local files. The coordinator publishes complete
+canonical files and stores model paths and lineage without deserializing them.
 
-Default behaviour is reuse: an existing valid artifact is not trained again.
-Missing artifacts must be created by the preceding training substep. Explicit
-overwrite replaces only the selected scope after the new artifact is valid.
+Default behaviour is reuse: accepted training items are not fitted again.
+Pending items publish their files before completion is committed. A missing
+worker copy may be recopied; a lost authoritative accepted file is a recovery
+error requiring researcher direction, not grounds to delete completion records
+or automatically retrain. See [directional models](directional-models.md) for
+ordinary rsync delivery and session-local loading.
 
 ## Researcher status
 

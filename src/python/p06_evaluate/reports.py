@@ -6,8 +6,6 @@ table/figure data under docs/evaluation.md; no fitting or scientific execution.
 
 from __future__ import annotations
 
-import hashlib
-import json
 import math
 from collections import defaultdict
 from typing import Any
@@ -17,12 +15,6 @@ POINT_MODELS = ("naive2", "chronos_2", "m4_fforma", "m4_smyl",
                 "m4_smyl_mantis", "chronos_2_mantis", "m4_smyl_oracle")
 M4_FREQUENCIES = ("Hourly", "Daily", "Weekly", "Monthly", "Quarterly", "Yearly")
 SELECTION_REASON = "owa,total_departure,up_departure,down_departure,lambda_up,lambda_down"
-
-
-def json_fingerprint(value: Any) -> str:
-    """Identify report inputs/results by SHA-256 of sorted compact ASCII JSON."""
-    encoded = json.dumps(value, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
-    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 class TableReports:
@@ -93,7 +85,7 @@ class TableReports:
             if row["frequency"] != "All":
                 if key not in terminal:
                     raise ValueError("missing common terminal directional result")
-                record["metrics"]["da"] = terminal[key]["accuracy"]
+                record["metrics"]["da"] = terminal[key]["correct_count"] / terminal[key]["evaluation_count"]
             cells[key] = record
         output = {"Table1": [], "Table2": {"A": [], "B": [], "C": []}}
         for frequency in sorted({r["frequency"] for r in selected}):
@@ -125,7 +117,7 @@ class TableReports:
     @staticmethod
     def directional_profile(rows: list[dict[str, Any]], models: list[str],
                             expected_horizons: dict[str, list[int]], *, rank: bool = True) -> dict:
-        """Expose the fingerprinted matrix and tied average ranks; report incompleteness."""
+        """Derive accuracy and tied average ranks from counts; report incompleteness."""
         if not models or len(set(models)) != len(models):
             raise ValueError("configured report models must be non-empty and unique")
         values = {}
@@ -136,33 +128,30 @@ class TableReports:
             n, correct = row["evaluation_count"], row["correct_count"]
             if type(n) is not int or n <= 0 or type(correct) is not int or not 0 <= correct <= n:
                 raise ValueError("invalid directional counts")
-            if row["accuracy"] != correct / n:
-                raise ValueError("directional accuracy disagrees with counts")
-            values[key] = row
+            values[key] = correct / n
         blocks = [(f, h) for f in sorted(expected_horizons) for h in expected_horizons[f]]
         missing = {model: [(f, h) for f, h in blocks if (f, model, h) not in values]
                    for model in models}
         incomplete = {m: gaps for m, gaps in missing.items() if gaps}
         matrix = [{"frequency": f, "horizon": h, "model": m,
-                   "accuracy": values[(f, m, h)]["accuracy"],
-                   "result_fingerprint": values[(f, m, h)]["result_fingerprint"]}
+                   "accuracy": values[(f, m, h)]}
                   for f, h in blocks for m in models if (f, m, h) in values]
         ranks = None
         if rank and not incomplete:
             totals = dict.fromkeys(models, 0.0)
             for f, h in blocks:
-                ordered = sorted(models, key=lambda m: -values[(f, m, h)]["accuracy"])
+                ordered = sorted(models, key=lambda m: -values[(f, m, h)])
                 start = 0
                 while start < len(ordered):
                     end = start + 1
-                    while end < len(ordered) and values[(f, ordered[end], h)]["accuracy"] == values[(f, ordered[start], h)]["accuracy"]:
+                    while end < len(ordered) and values[(f, ordered[end], h)] == values[(f, ordered[start], h)]:
                         end += 1
                     rank = (start + 1 + end) / 2
                     for m in ordered[start:end]:
                         totals[m] += rank
                     start = end
             ranks = {m: totals[m] / len(blocks) for m in models}
-        return {"matrix": matrix, "matrix_fingerprint": json_fingerprint(matrix),
+        return {"matrix": matrix,
                 "models": models, "incomplete_models": incomplete,
                 **({"mean_ranks": ranks} if rank else {}),
                 "interpretation": "descriptive dependent horizons; no significance or CD claim"}
