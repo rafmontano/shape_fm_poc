@@ -48,6 +48,25 @@ def configuration(root: Path, count: int) -> None:
 class MVPImportTests(unittest.TestCase):
     """Public Process01 contract: source values, atomic restart and one MLflow run."""
 
+    def test_repository_selection_preserves_values_and_window_association(self):
+        """Select before decoding without mixing kinds, keys or owning subflows."""
+        with tempfile.TemporaryDirectory() as temporary:
+            store = Repository(Path(temporary) / "windows.duckdb", "fixture")
+            try:
+                store.accept("03.02", [
+                    ("b", {"kind": "official", "values": [3.5, -7.0], "state": {"scale": 2}, "unused": [99]}),
+                    ("a", {"kind": "rolling", "values": [-12.0], "state": {"scale": 5}}),
+                    ("c", {"kind": "official", "values": [19.0], "state": {"scale": 8}})])
+                store.accept("other", [("b", {"kind": "official", "values": [500]})])
+                self.assertEqual(store.rows("03.02", keys=["b", "a"], kind="official", fields=("values", "state")),
+                                 {"b": {"values": [3.5, -7.0], "state": {"scale": 2}}})
+                self.assertEqual(store.rows("03.02", kind="official", fields=()), {"b": {}, "c": {}})
+                self.assertEqual(store.rows("03.02", keys=[]), {})
+                self.assertEqual(list(store.rows("03.02")), ["a", "b", "c"])
+                self.assertEqual(store.rows("03.02")["b"]["unused"], [99])
+            finally:
+                store.close()
+
     def test_archived_import_restart_and_common_forecast_retrieval(self):
         """Imported/calculated methods share windows and survive partial import unchanged."""
         with tempfile.TemporaryDirectory() as temporary:

@@ -125,11 +125,32 @@ class Repository:
         return {r[0] for r in self.connection.execute(
             "SELECT atomic_key FROM atomic_results WHERE subflow_id=?", [subflow]).fetchall()}
 
-    def rows(self, subflow: str) -> dict[str, dict[str, Any]]:
-        """Read trusted scientific outputs in stable atomic-key order."""
+    def rows(self, subflow: str, *, keys: Iterable[str] | None = None,
+             kind: str | None = None, fields: tuple[str, ...] | None = None) -> dict[str, dict[str, Any]]:
+        """Read selected trusted outputs in stable atomic-key order.
+
+        Filter and project inside DuckDB, before materialising numerical JSON
+        arrays in Python. Downstream consumers need not load unrelated windows.
+        """
+        parameters: list[Any] = []
+        projection = "result"
+        if fields is not None:
+            projection = "json_object(" + ",".join("?,json_extract(result,?)" for _ in fields) + ")"
+            for field in fields:
+                parameters.extend((field, f"$.{field}"))
+        query = f"SELECT atomic_key,{projection} FROM atomic_results WHERE subflow_id=?"
+        parameters.append(subflow)
+        if keys is not None:
+            selected = list(keys)
+            if not selected:
+                return {}
+            query += " AND atomic_key IN (SELECT unnest(?))"
+            parameters.append(selected)
+        if kind is not None:
+            query += " AND json_extract_string(result,'$.kind')=?"
+            parameters.append(kind)
         return {key: json.loads(result) for key, result in self.connection.execute(
-            "SELECT atomic_key,result FROM atomic_results WHERE subflow_id=? ORDER BY atomic_key",
-            [subflow]).fetchall()}
+            query + " ORDER BY atomic_key", parameters).fetchall()}
 
     def accept(self, subflow: str, results: list[tuple[str, dict[str, Any]]], *,
                completion_subflow: str | None = None) -> None:

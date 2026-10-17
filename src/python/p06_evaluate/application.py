@@ -143,9 +143,8 @@ class Application:
         forecasts = self.store.rows("04.01") | self.store.rows("05.01") | self.store.rows("05.02")
         directions = self.store.rows("04.04")
         output = []
-        for key, row in self.context.windows().rows("03.02").items():
-            if row["kind"] != "official":
-                continue
+        for key, row in self.context.windows().rows("03.02", kind="official",
+                fields=("series_key", "series_id", "frequency")).items():
             source = canonical[row["series_key"]]
             context = source["target"][:source["test_start"]]
             output.append({"input_key": key, "series_id": row["series_id"], "start": source["start"],

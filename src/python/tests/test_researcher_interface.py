@@ -69,6 +69,7 @@ class ResearcherInterfaceTests(unittest.TestCase):
                 rows = context.repository.rows("06.03")
                 self.assertEqual({rows[item.key]["worker"] for item in pending}, {"ubuntu"})
                 self.assertTrue(all(rows[key] == result for key, result in stored))
+                self.assertTrue(all(not item.payload for item in pending))
             finally:
                 context.close()
 

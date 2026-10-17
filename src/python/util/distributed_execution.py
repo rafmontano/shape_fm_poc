@@ -96,6 +96,8 @@ class WorkGroupExecutor:
         Completion progress is derived from the owning database after commits.
         Periodic tracking is separately gated by the stored experiment setting.
         Immutable shared inputs are scattered once, not embedded in each task.
+        WorkItem payloads are consumed after their group returns; keys/resources
+        remain available. Restart reconstructs pending payloads from DuckDB.
         """
         started = time.monotonic()
         repository = self.context.windows() if subflow_id == "03.02" else self.context.repository
@@ -128,7 +130,11 @@ class WorkGroupExecutor:
         profile = self.context.request.execution_profile
         if profile == "sequential_safe":
             for group in groups:
-                receive(calculate_group.fn(group, calculate, calculate_batch, shared_inputs))
+                try:
+                    receive(calculate_group.fn(group, calculate, calculate_batch, shared_inputs))
+                finally:
+                    for item in group:
+                        item.payload.clear()
         elif groups:
             settings = self.settings
             placement = settings.get("subflows", {}).get(subflow_id, {}).get("resources", {})
@@ -152,17 +158,19 @@ class WorkGroupExecutor:
                     [shared] = runner.client.scatter([shared_inputs], hash=False, broadcast=False)
                 limit = int(settings.get("max_in_flight", 4))
                 for offset in range(0, len(groups), limit):
-                    futures = []
+                    futures = {}
                     for group in groups[offset:offset + limit]:
                         import dask
                         resources = group[0].resources or ({"CPU": 1} if "workers" in settings else {})
                         resources = {**resources, **placement}
                         with dask.annotate(resources=resources):
-                            futures.append(runner.submit(calculate_group,
+                            future = runner.submit(calculate_group,
                                 parameters={"items": group, "calculate": calculate,
-                                            "calculate_batch": calculate_batch, "shared_inputs": shared}))
+                                            "calculate_batch": calculate_batch, "shared_inputs": shared})
+                            futures[future] = group
                     first_error = None
-                    for future in as_completed(futures):
+                    for future in as_completed(list(futures)):
+                        group = futures.pop(future)
                         try:
                             receive(future.result())
                         except Exception as error:
@@ -170,6 +178,10 @@ class WorkGroupExecutor:
                             traceback.print_exception(error)
                             if first_error is None:
                                 first_error = error
+                        finally:
+                            for item in group:
+                                item.payload.clear()
+                            future.wrapped_future.release()
                     if first_error is not None:
                         raise first_error
         repository.require_complete(subflow_id)

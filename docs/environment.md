@@ -134,6 +134,15 @@ R and Python providers run in their pinned environments with one internal thread
 where Dask owns parallelism. Chronos uses one persistent GPU model process and a
 complete pinned local checkpoint; ordinary execution is offline.
 
+Downstream reads select modelling keys, window kind and required fields in
+DuckDB before decoding numerical arrays. Individual forecasts load only pending
+official contexts; representations load the required cohort/official values;
+training loads the reference cohort; prediction/evaluation load official inputs.
+The shared executor consumes each returned group's input payloads after accepting
+its results and releases its supported Dask futures. Atomic keys remain intact;
+restart reconstructs missing requests from DuckDB. Fixed group sizes, waves,
+resource placement and successful-group draining on failure are unchanged.
+
 The two-machine profile bounds Dask's `worker.connections.incoming` to 1 on
 both hosts to limit outgoing large-data service requests. Dask permits twice
 that limit for same-host peers. This network-transfer bound does not reduce

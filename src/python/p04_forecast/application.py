@@ -163,7 +163,7 @@ class Application:
 
     def pending_individual_forecasts(self, modelling: DataRef) -> list[WorkItem]:
         """Require imported archives, then plan only missing calculated forecasts."""
-        canonical = self.store.rows("01.02")
+        canonical = self.store.rows("01.02", fields=("dataset_id", "horizon", "test_start"))
         accepted = self.store.keys("04.01")
         archived = [f"{key}/official/{source['test_start']:09d}/{model}"
                     for key, source in canonical.items()
@@ -172,10 +172,12 @@ class Application:
         if missing:
             raise RuntimeError(f"04.01: incomplete Process01 archived import prerequisite (01.04): "
                                f"{len(missing)} missing; first={min(missing)}")
+        required = {f"{key}/official/{source['test_start']:09d}" for key, source in canonical.items()
+                    if any(f"{key}/official/{source['test_start']:09d}/{model}" not in accepted
+                           for model in self.configuration["models"] if not model.startswith("directional_"))}
         items = []
-        for input_key, row in self.context.windows().rows("03.02").items():
-            if row["kind"] != "official":
-                continue
+        for input_key, row in self.context.windows().rows("03.02", keys=required, kind="official",
+                fields=("series_key", "series_id", "point_context", "frequency", "r_period", "point_state")).items():
             source = canonical[row["series_key"]]
             for model, configuration in self.configuration["models"].items():
                 if model.startswith("directional_"):
@@ -205,9 +207,10 @@ class Application:
 
     def pending_representations(self, modelling: DataRef) -> list[WorkItem]:
         """Plan shared training and uncapped official Mantis inputs, without labels."""
-        inputs = self.context.windows().rows("03.02")
         required = set(self.store.rows("reference_cohort")["S1"]["input_keys"])
-        required.update(key for key, row in inputs.items() if row["kind"] == "official")
+        required.update(self.context.windows().rows("03.02", kind="official", fields=()))
+        required.difference_update(self.store.keys("04.02"))
+        inputs = self.context.windows().rows("03.02", keys=required, fields=("values",))
         return self.store.plan("04.02", [WorkItem(key, {"input_key": key, "values": inputs[key]["values"],
             "execution": self._execution("mantis")}, resources=self.context.execution.resources("mantis"))
             for key in sorted(required)])
@@ -218,8 +221,9 @@ class Application:
 
     def pending_decision_models(self, modelling: DataRef) -> list[WorkItem]:
         """Plan one fixed DTW library and fourteen RF units for the common cohort."""
-        inputs, representations = self.context.windows().rows("03.02"), self.store.rows("04.02")
         references = self.store.rows("reference_cohort")["S1"]["input_keys"]
+        inputs = self.context.windows().rows("03.02", keys=references, fields=("frequency", "values", "labels"))
+        representations = self.store.rows("04.02", keys=references, fields=("values",))
         items = []
         for frequency in self.configuration["pipeline"]["window_preparation"]["selected_frequencies"]:
             keys = [key for key in references if inputs[key]["frequency"] == frequency]
@@ -280,14 +284,16 @@ class Application:
 
     def pending_directional_predictions(self, modelling: DataRef) -> list[WorkItem]:
         """Plan complete official vectors using accepted model artifacts and no actuals."""
-        inputs = self.context.windows().rows("03.02")
-        models, representations = self.store.rows("04.03"), self.store.rows("04.02")
+        inputs = self.context.windows().rows("03.02", kind="official", fields=("frequency", "values"))
+        models = self.store.rows("04.03")
+        representations = self.store.rows("04.02", keys=inputs, fields=("values",))
+        accepted = self.store.keys("04.04")
         items = []
         for input_key, row in inputs.items():
-            if row["kind"] != "official":
-                continue
             for model in ("directional_dtw", "directional_mantis_rf"):
                 key = f"{input_key}/{model}"
+                if key in accepted:
+                    continue
                 model_keys = [f"{row['frequency']}/{model}/{h}" for h in
                               (["all"] if model == "directional_dtw" else range(1, 15))]
                 request = {"model": model, "artifact_ids": [models[k]["sha256"] for k in model_keys],
