@@ -57,22 +57,66 @@ Remote SSH worker startup includes the native R executable paths and keeps Mac
 workers awake with `caffeinate`. Run the normal entry point in a persistent
 terminal and inhibit Ubuntu sleep while the experiment is active.
 
-Ubuntu coordination has executed Processes 01–03 with the approved CPU profile
-and started all sixteen logical GPU workers for Process 04. Full Ubuntu
-completion is not established: the current experiment is stopped in 04.01 after
-the initial archived-provider failure and two authorised recovery attempts.
-Rebuilding locked M4comp2018 0.2.0, including xz lazy-data compression, did not
-resolve native R loading failures; the cause remains unestablished. The two
-canonical databases retain accepted work, including 559 individual forecasts.
-Subflow 01.04 now imports missing archives into common forecast storage, with
-atomic completion references rather than duplicate vectors. Focused checks cover
-partial restart, unchanged accepted timestamps, common retrieval and Forecast's
-import prerequisite. An isolated Ubuntu Process 01 run imported 200 forecasts for
-100 Daily series; its repeated import added zero items without reopening the
-archive. Preserved full-experiment continuation remains to be completed. Do not
-reset the experiment or move archived work to Mac. The separate ordinary R
-forecast worker SIGSEGV occurred during `renv_scope_lock` in sandbox activation,
-before fitting; this design change does not establish a fix for that failure.
+### Preserved Ubuntu experiment
+
+Experiment `f78d1042-bc9f-434a-b162-daacb9c25d71` retains its canonical parent and
+child databases and MLflow run `79f69155d77b43a2892844bf560d0267`. Processes 01–03
+remain accepted: 4,227 canonical/prepared series, 128,933 modelling inputs and
+14,227 reusable-feature items. Their accepted records and timestamps, and all
+559 forecasts accepted before archived-ingestion implementation, are unchanged.
+
+Subflow 01.04 imports archives into common forecast storage with atomic
+completion references, not duplicate vectors. The full Ubuntu invocation loaded
+M4comp2018 once and imported 8,390 missing forecasts, reusing 64; all 8,454
+SMYL/FFORMA inputs are now accepted. A common canonical-series/window query
+returns AutoARIMA, Chronos, SMYL and FFORMA together. Focused checks passed for
+association, partial restart, unchanged timestamps, common retrieval and
+Forecast's prerequisite/reuse behaviour. An isolated Process 01 run imported 200
+forecasts for 100 real Daily series; repeated import added zero items without
+reopening the archive or fitting models. Its temporary experiment was removed.
+
+The full continuation is stopped in 04.01 with **35,348 of 67,632** forecasts
+accepted (26,894 calculated and 8,454 imported). After an initial coordinator
+`MemoryError` while reading modelling inputs, the first recovery died with a
+Python general-protection fault. The final permitted recovery committed another
+26,399 calculated forecasts before coordinator Python SIGSEGV during
+`cloudpickle.reducer_override` → Dask message serialization at approximately
+13:44:02 on 17 October 2026. Its log is
+`.runtime/dask/full_daily_ingestion_recovery_2.log`; fault tracing identified no
+scientific provider or atomic key for the in-flight serialized message. There
+were 5,203 completed work-group log entries, which are not an acceptance count.
+No further recovery was started. The native crash cause remains unestablished;
+ample available memory and a successful standalone input read do not diagnose it.
+
+Both machines performed calculation work; all 50 approved workers registered.
+Ubuntu owned ingestion, commits, tracking and GPU forecasts (1,884 new Chronos
+forecasts in this continuation); Mac and Ubuntu CPU workers both executed native
+groups. Exact per-host CPU item totals are not recorded by the existing forecast
+envelope. No worker counts, scientific settings, dependencies or accepted values
+were changed. The separate earlier ordinary-R SIGSEGV in `renv_scope_lock`
+during sandbox activation remains distinct and undiagnosed; successful ingestion
+does not establish a fix for it.
+
+Owned execution services and writers are stopped, and the same resumable MLflow
+run is marked failed. Both databases remain on Ubuntu. Required fitted models,
+five CSVs and six figures have not been produced; later subflows and Processes
+05–06 were not reached. A full no-new-work restart cannot be claimed while the
+experiment is incomplete. Further execution requires researcher direction under
+the exhausted bounded recovery rule, not a reset or archive retrieval on Mac.
+
+Recorded flow timings (seconds; accepted earlier science was not repeated):
+
+| Process / subflow | Elapsed |
+| --- | ---: |
+| 01 canonical import, before archive addition | 101.501 |
+| 01.01 / 01.02 / 01.03 | 2.002 / 97.415 / 1.002 |
+| 01.04 full archived import, including planning/commit | 92.024 |
+| 02 Preprocess | 191.438 |
+| 02.01 / 02.02 | 188.388 / 1.002 |
+| 03 Transform | 6,481.968 |
+| 03.01 / 03.02 / 03.03 / 03.04 | 8.219 / 5,798.722 / 672.850 / 1.003 |
+| 04.01 final continuation, start to last pre-crash task log | 5,919.176 (incomplete) |
+| 04.02–04.05 / 05 / 06 | Not reached |
 
 Normal execution derives Prefect/Dask addresses from the selected coordinator
 and machine inventory. The researcher does not manually manage

@@ -2,7 +2,8 @@
 
 Inputs are the configured Arrow source and canonical population selection.
 Outputs preserve source identities, float32 observations and official boundaries
-in experiment.duckdb. No secondary source reconciliation or statistical repair.
+in experiment.duckdb, alongside configured numeric archived forecasts in the
+common forecast pool. No secondary observations or statistical repair are imported.
 """
 
 from __future__ import annotations

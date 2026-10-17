@@ -12,10 +12,8 @@
       "mantis": {"device": "cuda", "resources": {"GPU": 1}}
     },
     "workers": [
-      {"machine": "macbook_pro", "count": 1, "memory_limit": "4GiB", "resources": "CPU=1"},
-      {"machine": "macbook_pro", "count": 5, "memory_limit": "4GiB", "resources": "CPU=1"},
-      {"machine": "ubuntu_primary", "count": 1, "memory_limit": "8GiB", "resources": "CPU=1"},
-      {"machine": "ubuntu_primary", "count": 27, "memory_limit": "8GiB", "resources": "CPU=1"},
+      {"machine": "macbook_pro", "count": 6, "memory_limit": "4GiB", "resources": "CPU=1"},
+      {"machine": "ubuntu_primary", "count": 28, "memory_limit": "8GiB", "resources": "CPU=1"},
       {"machine": "ubuntu_primary", "count": 16, "memory_limit": "16GiB", "resources": "GPU=1"}
     ]
   }

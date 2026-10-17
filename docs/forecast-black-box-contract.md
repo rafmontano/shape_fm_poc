@@ -63,6 +63,12 @@ Preserve existing forecast identities and accepted rows. Process 04 calculates
 only missing calculated forecasts and includes imported rows in pool completion;
 it does not copy their vectors into another result store.
 
+The common repository namespace is `04.01`. Resolve dataset/series identity from
+the canonical `01.02` row and select forecasts by its official-window `input_key`
+and horizon, regardless of provider. Native results need not duplicate canonical
+dataset/series fields. `01.04` completion rows contain references to those same
+forecast keys, not another forecast vector.
+
 FFORMA methods preserve the approved native scientific definitions and settings,
 not exact floating-point identity across hardware/backends or retired code.
 Provider boundaries check output shape and scientifically usable values;
