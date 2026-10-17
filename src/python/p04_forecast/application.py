@@ -30,22 +30,11 @@ def calculate_forecast_batch(items: list[WorkItem]) -> Iterator[tuple[str, dict[
     """Call the accepted forecast black boxes and invert stored affine state.
 
     docs/forecast-black-box-contract.md owns settings, capabilities and permitted
-    STL fallback. Archived vectors are original-scale mean-only references.
+    STL fallback. Archived vectors are already accepted by Process01.
     """
     for provider in sorted({item.payload["provider"] for item in items}):
         group = [item for item in items if item.payload["provider"] == provider]
         settings = group[0].payload["execution"]
-        if provider == "archived":
-            response = run_r("src/r/p04_forecast/archived_forecast_worker.R", {
-                "action": "reference_forecast", "jobs": [item.payload["request"] for item in group]},
-                timeout=settings["timeout"], threads=1)
-            results = response["records"]
-            by_key = {(row["series_id"], row["forecast_id"]): row for row in results}
-            for item in group:
-                row = by_key[(item.payload["request"]["series_id"], item.payload["model"])]
-                yield item.key, {**row, "input_key": item.payload["input_key"],
-                    "model": item.payload["model"], "output_scale": "original"}
-            continue
         requests = [item.payload["request"] for item in group]
         if provider == "r":
             response = run_r("src/r/p04_forecast/forecast_worker.R", {"action": "forecast", "jobs": requests},
@@ -67,7 +56,8 @@ def calculate_forecast_batch(items: list[WorkItem]) -> Iterator[tuple[str, dict[
                     result[field] = list(inverse_transformation(result[field], state))
             if result["quantiles"] is not None:
                 result["quantiles"] = [list(inverse_transformation(row, state)) for row in result["quantiles"]]
-            result.update(input_key=item.payload["input_key"], model=item.payload["model"], output_scale="original")
+            result.update(input_key=item.payload["input_key"], model=item.payload["model"],
+                          output_scale="original", origin="calculated")
             yield item.key, result
 
 
@@ -172,8 +162,16 @@ class Application:
         return settings
 
     def pending_individual_forecasts(self, modelling: DataRef) -> list[WorkItem]:
-        """Plan official-origin native and archived forecasts with past-only requests."""
+        """Require imported archives, then plan only missing calculated forecasts."""
         canonical = self.store.rows("01.02")
+        accepted = self.store.keys("04.01")
+        archived = [f"{key}/official/{source['test_start']:09d}/{model}"
+                    for key, source in canonical.items()
+                    for model in self.configuration["archived_forecasts"]["enabled"]]
+        missing = set(archived) - accepted
+        if missing:
+            raise RuntimeError(f"04.01: incomplete Process01 archived import prerequisite (01.04): "
+                               f"{len(missing)} missing; first={min(missing)}")
         items = []
         for input_key, row in self.context.windows().rows("03.02").items():
             if row["kind"] != "official":
@@ -183,6 +181,8 @@ class Application:
                 if model.startswith("directional_"):
                     continue
                 key = f"{input_key}/{model}"
+                if key in accepted:
+                    continue
                 capability = "mean_only" if model in ("ses", "holt", "damped", "naive2") else "probabilistic"
                 provider = "chronos" if model == "chronos_2" else "r"
                 levels = self.configuration["models"]["chronos_2"]["quantile_levels"] if capability == "probabilistic" else None
@@ -197,13 +197,6 @@ class Application:
                 items.append(WorkItem(key, {"input_key": input_key, "model": model, "provider": provider,
                     "request": request, "state": row["point_state"], "execution": self._execution(provider)},
                     resources=self.context.execution.resources(provider)))
-            for model in self.configuration["archived_forecasts"]["enabled"]:
-                key = f"{input_key}/{model}"
-                request = {"dataset_id": source["dataset_id"], "series_id": row["series_id"],
-                    "official_position": source["source_row"], "horizon": source["horizon"], "forecast_ids": [model]}
-                items.append(WorkItem(key, {"input_key": input_key, "model": model, "provider": "archived",
-                    "request": request, "execution": self._execution("r")},
-                    resources=self.context.execution.resources("archived")))
         return self.store.plan("04.01", items)
 
     def accept_individual_forecasts(self, results: list[tuple[str, dict[str, Any]]]) -> None:

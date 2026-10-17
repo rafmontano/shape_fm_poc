@@ -87,14 +87,10 @@ class DistributedCluster:
         self.port = inventory["services"]["dask_scheduler_port"]
         self.started_allocations: set[int] = set()
         self.allocations = []
-        archived_assigned = False
         for allocation in settings["workers"]:
             allocation = dict(allocation)
             if allocation["machine"] == settings["coordinator"] and "CPU=" in allocation["resources"]:
                 allocation["resources"] += ",COORDINATOR_CPU=1"
-                if not archived_assigned:
-                    allocation["resources"] += ",ARCHIVED=1"
-                    archived_assigned = True
             self.allocations.append(allocation)
 
     def start(self, resources: dict[str, float] | None = None) -> str:

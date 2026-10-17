@@ -48,12 +48,20 @@ visibly. Chronos-2 uses its pinned local checkpoint and native probabilistic
 provider; ordinary execution is offline and does not download the model for each
 job.
 
-Archived M4 reference forecasts are fixed source/reference retrieval, not
-distributed scientific computation. They are loaded on the coordinator host;
-the two-machine profile restricts retrieval to its single `ARCHIVED` CPU worker.
-That worker follows the selected coordinator, including Ubuntu in the approved
-full-Daily execution exercise. Accepted archived forecasts are reused from
-DuckDB without reloading them for validation.
+Archived M4 forecasts are imported by Process 01 as defined in the
+[data contract](data-contract.md#archived-forecast-inputs). Process 04 reads them
+from the same forecast repository used for calculated forecasts; it does not
+launch R or reopen M4comp2018. Missing required archives are reported as an
+import prerequisite, not silently fetched by Forecast.
+
+A query by experiment, dataset and series returns AutoARIMA, Chronos, FFORMA,
+SMYL and other stored methods through one interface. Forecast origin/window,
+horizon and method distinguish comparable results. Imported versus calculated
+is provenance, not a separate researcher access path. Archived point forecasts
+retain null probabilistic fields and are not reused for other rolling origins.
+Preserve existing forecast identities and accepted rows. Process 04 calculates
+only missing calculated forecasts and includes imported rows in pool completion;
+it does not copy their vectors into another result store.
 
 FFORMA methods preserve the approved native scientific definitions and settings,
 not exact floating-point identity across hardware/backends or retired code.

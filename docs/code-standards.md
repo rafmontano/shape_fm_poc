@@ -120,7 +120,7 @@ src/r/p03_transform/feature_worker.R
 src/r/p03_transform/features.R
 src/r/p03_transform/training_cohort.R
 src/r/p04_forecast/forecast_worker.R
-src/r/p04_forecast/archived_forecast_worker.R
+src/r/p01_import/archived_forecast_worker.R
 src/r/p04_forecast/forecast_methods.R
 src/r/p06_evaluate/evaluation_worker.R
 src/r/p06_evaluate/diagnostic_worker.R

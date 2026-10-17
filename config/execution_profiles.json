@@ -9,8 +9,7 @@
     },
     "providers": {
       "chronos": {"device": "cuda", "resources": {"GPU": 1}},
-      "mantis": {"device": "cuda", "resources": {"GPU": 1}},
-      "archived": {"resources": {"CPU": 1, "ARCHIVED": 1}}
+      "mantis": {"device": "cuda", "resources": {"GPU": 1}}
     },
     "workers": [
       {"machine": "macbook_pro", "count": 1, "memory_limit": "4GiB", "resources": "CPU=1"},

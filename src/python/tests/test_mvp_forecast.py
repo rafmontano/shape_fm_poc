@@ -19,36 +19,6 @@ from util.runtime import CODE_ROOT, ExperimentRequest, WorkItem, open_experiment
 class MVPForecastTests(unittest.TestCase):
     """Native fit/predict responses preserve approved directional contracts."""
 
-    def test_archived_forecasts_honor_placement_and_skip_accepted_items(self):
-        """Archived providers use configured Dask resources without changing identity."""
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            (root / "config").mkdir()
-            document = json.loads((CODE_ROOT / "config/experiment.json").read_text())
-            (root / "config/experiment.json").write_text(json.dumps(document))
-            context = open_experiment(ExperimentRequest((4,), root, execution_profile="mvp_two_machine"))
-            try:
-                context.execution.settings["providers"]["archived"] = {"resources": {"ARCHIVE_TEST": 1}}
-                context.repository.accept("01.02", [("series", {
-                    "dataset_id": "fixture", "horizon": 14, "source_row": 0})])
-                context.windows().accept("03.02", [("official", {
-                    "kind": "official", "series_key": "series", "series_id": "D1",
-                    "frequency": "D", "r_period": 1, "point_context": [1.0] * 64,
-                    "point_state": {}})])
-                reference = context.ref("03.04")
-                pending = context.forecast.pending_individual_forecasts(reference)
-                archived = [item for item in pending if item.payload["provider"] == "archived"]
-                self.assertEqual({item.key for item in archived}, {"official/m4_smyl", "official/m4_fforma"})
-                self.assertTrue(all(item.resources == {"ARCHIVE_TEST": 1} for item in archived))
-                self.assertTrue(all("ARCHIVE_TEST" not in item.resources for item in pending
-                                    if item.payload["provider"] != "archived"))
-                context.repository.accept("04.01", [("official/m4_smyl", {"accepted_fixture": True})])
-                resumed = context.forecast.pending_individual_forecasts(reference)
-                self.assertNotIn("official/m4_smyl", {item.key for item in resumed})
-                self.assertIn("official/m4_fforma", {item.key for item in resumed})
-            finally:
-                context.close()
-
     def test_partial_native_batch_failure_preserves_complete_forecast(self):
         """A later provider error preserves the earlier horizon and its restart key."""
         with tempfile.TemporaryDirectory() as temporary:

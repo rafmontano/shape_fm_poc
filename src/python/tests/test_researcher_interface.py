@@ -43,10 +43,7 @@ class ResearcherInterfaceTests(unittest.TestCase):
             allocations = DistributedCluster({**profile, "coordinator": coordinator}).allocations
             local_cpu = [allocation for allocation in allocations
                          if "COORDINATOR_CPU=1" in allocation["resources"]]
-            archived = [allocation for allocation in allocations if "ARCHIVED=1" in allocation["resources"]]
             self.assertEqual({allocation["machine"] for allocation in local_cpu}, {coordinator})
-            self.assertEqual([(allocation["machine"], allocation["count"]) for allocation in archived],
-                             [(coordinator, 1)])
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "config").mkdir()

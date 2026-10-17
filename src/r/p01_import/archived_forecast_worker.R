@@ -1,12 +1,12 @@
 #!/usr/bin/env Rscript
-# Process 04 point-only provider. M4comp2018 supplies archived vectors, never data.
+# Process 01 point-only ingestion. M4comp2018 supplies archived vectors, never data.
 # Input: jobs with dataset/series identity, zero-based official_position, horizon
 # and forecast_ids. Output: standard mean-only records; no fitting or writes.
 
 # Resolve approved Daily archived vectors by canonical source position and horizon.
 # Inputs are request jobs and native package objects; outputs are original-scale
 # mean-only records with submission provenance, never canonical observations.
-forecast_m4_reference <- function(jobs, M4, submission_info, package_version) {
+forecast_m4_reference <- function(jobs, daily, submission_info, package_version) {
   approved <- list(
     m4_smyl = list(id = 118L, rank = 1L, author = "Smyl"),
     m4_fforma = list(id = 245L, rank = 2L, author = "Montero-Manso, et al.")
@@ -17,7 +17,6 @@ forecast_m4_reference <- function(jobs, M4, submission_info, package_version) {
                  c("Smyl", "Montero-Manso, et al."))) {
     stop("approved M4 submission identities unavailable", call. = FALSE)
   }
-  daily <- which(vapply(M4, function(entry) identical(as.character(entry$period), "Daily"), logical(1L)))
   records <- list()
   for (job in jobs) {
     position <- job$official_position
@@ -25,7 +24,7 @@ forecast_m4_reference <- function(jobs, M4, submission_info, package_version) {
         position != floor(position) || position < 0 || position >= length(daily)) {
       stop("invalid official Daily position", call. = FALSE)
     }
-    entry <- M4[[daily[[position + 1L]]]]
+    entry <- daily[[position + 1L]]
     if (!identical(entry$st, paste0("D", position + 1L))) {
       stop("official Daily identity does not match position", call. = FALSE)
     }
@@ -64,7 +63,9 @@ if (sys.nframe() == 0L) {
   utils::data("submission_info", package = "M4comp2018", envir = objects)
   payload <- jsonlite::fromJSON(file("stdin"), simplifyVector = FALSE)
   if (!identical(payload$action, "reference_forecast")) stop("unsupported provider action")
-  result <- forecast_m4_reference(payload$jobs, objects$M4, objects$submission_info,
+  archive <- objects$M4
+  daily <- Filter(function(entry) identical(as.character(entry$period), "Daily"), archive)
+  result <- forecast_m4_reference(payload$jobs, daily, objects$submission_info,
                                   as.character(utils::packageVersion("M4comp2018")))
   cat(jsonlite::toJSON(result, auto_unbox = TRUE, digits = 17, null = "null"))
 }

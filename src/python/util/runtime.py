@@ -131,13 +131,21 @@ class Repository:
             "SELECT atomic_key,result FROM atomic_results WHERE subflow_id=? ORDER BY atomic_key",
             [subflow]).fetchall()}
 
-    def accept(self, subflow: str, results: list[tuple[str, dict[str, Any]]]) -> None:
-        """Commit complete scientific results and accepted identities together."""
+    def accept(self, subflow: str, results: list[tuple[str, dict[str, Any]]], *,
+               completion_subflow: str | None = None) -> None:
+        """Commit results and optional cross-process completion references together.
+
+        Imported forecasts live only in the common forecast rows; their import
+        completion references that same accepted identity without copying values.
+        """
         self.connection.begin()
         try:
             for key, result in results:
                 self.connection.execute("INSERT INTO atomic_results (subflow_id,atomic_key,result) VALUES (?,?,?)",
                                         [subflow, key, json.dumps(result)])
+                if completion_subflow is not None:
+                    self.connection.execute("INSERT INTO atomic_results (subflow_id,atomic_key,result) VALUES (?,?,?)",
+                        [completion_subflow, key, json.dumps({"subflow_id": subflow, "atomic_key": key})])
             self.connection.commit()
         except BaseException:
             self.connection.rollback()

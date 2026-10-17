@@ -40,8 +40,8 @@ Current topology:
 
 The definitive `mvp_two_machine` operational profile has six Mac CPU workers,
 28 Ubuntu CPU workers and sixteen logical GPU workers sharing the RTX 5090.
-The first single-worker CPU allocation on the selected coordinator receives the
-restricted `ARCHIVED` resource for coordinator-host reference retrieval. All its
+Process 01 retrieves archived forecasts in one coordinator-host R invocation;
+archive loading is not a distributed worker resource. All coordinator
 CPU allocations receive `COORDINATOR_CPU`. Worker counts are operational configuration, not scientific
 identity. Do not automatically reduce the sixteen GPU workers: GPU startup,
 memory or execution failure requires preserving progress and researcher
@@ -64,8 +64,15 @@ the initial archived-provider failure and two authorised recovery attempts.
 Rebuilding locked M4comp2018 0.2.0, including xz lazy-data compression, did not
 resolve native R loading failures; the cause remains unestablished. The two
 canonical databases retain accepted work, including 559 individual forecasts.
-Owned execution services are stopped. Further recovery requires researcher
-direction; do not reset this experiment or move archived work to the Mac.
+Subflow 01.04 now imports missing archives into common forecast storage, with
+atomic completion references rather than duplicate vectors. Focused checks cover
+partial restart, unchanged accepted timestamps, common retrieval and Forecast's
+import prerequisite. An isolated Ubuntu Process 01 run imported 200 forecasts for
+100 Daily series; its repeated import added zero items without reopening the
+archive. Preserved full-experiment continuation remains to be completed. Do not
+reset the experiment or move archived work to Mac. The separate ordinary R
+forecast worker SIGSEGV occurred during `renv_scope_lock` in sandbox activation,
+before fitting; this design change does not establish a fix for that failure.
 
 Normal execution derives Prefect/Dask addresses from the selected coordinator
 and machine inventory. The researcher does not manually manage

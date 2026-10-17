@@ -41,6 +41,33 @@ series object and commits it atomically to `results/experiment.duckdb`. It does
 not clean, transform or infer statistical seasonality. Restart reads committed
 series identities and imports only missing work.
 
+### Archived forecast inputs
+
+When archived methods are configured, subflow 01.04 imports their precalculated
+forecasts after canonical dataset acceptance. GIFT-Eval remains the sole source
+of observations; M4comp2018 supplies only configured SMYL/FFORMA forecasts and
+their provenance for the selected series and original competition forecast window.
+Do not import its histories, actuals, unused submissions or unrelated datasets.
+
+One coordinator-host R invocation loads the pinned archive and materialises the
+required numeric vectors. The coordinator commits each forecast through the
+common forecast repository and atomic completion boundary. Do not persist R
+promises, create a parallel reference store, duplicate vectors in Process 04,
+or add a database/intermediate export. A restarted import reads stored forecast
+identities and extracts only missing records; it does not open the archive when
+none are missing. Initial package loading must still succeed; this design does
+not assert that the native loading fault has been diagnosed.
+
+Check series/method/window identity, horizon and usable numeric values once at
+ingestion. Source package/version and submission identity are provenance. Source
+retrieval is not model fitting or a comparison against GIFT-Eval histories.
+
+For the preserved experiment, completed canonical import remains completed.
+Run only the newly required missing-reference subflow, retaining completed
+Processes 02–03 and all existing forecast values, identities and timestamps.
+Reconcile Process 01 completion with its configured subflows rather than letting
+its previous completion flag skip missing references. Do not reset the experiment.
+
 ## Process 02 — Preprocess
 
 Preprocessing uses historical observations only and never changes the canonical

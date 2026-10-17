@@ -14,7 +14,7 @@ and transparent to the researcher.
 
 | Process | Owns | Durable completion |
 | --- | --- | --- |
-| 01 Import | Register GIFT-Eval population, materialise canonical series and accept the dataset. | Accepted series items in `experiment.duckdb`. |
+| 01 Import | Register GIFT-Eval population, materialise canonical series, accept the dataset and import configured archived forecasts. | Accepted series and imported forecast items in `experiment.duckdb`. |
 | 02 Preprocess | Apply the selected cleaning mode to historical observations. | Accepted prepared series in `experiment.duckdb`. |
 | 03 Transform | Assign membership; create modelling inputs and reusable features. | Rolling inputs in `windows.duckdb`; membership/features and summary state in the parent. |
 | 04 Forecast | Run forecast providers and train/load/predict expensive meta-learners. | Forecasts, directional predictions and model-artifact metadata. |
@@ -43,7 +43,7 @@ scientific work.
 
 | Process | Ordered meaningful subflows |
 | --- | --- |
-| 01 | 01.01 Register source population → 01.02 Materialise canonical series → 01.03 Accept canonical dataset |
+| 01 | 01.01 Register source population → 01.02 Materialise canonical series → 01.03 Accept canonical dataset → 01.04 Import archived forecasts (when configured) |
 | 02 | 02.01 Materialise prepared histories → 02.02 Accept prepared dataset |
 | 03 | 03.01 Assign research membership → 03.02 Materialise modelling inputs → 03.03 Materialise reusable features → 03.04 Accept modelling dataset |
 | 04 | 04.01 Materialise individual forecasts → 04.02 Materialise representations → 04.03 Fit decision models → 04.04 Materialise directional predictions → 04.05 Accept forecast pool |
