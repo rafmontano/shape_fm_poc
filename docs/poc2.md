@@ -32,12 +32,15 @@ research result; the architecture transformation was accepted separately.
 
 The approved runtime simplification keeps fitted models as files, uses ordinary
 SSH/rsync delivery and local session loading, and removes redundant internal
-qualification and content attestation. The researcher authorized clearing the
-previous generated experiment once and executing a fresh Ubuntu-coordinated
-4,227-series Daily experiment through Processes 01–06, publication and one
-no-new-work restart. Completion must be established from that fresh run, not
-from historical execution. Scientific configuration and calculations remain
-unchanged; sensitivity remains on coordinator CPU workers.
+qualification and content attestation. The fresh Ubuntu-coordinated 4,227-series
+Daily experiment has completed Processes 01–06, including all 1,057 sensitivity
+candidates and publication. Its two canonical databases, fifteen fitted directional
+model files, five CSVs and six figure files are available at the repository root.
+The final no-new-work restart submitted zero work groups and left accepted
+scientific records and model/output files unchanged. Scientific configuration and
+calculations remain unchanged; sensitivity uses coordinator CPU workers. This
+establishes execution completion, not new researcher presentation acceptance or
+clean-room dependency reconstruction.
 
 The five-layer architecture transformation is researcher-accepted. It delivered
 the approved workflow hierarchy, readable process ownership, canonical paths,
