@@ -75,27 +75,48 @@ Forecast's prerequisite/reuse behaviour. An isolated Process 01 run imported 200
 forecasts for 100 real Daily series; repeated import added zero items without
 reopening the archive or fitting models. Its temporary experiment was removed.
 
-The full continuation is stopped in 04.01 with **35,348 of 67,632** forecasts
-accepted (26,894 calculated and 8,454 imported). After an initial coordinator
-`MemoryError` while reading modelling inputs, the first recovery died with a
-Python general-protection fault. The final permitted recovery committed another
-26,399 calculated forecasts before coordinator Python SIGSEGV during
-`cloudpickle.reducer_override` → Dask message serialization at approximately
-13:44:02 on 17 October 2026. Its log is
-`.runtime/dask/full_daily_ingestion_recovery_2.log`; fault tracing identified no
-scientific provider or atomic key for the in-flight serialized message. There
-were 5,203 completed work-group log entries, which are not an acceptance count.
-No further recovery was started. The native crash cause remains unestablished;
-ample available memory and a successful standalone input read do not diagnose it.
+The continuation is stopped in 04.01 with **35,460 of 67,632** forecasts
+accepted (27,006 calculated and 8,454 imported); 32,172 remain pending. The
+researcher-authorized input-loading/payload correction selects required windows
+and fields before Python decoding and releases consumed groups/futures. Focused
+non-scientific checks passed: unchanged forecast/representation/model/prediction
+requests and evaluation inputs, released input ownership, and partial failure
+preserving 15 commits before resuming exactly three missing fixture identities.
+The real pending plan selected 2,307 official inputs rather than decoding all
+128,933 inputs. No accepted science or archive loading was repeated.
 
-Both machines performed calculation work; all 50 approved workers registered.
-Ubuntu owned ingestion, commits, tracking and GPU forecasts (1,884 new Chronos
-forecasts in this continuation); Mac and Ubuntu CPU workers both executed native
-groups. Exact per-host CPU item totals are not recorded by the existing forecast
-envelope. No worker counts, scientific settings, dependencies or accepted values
-were changed. The separate earlier ordinary-R SIGSEGV in `renv_scope_lock`
-during sandbox activation remains distinct and undiagnosed; successful ingestion
-does not establish a fix for it.
+The single additional recovery committed **112** forecasts, preserving all
+35,348 previously accepted forecasts and timestamps and every earlier accepted
+subflow/child record. It stopped on an Ubuntu native-R subprocess SIGSEGV at
+14:37:21 on 17 October 2026, in the first wave of 04.01. Evidence is in
+`.runtime/dask/full_daily_payload_recovery_1.log` (first failure at lines 888–911)
+and the kernel journal. The R provider was
+`src/r/p04_forecast/forecast_worker.R`, called by `calculate_forecast_batch` via
+`util.providers.run_r`; worker `tcp://192.168.1.44:46807` was processing series
+`D/2729`, official window `000004197`, methods `stlm_ar`, `rw_drift`, `thetaf`,
+`naive`, `snaive`, `ses`, `holt`, `damped`. R reported address `0x13`,
+"memory not mapped". The kernel instruction resolves in the installed
+`libR.so` to `Rf_allocVector3`, `src/main/memory.c:2872`; no R traceback identifies
+which method or startup operation reached it. The coordinator drained successful
+in-flight groups and exited normally with status 1 after propagating the error.
+No second recovery was submitted.
+
+The earlier coordinator Python SIGSEGV during `cloudpickle.reducer_override` →
+Dask serialization remains undiagnosed; its evidence is
+`.runtime/dask/full_daily_ingestion_recovery_2.log`. It did not recur during this
+short attempt. Narrower reads/released payloads are confirmed improvements, not
+an established fix for that crash. The earlier ordinary-R crash in
+`renv_scope_lock` during sandbox activation is separate evidence; the new R
+allocator fault alone does not establish the same failing R operation. Native-R
+backtrace diagnosis in the existing pinned environment is recommended before
+authorizing another experiment attempt.
+
+Both machines participated in the preserved experiment; all 50 approved workers
+registered again. Ubuntu owned ingestion, commits, tracking and GPU forecasts.
+The latest attempt accepted nine additional Chronos forecasts and 103 native-R
+forecasts. Exact per-host CPU item totals are not recorded by the existing
+forecast envelope. No worker counts, scientific settings, dependencies or accepted
+values were changed; there is no evidence justifying a CPU reduction or reboot.
 
 Owned execution services and writers are stopped, and the same resumable MLflow
 run is marked failed. Both databases remain on Ubuntu. Required fitted models,
@@ -115,7 +136,9 @@ Recorded flow timings (seconds; accepted earlier science was not repeated):
 | 02.01 / 02.02 | 188.388 / 1.002 |
 | 03 Transform | 6,481.968 |
 | 03.01 / 03.02 / 03.03 / 03.04 | 8.219 / 5,798.722 / 672.850 / 1.003 |
-| 04.01 final continuation, start to last pre-crash task log | 5,919.176 (incomplete) |
+| 04.01 prior serialization-failed continuation, to last pre-crash task log | 5,919.176 (incomplete) |
+| Additional recovery experiment invocation | 146.058 (failed) |
+| 04 Forecast / 04.01 additional recovery | 141.051 / 140.053 (failed) |
 | 04.02–04.05 / 05 / 06 | Not reached |
 
 Normal execution derives Prefect/Dask addresses from the selected coordinator
