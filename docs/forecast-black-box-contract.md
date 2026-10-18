@@ -48,6 +48,35 @@ visibly. Chronos-2 uses its pinned local checkpoint and native probabilistic
 provider; ordinary execution is offline and does not download the model for each
 job.
 
+### Chronos-2 paper baseline
+
+The approved baseline supplies original canonical GIFT-Eval history strictly
+before the forecast origin, without Process 02 cleaning or external Process 03
+standardisation. Chronos owns its native normalization; outputs are already on
+the original scale and must not be externally inverse-transformed. Retain the
+existing pinned checkpoint, precision, quantile levels and independent-series
+inference settings. The paper point forecast is the median (0.5 quantile).
+In the pinned provider, the return field named `mean` is that median, not an
+estimated expectation; document this meaning without redesigning the envelope.
+The [2.2.2 provider implementation](https://github.com/amazon-science/chronos-forecasting/blob/v2.2.2/src/chronos/chronos2/pipeline.py)
+selects the native 0.5 channel for that return. Context truncation stays inside
+the provider and follows the loaded checkpoint's context limit.
+
+This follows the previous paper project's sensitivity path:
+`src/r/sensitivity/03_add_chronos_forecasts.R` calls
+`src/python/chronos_forecast.py` on original histories. Its loader did not
+explicitly pin the checkpoint revision or dtype. Inspect retained historical
+provenance if available; otherwise record that limitation and retain the current
+pin. Do not guess historical settings or tune to reproduce a score.
+The retained `environments/foundation-models.yml` pins `chronos-forecasting`
+2.2.2, but the checkpoint revision and precision used for the saved forecasts
+could not be established. A currently cached snapshot does not establish which
+weights ran historically. ShapeFM retains its configured revision and float32.
+
+Other models retain their approved preparation. A cleaned-input Chronos variant
+is separate research requiring approval, not an implicit baseline replacement.
+The earlier project's source is reference material, not authorized for editing.
+
 Archived M4 forecasts are imported by Process 01 as defined in the
 [data contract](data-contract.md#archived-forecast-inputs). Process 04 reads them
 from the same forecast repository used for calculated forecasts; it does not
@@ -77,6 +106,15 @@ or tolerance gates. ShapeFM's envelope, storage and quantile fields are addition
 contracts around those calculations.
 
 ## Storage and combination
+
+The paper Naive2 reference is an explicit raw-history input policy within the
+existing Process 04 provider path, not a separate runner. Supply original
+canonical observations strictly before the forecast origin, with no Process 02
+cleaning or Process 03 standardisation and no inverse transform of its output.
+Preserve method/series/window identity and record the actual original input/output
+scale. See [evaluation](evaluation.md#naive2-reference-for-paper-owa) for its
+scientific authority and correction scope. Other models retain their approved
+input preparation; archived SMYL/FFORMA values are never recalculated.
 
 Process 04 stores every individual forecast before combination. Process 05
 reads stored component identities, requires them all, applies the approved

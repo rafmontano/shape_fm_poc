@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
 import os
+import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -16,11 +18,36 @@ from typing import Any
 import duckdb
 
 from util.providers import run_r
-from util.runtime import CODE_ROOT, FinalResearchSummary
+from util.runtime import CODE_ROOT, FinalResearchSummary, ProcessContext
 
 CSV_NAMES = ("table_1", "table_2_daily", "directional_accuracy_by_horizon",
              "cd_input_daily", "cd_mean_ranks_daily")
 FIGURE_NAMES = ("figure_2_accuracy_by_horizon", "figure_2_cd_daily", "figure_2_cd_daily_paper")
+LOGGER = logging.getLogger(__name__)
+
+
+def deliver_published_outputs(context: ProcessContext, summary: FinalResearchSummary) -> None:
+    """Coordinator-only delivery of declared files; failed hosts remain pending.
+
+    Delivery is operational, not scientific acceptance. Each normal publication
+    resume retries the stored paths without rendering or reopening accepted work.
+    """
+    settings = context.execution.settings
+    hosts = {worker["machine"] for worker in settings.get("workers", [])
+             if worker["machine"] != settings.get("coordinator")}
+    if not hosts or not summary.artifacts:
+        return
+    root = context.request.root
+    paths = [str(Path(path).relative_to(root)) for path in summary.artifacts]
+    machines = json.loads((CODE_ROOT / "config/machines.json").read_text())["machines"]
+    for host in sorted(hosts):
+        machine = machines[host]
+        target = f"{machine['ssh_user']}@{machine['hostname']}:{machine['project_root']}/"
+        try:
+            subprocess.run(["rsync", "-rtR", "-e", "ssh -o BatchMode=yes", *paths, target],
+                           cwd=root, check=True, timeout=120)
+        except (OSError, subprocess.SubprocessError) as error:
+            LOGGER.warning("Process 06 output delivery pending for %s: %s", host, error)
 
 
 def _csv(path: Path, columns: list[str], rows: list[dict[str, Any]]) -> None:

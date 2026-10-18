@@ -8,6 +8,21 @@ from p06_evaluate.reports import M4_FREQUENCIES, TableReports
 class PaperTableTests(unittest.TestCase):
     """Exercise public report calculations without legacy storage or orchestration."""
 
+    def test_corrected_reference_changes_selection_using_retained_errors(self):
+        """Unequal reference changes can reverse OWA order without new scoring."""
+        rows = [{"lambda_up": 1.01, "lambda_down": 1., "correct_counts": [7, 4],
+                 "evaluation_count": 9, "metrics": {"smape": 2., "mase": 8., "owa": .5}},
+                {"lambda_up": 1.02, "lambda_down": .99, "correct_counts": [3, 6],
+                 "evaluation_count": 9, "metrics": {"smape": 6., "mase": 2., "owa": .4}}]
+        self.assertIs(TableReports.select(rows), rows[1])
+        corrected = TableReports.rebase_owa(rows, {"metrics": {"smape": 4., "mase": 10.}})
+        self.assertAlmostEqual(corrected[0]["metrics"]["owa"], .65)
+        self.assertAlmostEqual(corrected[1]["metrics"]["owa"], .85)
+        self.assertIs(TableReports.select(corrected), corrected[0])
+        for old, new in zip(rows, corrected):
+            self.assertEqual({**new, "metrics": {**new["metrics"], "owa": old["metrics"]["owa"]}}, old)
+        self.assertEqual([r["metrics"]["owa"] for r in rows], [.5, .4])
+
     def test_all_selection_tie_levels(self):
         """No hardcoded historical pair or coarse/tolerance tie can pass these orderings."""
         def row(owa, up, down):

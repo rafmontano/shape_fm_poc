@@ -27,7 +27,49 @@ Naive2 and terminal-horizon directional accuracy. Daily MASE uses lag 1. The
 profile is distinct from ordinary GIFT-Eval metrics and is identified explicitly
 in stored results.
 
+### Naive2 reference for paper OWA
+
+The paper benchmark uses Naive2 calculated from the original canonical historical
+observations up to the forecast origin, without cleaning or standardisation.
+Process 04 calculates and stores this forecast; Process 06 only evaluates it.
+Use the previous paper project's Naive2 method and R seasonality convention
+(M4 Daily: period 1, horizon 14). GIFT-Eval remains the observation authority;
+this does not authorize importing M4comp2018 histories or comparing sources.
+FFORMA and SMYL remain unchanged archived M4comp2018 forecasts from Process 01.
+
+OWA is one half of the sum of cohort-mean sMAPE divided by Naive2 cohort-mean
+sMAPE and cohort-mean MASE divided by Naive2 cohort-mean MASE. Do not average
+per-series OWA, change this formula, or substitute a cleaned-history benchmark.
+Research preprocessing for other models remains unchanged.
+
+The approved correction replaces only existing incorrect Naive2 forecasts and
+their dependent metrics, OWA-bearing sensitivity results, selections and published
+outputs. Reuse stored candidate sMAPE/MASE and directional counts when available;
+changing the denominator does not require recalculating their forecast paths.
+Recompute selected adjusted paths only if the corrected selection requires a
+path not already retained. Refresh dependent completion/publication state so
+restart cannot skip stale results. Preserve unrelated accepted items and models.
+This is a bounded correction, not a general invalidation or migration framework.
+
+For this correction only, compare the full-Daily Naive2 aggregate errors with the
+previous paper project's saved values: sMAPE 3.045251783366573 and MASE
+3.278424301206222. Report differences, allowing ordinary numerical variation;
+these are review evidence, not hard-coded runtime targets or a permanent gate.
+The previous authority is `m4_tsc_fmts_2026`: `02_add_smyl_forecasts.R`,
+`01_fct_methods.R`, `05_run_lambda_sensitivity.R`, and
+`results/paper/tables/table1_daily_full_precision.csv`.
+
 ## Sensitivity and selection
+
+The approved raw-history Chronos correction replaces only its existing forecasts
+and dependent accuracy/directional metrics, combinations or adjustments that
+actually consume them, Chronos sensitivity candidates and selected paths, and
+derived publication/tracking outputs. Preserve the corrected Naive2 benchmark,
+archived SMYL/FFORMA, the SMYL sensitivity branch, fitted directional models and
+unrelated accepted work. Unlike a denominator-only correction, changed Chronos
+forecasts require recalculating their affected sensitivity errors. Reuse stored
+Mantis directions; do not refit or rerun representation/classifier work. Scope
+dependent state replacement narrowly so resume cannot reuse stale results.
 
 The approved Mantis adjustment uses the final-horizon Mantis direction to
 select one scalar for the complete point-forecast path:
@@ -81,6 +123,18 @@ results/figures/
 
 No root-level `Rplots.pdf` or experiment/evidence subfolders are permitted.
 Export is read-only with respect to DuckDB and does not schedule scientific work.
+
+Final Process 06 delivery copies the published tables and figures from the
+coordinator to the same repository-relative locations on each participating
+worker host, once per host rather than per worker process. Use existing SSH/rsync
+within the publication/completion sequence; do not add a scientific subflow or
+transfer framework. Single-host execution requires no copy. The coordinator is
+authoritative and copies never flow back automatically. An unavailable host is
+reported as delivery pending without invalidating accepted science. Delivery
+retry copies existing outputs only, without recalculation or regeneration, even
+when scientific milestones are already complete. Copy only declared publication
+files; do not broadly delete destination content. These are output copies, not
+full experiment backups: databases, models and runtime logs are excluded.
 
 POC2 Figure 2 has separate files, not a combined panel:
 

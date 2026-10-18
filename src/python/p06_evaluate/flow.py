@@ -10,6 +10,7 @@ from typing import Callable
 
 from prefect import flow
 
+from p06_evaluate.publication import deliver_published_outputs
 from util.runtime import DataRef, FinalResearchSummary, ProcessContext
 
 
@@ -86,15 +87,18 @@ def assemble_research_results(context: ProcessContext, candidates: DataRef) -> D
 def publish_approved_outputs(context: ProcessContext, results: DataRef) -> FinalResearchSummary:
     """Subflow level: publish stored results and return registered file references.
 
-    Accepted 06.06 resumes the stored summary without rendering; before milestone
-    acceptance, files may be rendered again. MLflow does not own this boundary.
+    Accepted 06.06 retries delivery of the stored summary without rendering;
+    before acceptance, files may be rendered again. Delivery and MLflow do not
+    own scientific acceptance.
     """
     with context.tracking.subflow("06.06", "Publish approved outputs"):
         if context.state.is_subflow_accepted("06.06"):
-            return context.evaluate.published_summary()
-        summary = context.evaluate.publish_outputs(results)
-        context.tracking.publish_final(summary)
-        context.state.accept_subflow("06.06")
+            summary = context.evaluate.published_summary()
+        else:
+            summary = context.evaluate.publish_outputs(results)
+            context.tracking.publish_final(summary)
+            context.state.accept_subflow("06.06")
+        deliver_published_outputs(context, summary)
         return summary
 
 
@@ -114,7 +118,9 @@ def run_evaluate(context: ProcessContext) -> DataRef:
     with context.tracking.process("06", "Evaluate"):
         context.state.require_prerequisites("06")
         if context.state.is_process_accepted("06"):
-            return context.evaluate.research_results()
+            results = context.evaluate.research_results()
+            publish_approved_outputs(context, results)
+            return results
         candidates = context.evaluate.forecast_candidates()
         evaluate_forecast_accuracy(context, candidates)
         evaluate_directional_performance(context, candidates)

@@ -43,6 +43,20 @@ run is researcher-accepted as technically complete. Researcher review of the
 CSVs and figures remains separate; this does not establish clean-room dependency
 reconstruction.
 
+The targeted Naive2/OWA correction has been applied and its delivered CSVs
+reviewed: Naive2 reference errors and SMYL/FFORMA OWA match the previous paper
+results at displayed precision. Selected lambda pairs are unchanged.
+The researcher has approved the raw-history Chronos baseline correction under
+[forecasting](forecast-black-box-contract.md#chronos-2-paper-baseline), with only
+its dependent recalculation/publication, plus final publication copying to worker
+hosts under [evaluation](evaluation.md#figures-and-files). Implementation and the
+targeted correction/publication are complete. Completed-state resume schedules
+zero scientific work and retries existing-file delivery without rendering.
+Refreshed outputs and approved source/documentation are synchronized on both
+hosts. Researcher review of the corrected results remains pending; technical
+completion does not establish scientific acceptance. No fresh experiment or full
+six-process rerun is authorized.
+
 The five-layer architecture transformation is researcher-accepted. It delivered
 the approved workflow hierarchy, readable process ownership, canonical paths,
 minimal validation boundaries, restartable item state and pragmatic MLflow

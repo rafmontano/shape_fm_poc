@@ -1,7 +1,8 @@
 """Process 04 offline Chronos-2 provider in its pinned native environment.
 
-Past-only forecast-v1 requests produce same-scale mean, median and ordered
-quantile horizons. A JSON-lines session reuses one model; no storage or scheduling.
+Past-only forecast-v1 requests produce same-scale point and ordered quantile
+horizons. The envelope's mean is the native median, not an expectation, under
+chronos-forecasting 2.2.2. A JSON-lines session reuses one model; no scheduling.
 Launch with ``python -m p04_forecast.chronos serve`` and explicit model settings.
 """
 
@@ -90,8 +91,10 @@ def predict(
     request: dict[str, Any],
 ) -> dict[str, Any]:
     """Infer past-only jobs with the loaded model under the forecast black-box
-    contract (docs/forecast-black-box-contract.md). Return same-scale mean,
-    median and ordered quantiles; the coordinator owns durable acceptance.
+    contract (docs/forecast-black-box-contract.md). The pinned provider's second
+    predict_quantiles return, named mean upstream, is its native 0.5 quantile.
+    Retain it as the paper point forecast in the common mean field; quantile
+    rearrangement does not replace that native point. Acceptance is coordinator-owned.
     """
     started = time.monotonic()
     jobs = request["jobs"]
@@ -101,7 +104,7 @@ def predict(
     inputs = [
         {"target": np.asarray(job["context"], dtype=np.float32)} for job in jobs
     ]
-    quantiles, means = pipeline.predict_quantiles(
+    quantiles, medians = pipeline.predict_quantiles(
         inputs=inputs,
         prediction_length=request["horizon"],
         batch_size=request["inference_batch_size"],
@@ -110,9 +113,9 @@ def predict(
     )
     runtime = time.monotonic() - started
     results = []
-    for job, item_quantiles, item_mean in zip(jobs, quantiles, means, strict=True):
+    for job, item_quantiles, item_median in zip(jobs, quantiles, medians, strict=True):
         values = item_quantiles.detach().cpu().numpy()[0].T
-        mean = item_mean.detach().cpu().numpy()[0]
+        point = item_median.detach().cpu().numpy()[0]
         arranged_quantiles, quantiles_rearranged = ForecastContract.noncrossing_quantiles(
             values.tolist()
         )
@@ -129,7 +132,7 @@ def predict(
                 "forecast_capability": "probabilistic",
                 "output_scale": job["input_scale"],
                 "horizon": job["horizon"],
-                "mean": mean.tolist(),
+                "mean": point.tolist(),
                 "median": arranged_quantiles[levels.index(0.5)],
                 "quantile_levels": levels,
                 "quantiles": arranged_quantiles,
@@ -143,7 +146,7 @@ def predict(
                     "model_revision": job["model_settings"]["revision"],
                     "effective_settings": job["model_settings"],
                     "seed": job["seed"],
-                    "dtype": str(item_mean.dtype),
+                    "dtype": str(item_median.dtype),
                     "quantile_rearrangement": (
                         "sorted_per_horizon" if quantiles_rearranged else "identity"
                     ),

@@ -52,11 +52,12 @@ def calculate_forecast_batch(items: list[WorkItem]) -> Iterator[tuple[str, dict[
                 raise RuntimeError(f"forecast {item.key}: {result['error_message']}")
             result = dict(result)
             state = item.payload["state"]
-            for field in ("mean", "median"):
-                if result[field] is not None:
-                    result[field] = list(inverse_transformation(result[field], state))
-            if result["quantiles"] is not None:
-                result["quantiles"] = [list(inverse_transformation(row, state)) for row in result["quantiles"]]
+            if state:
+                for field in ("mean", "median"):
+                    if result[field] is not None:
+                        result[field] = list(inverse_transformation(result[field], state))
+                if result["quantiles"] is not None:
+                    result["quantiles"] = [list(inverse_transformation(row, state)) for row in result["quantiles"]]
             result.update(input_key=item.payload["input_key"], model=item.payload["model"],
                           output_scale="original", origin="calculated")
             yield item.key, result
@@ -150,6 +151,11 @@ class Application:
         required = {f"{key}/official/{source['test_start']:09d}" for key, source in canonical.items()
                     if any(f"{key}/official/{source['test_start']:09d}/{model}" not in accepted
                            for model in self.configuration["models"] if not model.startswith("directional_"))}
+        raw_keys = [key for key, source in canonical.items()
+                    if any(model in self.configuration["models"] and
+                           f"{key}/official/{source['test_start']:09d}/{model}" not in accepted
+                           for model in ("naive2", "chronos_2"))]
+        raw = self.store.rows("01.02", keys=raw_keys, fields=("target",))
         items = []
         for input_key, row in self.context.windows().rows("03.02", keys=required, kind="official",
                 fields=("series_key", "series_id", "point_context", "frequency", "r_period", "point_state")).items():
@@ -163,16 +169,20 @@ class Application:
                 capability = "mean_only" if model in ("ses", "holt", "damped", "naive2") else "probabilistic"
                 provider = "chronos" if model == "chronos_2" else "r"
                 levels = self.configuration["models"]["chronos_2"]["quantile_levels"] if capability == "probabilistic" else None
+                # Paper baselines own normalization; research preparation applies to peers.
+                original_scale = model in ("naive2", "chronos_2")
                 request = {"contract_version": "forecast-v1", "experiment_id": self.context.experiment_ref.experiment_id,
                     "task_id": key, "forecast_instance_id": key, "variant_id": model,
                     "dataset_id": source["dataset_id"], "series_id": row["series_id"], "model_id": model,
-                    "required_capability": capability, "context": row["point_context"], "horizon": source["horizon"],
+                    "required_capability": capability,
+                    "context": raw[row["series_key"]]["target"][:source["test_start"]] if original_scale else row["point_context"],
+                    "horizon": source["horizon"],
                     "frequency": row["frequency"], "seasonal_period": row["r_period"],
-                    "input_scale": "transformed", "quantile_levels": levels,
+                    "input_scale": "original" if original_scale else "transformed", "quantile_levels": levels,
                     "seed": self.configuration["reproducibility"]["seed"],
                     "model_settings": configuration.get("settings", configuration)}
                 items.append(WorkItem(key, {"input_key": input_key, "model": model, "provider": provider,
-                    "request": request, "state": row["point_state"], "execution": self._execution(provider)},
+                    "request": request, "state": {} if original_scale else row["point_state"], "execution": self._execution(provider)},
                     resources=self.context.execution.resources(provider)))
         return self.store.plan("04.01", items)
 

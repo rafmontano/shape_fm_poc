@@ -21,6 +21,25 @@ class TableReports:
     """Own deterministic selection and views of one selected scientific result set."""
 
     @staticmethod
+    def rebase_owa(candidates: list[dict[str, Any]], reference: dict[str, Any]) -> list[dict[str, Any]]:
+        """Recompute cohort OWA from retained errors, without rescoring candidates.
+
+        docs/evaluation.md defines ratios of cohort means; directional-only
+        candidates retain null point scores and all directional counts.
+        """
+        denominator = reference["metrics"]
+        if any(denominator[field] is None or not math.isfinite(denominator[field])
+               or denominator[field] <= 0 for field in ("smape", "mase")):
+            raise ValueError("OWA requires positive finite Naive2 components")
+        output = []
+        for row in candidates:
+            metrics = dict(row["metrics"])
+            metrics["owa"] = (None if metrics["smape"] is None else
+                0.5 * (metrics["smape"] / denominator["smape"] + metrics["mase"] / denominator["mase"]))
+            output.append({**row, "metrics": metrics})
+        return output
+
+    @staticmethod
     def select(candidates: list[dict[str, Any]]) -> dict[str, Any]:
         """Select the first candidate under all approved tie levels, never tolerance ties."""
         if not candidates or any(not math.isfinite(r["metrics"]["owa"]) for r in candidates):
@@ -61,12 +80,7 @@ class TableReports:
         reference = next((r for r in aggregate if r["model"] == "naive2"), None)
         if reference is None or any(reference["metrics"][f] <= 0 for f in ("smape", "mase")):
             raise ValueError("All requires positive Naive2 components")
-        for row in aggregate:
-            m = row["metrics"]
-            m["owa"] = (None if m["smape"] is None else
-                        0.5 * (m["smape"] / reference["metrics"]["smape"] +
-                               m["mase"] / reference["metrics"]["mase"]))
-        return aggregate
+        return TableReports.rebase_owa(aggregate, reference)
 
     @staticmethod
     def tables(selected: list[dict[str, Any]], directional: list[dict[str, Any]]) -> dict:
