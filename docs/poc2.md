@@ -39,8 +39,9 @@ model files, five CSVs and six figure files are available at the repository root
 The final no-new-work restart submitted zero work groups and left accepted
 scientific records and model/output files unchanged. Scientific configuration and
 calculations remain unchanged; sensitivity uses coordinator CPU workers. This
-establishes execution completion, not new researcher presentation acceptance or
-clean-room dependency reconstruction.
+run is researcher-accepted as technically complete. Researcher review of the
+CSVs and figures remains separate; this does not establish clean-room dependency
+reconstruction.
 
 The five-layer architecture transformation is researcher-accepted. It delivered
 the approved workflow hierarchy, readable process ownership, canonical paths,

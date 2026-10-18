@@ -147,6 +147,10 @@ batch/item and native cause. Stop only the affected work when possible. Do not
 delete both databases or repeat completed processes merely to troubleshoot a
 later failure.
 
+The technically accepted full Daily run logged Dask nanny cleanup and Prefect
+API-flush errors only after scientific completion, during shutdown. Both the run
+and its no-new-work restart exited successfully; accepted results remain preserved.
+
 Dask workers enable Python's fault handler. Failed native batches identify their
 candidate keys, host and worker in exception notes. Integer-limit serialization
 failures additionally report suspect field paths, types and bit lengths without
