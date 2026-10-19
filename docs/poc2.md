@@ -22,9 +22,13 @@ reproduction, not improving forecast accuracy.
 - Approved DTW target: historical one-NN via dtw-python, symmetric2, integer window 6
   for Daily length 64, one neighbour's labels reused across horizons 1–14,
   DTW-only reference cap 10,000 with seed 123. Mantis training is uncapped.
-  The correction is implemented; bounded integration and fresh-run delivery remain pending.
+  The correction and bounded integration are complete; fresh-run delivery is blocked.
 
 ## Current status
+
+The acceptance paragraphs below concern the preceding experiment, not the new
+methodology run. Its generated state was disposed of once under the subsequent
+fresh-run authorization; those outputs are not the current canonical delivery.
 
 POC2 Part B is scientifically accepted: the reproduced results were sufficiently
 similar for the POC2 objective, all 1,057 sensitivity candidates completed, the
@@ -62,8 +66,10 @@ full six-process rerun or further crash investigation was authorized by closeout
 The researcher has subsequently approved the following methodology decisions.
 These supersede the earlier cleaning-only instruction to preserve the shared cap,
 training boundary and aeon DTW. Production code/configuration now implement
-these decisions. Focused checks pass; bounded integration and the fresh canonical
-experiment, saved-result comparison and final synchronization remain pending.
+these decisions. Focused checks and the isolated 100-series Processes 01–06 run
+pass, including a restart that changed no accepted scientific records or
+model/output files. Fresh canonical execution is blocked as detailed below;
+saved-result comparison and final scientific delivery remain pending.
 
 | ID | Decision | Owning contract |
 | --- | --- | --- |
@@ -88,6 +94,23 @@ do not repeatedly reset it. Preserve the previous project's reference results.
 The researcher requests a saved-result comparison under the evaluation contract
 to establish similarity and explain differences. Acceptance of the new run
 remains pending; successful execution is not scientific acceptance.
+
+The new 4,227-series experiment has completed Processes 01–02 and subflows
+03.01–03.02, preserving 129,482 modelling inputs. Its persisted cohorts contain
+10,000 DTW references and 100,026 Mantis training windows. Subflow 03.03 has
+accepted 392 feature vectors. No new fitted models or publication outputs have
+yet been produced. The one-time reset must not be repeated.
+
+The initial full attempt failed while reading child JSON values in DuckDB;
+fresh read-only streaming and exact fetch/decode checks subsequently succeeded
+for every modelling input. An unchanged-profile resume then stopped on an Ubuntu
+R feature-worker SIGSEGV in the JIT compiler. A focused read-only reproduction
+of that unaccepted eight-item request succeeded without storing results. Neither
+failure has an established cause, and there is no evidence establishing a Mac
+IP change as their cause. The full run is paused under the researcher's stop
+condition for persistent operational blockage, with accepted state retained.
+The remaining feature work, Processes 04–06, saved-result comparison and final
+no-new-work restart require recovery; scientific acceptance remains separate.
 
 The five-layer architecture transformation is researcher-accepted. It delivered
 the approved workflow hierarchy, readable process ownership, canonical paths,
