@@ -22,7 +22,7 @@ reproduction, not improving forecast accuracy.
 - Approved DTW target: historical one-NN via dtw-python, symmetric2, integer window 6
   for Daily length 64, one neighbour's labels reused across horizons 1–14,
   DTW-only reference cap 10,000 with seed 123. Mantis training is uncapped.
-  The correction and bounded integration are complete; fresh-run delivery is blocked.
+  The correction and bounded integration are complete; fresh-run delivery is pending.
 
 ## Current status
 
@@ -68,7 +68,7 @@ These supersede the earlier cleaning-only instruction to preserve the shared cap
 training boundary and aeon DTW. Production code/configuration now implement
 these decisions. Focused checks and the isolated 100-series Processes 01–06 run
 pass, including a restart that changed no accepted scientific records or
-model/output files. Fresh canonical execution is blocked as detailed below;
+model/output files. Fresh canonical execution is paused as detailed below;
 saved-result comparison and final scientific delivery remain pending.
 
 | ID | Decision | Owning contract |
@@ -95,22 +95,34 @@ The researcher requests a saved-result comparison under the evaluation contract
 to establish similarity and explain differences. Acceptance of the new run
 remains pending; successful execution is not scientific acceptance.
 
-The new 4,227-series experiment has completed Processes 01–02 and subflows
-03.01–03.02, preserving 129,482 modelling inputs. Its persisted cohorts contain
-10,000 DTW references and 100,026 Mantis training windows. Subflow 03.03 has
-accepted 392 feature vectors. No new fitted models or publication outputs have
-yet been produced. The one-time reset must not be repeated.
+The researcher renewed authorization to dispose of the interrupted experiment
+and start Processes 01–06 from the beginning. Both hosts' generated scientific
+databases, experiment models, publication outputs and Prefect/Dask/MLflow state
+were cleared with writers stopped. Canonical data, pretrained checkpoints,
+environments, caches, authored files, Git state and previous-project references
+were preserved. Source revisions matched on both hosts; 59 Python tests, the R
+cohort test, Mac DTW checks and Ubuntu setup verification passed before launch.
 
-The initial full attempt failed while reading child JSON values in DuckDB;
-fresh read-only streaming and exact fetch/decode checks subsequently succeeded
-for every modelling input. An unchanged-profile resume then stopped on an Ubuntu
-R feature-worker SIGSEGV in the JIT compiler. A focused read-only reproduction
-of that unaccepted eight-item request succeeded without storing results. Neither
-failure has an established cause, and there is no evidence establishing a Mac
-IP change as their cause. The full run is paused under the researcher's stop
-condition for persistent operational blockage, with accepted state retained.
-The remaining feature work, Processes 04–06, saved-result comparison and final
-no-new-work restart require recovery; scientific acceptance remains separate.
+One fresh 4,227-series experiment started on Ubuntu with the unchanged
+`mvp_two_machine` profile. Retain accepted work within this run on recovery;
+this renewed authorization is not standing permission for repeated resets.
+Processes 01–03 and all 67,632 individual forecasts (including 8,454 imported
+archives) are accepted. The child contains 129,482 modelling inputs; the parent
+contains 14,227 feature vectors. Training populations are 10,000 ordered DTW
+references and 100,026 uncapped Mantis windows. Representation work is planned
+for 104,253 training/official inputs but has not yet produced accepted results.
+
+An Ubuntu R NNETAR simulation SIGSEGV interrupted forecasting. Its unaccepted
+seven-item request succeeded in isolation; unchanged-profile recovery completed
+all remaining individual forecasts. The native crash cause remains unresolved.
+Recovery then stopped before representation execution because only 44 of the
+required 50 workers remained: all six Mac workers had disconnected following
+macOS-recorded sleep. All sixteen logical GPU workers were present; no allocation
+or scientific setting was reduced. Owned services are stopped. Keep the Mac
+awake before another ordinary resume; do not reset or recalculate accepted work.
+The earlier DuckDB read and R JIT failures remain unexplained and are not
+attributed to Mac movement. Remaining Process 04 work, Processes 05–06, saved-result
+comparison, final no-new-work restart and scientific acceptance remain pending.
 
 The five-layer architecture transformation is researcher-accepted. It delivered
 the approved workflow hierarchy, readable process ownership, canonical paths,
