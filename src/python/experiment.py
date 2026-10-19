@@ -17,6 +17,8 @@ from typing import Sequence
 
 import duckdb
 
+# Scientific flows are noninteractive; tsai must not create thread-owned Tk state.
+os.environ.setdefault("MPLBACKEND", "Agg")
 # Prefect reads its home during import, before any flow or server is started.
 os.environ["PREFECT_HOME"] = str(Path(__file__).resolve().parents[2] / ".runtime/prefect")
 from prefect import flow

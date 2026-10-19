@@ -119,6 +119,10 @@ do not require experiment names or database paths. Run only the process range
 needed. A change to Process 03 is validated through Process 03, not through
 Process 06.
 
+The noninteractive entry point defaults Python plotting to the `Agg` backend
+before importing the workflow and tsai. This avoids GUI/Tk state in flow threads;
+explicit backend settings are retained. Publication figures remain rendered by R.
+
 The accepted experiment is in canonical `results/`, `models/` and
 `.runtime/mlflow/`, not a review workspace. Do not recalculate accepted science
 merely to inspect or review it. The normal entry point defaults to
