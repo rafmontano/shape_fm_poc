@@ -16,5 +16,21 @@
       {"machine": "ubuntu_primary", "count": 28, "memory_limit": "8GiB", "resources": "CPU=1"},
       {"machine": "ubuntu_primary", "count": 16, "memory_limit": "16GiB", "resources": "GPU=1"}
     ]
+  },
+  "mvp_ubuntu_only": {
+    "coordinator": "ubuntu_primary",
+    "max_in_flight": 24,
+    "worker_connections_incoming": 1,
+    "subflows": {
+      "06.03": {"resources": {"CPU": 1, "COORDINATOR_CPU": 1}}
+    },
+    "providers": {
+      "chronos": {"device": "cuda", "resources": {"GPU": 1}},
+      "mantis": {"device": "cuda", "resources": {"GPU": 1}}
+    },
+    "workers": [
+      {"machine": "ubuntu_primary", "count": 28, "memory_limit": "8GiB", "resources": "CPU=1"},
+      {"machine": "ubuntu_primary", "count": 16, "memory_limit": "16GiB", "resources": "GPU=1"}
+    ]
   }
 }

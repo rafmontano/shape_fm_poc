@@ -27,10 +27,10 @@ from util.runtime import CODE_ROOT
 
 
 def _coordinator_host(settings: dict[str, Any], machines: dict[str, Any]) -> str:
-    peer = next(allocation["machine"] for allocation in settings["workers"]
-                if allocation["machine"] != settings["coordinator"])
-    # Bind the route to the peer, not every loopback/link-local mDNS answer.
-    return get_ip(machines[peer]["hostname"])
+    peer = next((allocation["machine"] for allocation in settings["workers"]
+                 if allocation["machine"] != settings["coordinator"]), None)
+    # Local-only services need no LAN; remote workers require the peer route.
+    return get_ip(machines[peer]["hostname"]) if peer is not None else "127.0.0.1"
 
 
 @contextmanager

@@ -110,6 +110,31 @@ class ResearcherInterfaceTests(unittest.TestCase):
                 finally:
                     context.close()
 
+    def test_local_only_cluster_starts_without_a_remote_peer(self):
+        """A local scheduler remains reachable without a Mac or LAN endpoint."""
+        from urllib.parse import urlsplit
+        from util.distributed_cluster import DistributedCluster
+
+        profiles = json.loads((CODE_ROOT / "config/execution_profiles.json").read_text())
+        profile = profiles["mvp_ubuntu_only"]
+        worker = {**profile["workers"][0], "count": 1}
+        inventory = json.loads((CODE_ROOT / "config/machines.json").read_text())
+        inventory["services"]["dask_scheduler_port"] = 0
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "config").mkdir()
+            (root / "config/machines.json").write_text(json.dumps(inventory))
+            with patch("util.distributed_cluster.CODE_ROOT", root):
+                cluster = DistributedCluster({**profile, "workers": [worker]})
+                try:
+                    address = cluster.start()
+                    self.assertEqual(urlsplit(address).hostname, "127.0.0.1")
+                    workers = cluster.client.scheduler_info()["workers"]
+                    self.assertEqual({worker["host"] for worker in workers.values()}, {"127.0.0.1"})
+                    self.assertEqual(cluster.client.submit(sum, [2, 5, 11]).result(), 18)
+                finally:
+                    cluster.close()
+
     def test_sensitivity_placement_and_accepted_candidate_exclusion(self):
         """Pending bounded groups stay on the coordinator and exclude accepted keys."""
         from distributed import Client, Scheduler, SpecCluster, Worker

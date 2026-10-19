@@ -47,6 +47,16 @@ identity. Do not automatically reduce the sixteen GPU workers: GPU startup,
 memory or execution failure requires preserving progress and researcher
 direction. CPU sensitivity investigation does not start GPU model processes.
 
+When the Mac is unavailable, select `--execution-profile mvp_ubuntu_only` on
+the normal entry point. This researcher-authorized profile retains the same
+28 Ubuntu CPU workers, sixteen logical GPU workers, placement and 24-group
+in-flight bound, but omits Mac workers and remote delivery. Local-only Prefect
+and Dask services bind loopback and do not require a remote peer or LAN name
+resolution. Switching profiles resumes the same accepted DuckDB experiment;
+it does not change scientific settings or recalculate completed items. Mac
+publication delivery remains pending until the host returns and the two-machine
+profile is selected again.
+
 The profile's `subflows.06.03.resources` requires `CPU` and `COORDINATOR_CPU`.
 The shared executor applies that constraint to every sensitivity group, without
 fallback to the peer. Worker allocations start when eligible work first needs

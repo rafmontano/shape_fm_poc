@@ -110,7 +110,8 @@ Processes 01–03 and all 67,632 individual forecasts (including 8,454 imported
 archives) are accepted. The child contains 129,482 modelling inputs; the parent
 contains 14,227 feature vectors. Training populations are 10,000 ordered DTW
 references and 100,026 uncapped Mantis windows. All 104,253 training/official
-representations are accepted. Decision-model fitting has no accepted results yet.
+representations and all 15 decision models are accepted: the DTW reference and
+Mantis Random Forest horizons 1–14. All accepted model files are present.
 
 An Ubuntu R NNETAR simulation SIGSEGV interrupted forecasting. Its unaccepted
 seven-item request succeeded in isolation; unchanged-profile recovery completed
@@ -124,13 +125,62 @@ use process-scoped `caffeinate -is`, with both a bounded native check and the li
 worker's system-sleep assertion verified. Nine researcher-interface tests pass.
 Recovery completed representations, then the Ubuntu coordinator Python process
 terminated with SIGSEGV during 04.03. The execution and kernel logs establish
-the native crash, not its underlying cause. Owned services and orphaned provider
-processes are stopped; accepted state is retained. Progress is paused under the
-persistent-blockage stop condition pending direction on native-crash diagnosis.
+the native crash, not its underlying cause. The researcher authorized continued
+diagnosis and recovery. Read-only planning and serialization of the full pending
+training inputs did not reproduce the native crash; all 59 Python tests pass.
+Recovery with coordinator Python fault tracing, unchanged scientific settings
+and the existing executor ran for 4,897.27 seconds. The classifier subprocess
+reported a JSON decode failure for horizon 11. The executor accepted the failed
+group's completed horizons 8–10, drained the other group and accepted its DTW
+reference and horizons 1–7, then exited with status 1. Scientific completion
+remains at 04.03; neither directional prediction nor later processes ran.
+No new segmentation fault was reported during this invocation. The JSON
+failure's underlying cause remains unverified. The researcher authorized a
+read-only horizon-11 transport diagnosis and recovery even if the cause remains
+unresolved. The reconstructed 519,341,858-character request decoded locally and
+crossed the existing subprocess transport with an identical SHA-256 checksum;
+no model was fitted in that diagnostic. Normal recovery successfully fitted
+horizons 11–14 without repeating the JSON failure. The researcher then needed
+to disconnect the Mac and authorized Ubuntu-only continuation, operational
+corrections and bounded retries without scientific or process changes. The six
+idle Mac workers were stopped; after all fits were accepted, remote model
+preparation was interrupted before prediction tasks ran. Recovery now uses
+`mvp_ubuntu_only`, retaining 28 Ubuntu CPU and sixteen logical GPU workers,
+the same 24-group bound and the existing executor. Local services use loopback;
+no Mac worker, model transfer or publication delivery is required. All 60 Python
+tests pass, including a real local-only scheduler/worker task. Mac synchronization
+and publication delivery wait for the host's return. The proposed one-fit-per-group
+scheduling change has not been implemented. Accepted science is retained.
 Do not reset or recalculate accepted work. The earlier DuckDB read and R JIT
-failures remain unexplained and are not attributed to Mac movement. Remaining
-Process 04 work, Processes 05–06, saved-result comparison, final no-new-work
-restart and scientific acceptance remain pending.
+failures remain unexplained and are not attributed to Mac movement.
+
+Ubuntu-only continuation completed Processes 04–05, all 71,859 forecast-accuracy
+evaluations and all 80,313 directional evaluations. After directional prediction
+finished, the coordinator closed 25 idle native classifier sessions through their
+existing shutdown interface, releasing their cached fitted models from memory.
+This was an operational action, not automatic lifecycle cleanup or a refit.
+Sensitivity accepted 168 candidates before native Python worker segmentation
+faults and an R heap-corruption abort ended the invocation. A fresh-process,
+unchanged-profile retry retained those candidates and reached 344 of 1,057 before
+another Python worker segmentation fault and an R JSON-parsing/garbage-collection
+failure. The executor drained successful groups and preserved their commits.
+The two invocations have stopped; no coordinator writer or associated workers
+remain active. There are 713 sensitivity candidates still pending.
+
+Read-only inspection also found an unresolved fitted-artifact discrepancy:
+the horizon-04 Random Forest file's current SHA-256 differs from two earlier
+snapshots. Repeated current reads, including a direct disk read, agree with one
+another; file modification/change timestamps precede both earlier snapshots.
+The other fourteen model-file hashes and the rolling-input logical digest match
+the pre-Ubuntu-only snapshot. No model was replaced or refitted. This does not
+establish a cause, prove stored predictions wrong, or attribute the failures to
+the Mac, hardware or any particular library. Logs, snapshots and the discrepancy
+record are preserved for review. Further scientific writes are paused pending
+researcher direction on host/environment diagnosis and continuation; do not use
+another canonical retry to establish system integrity. Scientific/process logic
+and the operational concurrency profile remain unchanged. Completing Process 06,
+saved-result comparison, final no-new-work restart, Mac delivery and scientific
+acceptance remain pending.
 
 The five-layer architecture transformation is researcher-accepted. It delivered
 the approved workflow hierarchy, readable process ownership, canonical paths,
