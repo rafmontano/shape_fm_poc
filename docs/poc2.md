@@ -109,8 +109,8 @@ this renewed authorization is not standing permission for repeated resets.
 Processes 01–03 and all 67,632 individual forecasts (including 8,454 imported
 archives) are accepted. The child contains 129,482 modelling inputs; the parent
 contains 14,227 feature vectors. Training populations are 10,000 ordered DTW
-references and 100,026 uncapped Mantis windows. Representation work is planned
-for 104,253 training/official inputs but has not yet produced accepted results.
+references and 100,026 uncapped Mantis windows. All 104,253 training/official
+representations are accepted. Decision-model fitting has no accepted results yet.
 
 An Ubuntu R NNETAR simulation SIGSEGV interrupted forecasting. Its unaccepted
 seven-item request succeeded in isolation; unchanged-profile recovery completed
@@ -118,11 +118,19 @@ all remaining individual forecasts. The native crash cause remains unresolved.
 Recovery then stopped before representation execution because only 44 of the
 required 50 workers remained: all six Mac workers had disconnected following
 macOS-recorded sleep. All sixteen logical GPU workers were present; no allocation
-or scientific setting was reduced. Owned services are stopped. Keep the Mac
-awake before another ordinary resume; do not reset or recalculate accepted work.
-The earlier DuckDB read and R JIT failures remain unexplained and are not
-attributed to Mac movement. Remaining Process 04 work, Processes 05–06, saved-result
-comparison, final no-new-work restart and scientific acceptance remain pending.
+or scientific setting was reduced. The researcher subsequently confirmed the Mac
+was awake and authorized automatic sleep protection and recovery. Mac workers now
+use process-scoped `caffeinate -is`, with both a bounded native check and the live
+worker's system-sleep assertion verified. Nine researcher-interface tests pass.
+Recovery completed representations, then the Ubuntu coordinator Python process
+terminated with SIGSEGV during 04.03. The execution and kernel logs establish
+the native crash, not its underlying cause. Owned services and orphaned provider
+processes are stopped; accepted state is retained. Progress is paused under the
+persistent-blockage stop condition pending direction on native-crash diagnosis.
+Do not reset or recalculate accepted work. The earlier DuckDB read and R JIT
+failures remain unexplained and are not attributed to Mac movement. Remaining
+Process 04 work, Processes 05–06, saved-result comparison, final no-new-work
+restart and scientific acceptance remain pending.
 
 The five-layer architecture transformation is researcher-accepted. It delivered
 the approved workflow hierarchy, readable process ownership, canonical paths,
