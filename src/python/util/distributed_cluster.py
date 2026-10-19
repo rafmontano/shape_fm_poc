@@ -124,7 +124,7 @@ class DistributedCluster:
             if allocation["machine"] != self.settings["coordinator"]:
                 target = f"{machine['ssh_user']}@{machine['hostname']}"
                 if "mps" in machine["capabilities"]:
-                    command = ["caffeinate", "-i", *command]
+                    command = ["caffeinate", "-is", *command]
                 remote = ('export PATH=/opt/homebrew/bin:/usr/local/bin:"$PATH"; '
                     f"cd {shlex.quote(str(root))} && exec " + shlex.join(
                     ["env", *(f"{key}={value}" for key, value in environment.items()), *command]))

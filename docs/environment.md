@@ -54,7 +54,11 @@ them; GPU services do not start for CPU-only work. Selecting a different
 coordinator moves archived retrieval, sensitivity, database writes, tracking and
 publication together without changing scientific functions or identities.
 Remote SSH worker startup includes the native R executable paths and keeps Mac
-workers awake with `caffeinate`. Run the normal entry point in a persistent
+workers awake automatically with `caffeinate -is` for the worker process's
+lifetime: idle-sleep protection plus system-sleep protection on AC power.
+No manual caffeinate command or global power-setting change is required.
+Keep the Mac on AC power; forced sleep and unsupported closed-lid operation are
+not prevented by this assertion. Run the normal entry point in a persistent
 terminal and inhibit Ubuntu sleep while the experiment is active.
 
 ### Runtime model files
