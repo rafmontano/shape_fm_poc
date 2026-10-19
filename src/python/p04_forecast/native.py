@@ -23,17 +23,17 @@ CODE_ROOT = Path(__file__).resolve().parents[3]
 def fit_directional(request: dict[str, Any]) -> dict[str, Any]:
     """Fit one reusable DTW library or horizon RF under docs/directional-models.md.
 
-    DTW stores sorted references once with fixed .10 width. RF uses the complete
+    DTW stores ordered references once with fixed .10 width. RF uses the complete
     configured 200-tree, seed-42, one-thread parameters and float32 embeddings.
     No calibration, fine-tuning or forecast fitting occurs here.
     """
     import numpy as np
     if request["model"] == "directional_dtw":
-        references = sorted(request["references"], key=lambda row: row["identity"])
+        references = request["references"]
         model = {"identities": [row["identity"] for row in references],
                  "values": np.asarray([row["values"] for row in references], dtype=np.float64),
                  "labels": np.asarray([row["labels"] for row in references], dtype=np.int8),
-                 "window": request["window"]}
+                 "window": max(1, round(max(len(row["values"]) for row in references) * request["window"]))}
     elif request["model"] == "directional_mantis_rf":
         from sklearn.ensemble import RandomForestClassifier
         model = RandomForestClassifier(**request["parameters"])
@@ -41,7 +41,7 @@ def fit_directional(request: dict[str, Any]) -> dict[str, Any]:
                   np.asarray(request["labels"], dtype=np.int8))
     else:
         raise ValueError(f"unsupported directional model: {request['model']}")
-    package = "aeon" if request["model"] == "directional_dtw" else "scikit-learn"
+    package = "dtw-python" if request["model"] == "directional_dtw" else "scikit-learn"
     directory = CODE_ROOT / ".runtime/dask/model-fits"
     directory.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(dir=directory, suffix=".pickle", delete=False) as stream:
@@ -54,8 +54,8 @@ def fit_directional(request: dict[str, Any]) -> dict[str, Any]:
 def predict_directional(request: dict[str, Any], models: dict[str, Any]) -> dict[str, Any]:
     """Predict one complete horizon vector from accepted fitted state, never refit.
 
-    Direct aeon squared-Euclidean DTW at .10 selects one nearest reference; sorted
-    identity order resolves ties and the neighbour's labels serve all horizons.
+    Euclidean symmetric2 DTW selects one nearest reference; persisted reference
+    order resolves ties and the neighbour's labels serve all horizons.
     RF predictions use the independently fitted classifier for each horizon.
     """
     import numpy as np
@@ -64,15 +64,32 @@ def predict_directional(request: dict[str, Any], models: dict[str, Any]) -> dict
             with (CODE_ROOT / path).open("rb") as stream:
                 models[path] = pickle.load(stream)
     if request["model"] == "directional_dtw":
-        from aeon.distances import dtw_distance
+        import dtw
         model = models[request["model_paths"][0]]
         query = np.asarray(request["values"], dtype=np.float64)
-        distances = [float(dtw_distance(query, reference, window=model["window"]))
-                     for reference in model["values"]]
+        distances = []
+        widths = []
+        for reference in model["values"]:
+            reference = np.asarray(reference, dtype=np.float64)
+            width = max(1, min(model["window"], len(reference) - 1, len(query) - 1))
+            widths.append(width)
+            distance = float("inf")
+            if len(reference) >= 2 and len(query) >= 2:
+                try:
+                    distance = float(dtw.dtw(reference, query, dist_method="euclidean",
+                        step_pattern="symmetric2", distance_only=True, open_begin=False,
+                        open_end=False, window_type="sakoechiba",
+                        window_args={"window_size": width}).distance)
+                except Exception:
+                    # The historical R helper treats an unusable pair as Inf.
+                    pass
+            distances.append(distance if np.isfinite(distance) else float("inf"))
+        if not any(np.isfinite(distance) for distance in distances):
+            raise ValueError("DTW has no usable nearest reference")
         nearest = int(np.argmin(distances))
         return {"labels": model["labels"][nearest].tolist(),
                 "nearest_reference": model["identities"][nearest],
-                "distance": distances[nearest], "effective_width": int(model["window"] * 64)}
+                "distance": distances[nearest], "effective_width": widths[nearest]}
     if request["model"] != "directional_mantis_rf":
         raise ValueError(f"unsupported directional model: {request['model']}")
     query = np.asarray([request["values"]], dtype=np.float32)

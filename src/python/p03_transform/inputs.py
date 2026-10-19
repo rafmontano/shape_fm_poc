@@ -1,7 +1,7 @@
 """Process 03 numerical inputs: deterministic S1 and complete rolling boundaries.
 
-Inputs are canonical identities and raw training arrays. Outputs are membership
-and leakage-safe input/future positions under docs/data-contract.md. tsai owns
+Inputs are canonical identities and prepared training arrays. Outputs are membership
+and complete input/future positions under docs/data-contract.md. tsai owns
 the accepted splitting/window algorithm; no scheduler or database is imported.
 """
 
@@ -39,8 +39,8 @@ def rolling_window_inputs(values: list[float | None], input_length: int,
                           future_horizon: int) -> list[dict[str, Any]]:
     """Generate beginning-aligned complete W+H blocks without padding/leakage.
 
-    Only official training observations enter tsai. Raw futures are retained for
-    labels but never passed to the local input cleaning or transformation fit.
+    Only prepared pre-test observations enter tsai. Prepared futures supply
+    labels but never enter the input-only transformation fit.
     """
     from tsai.data.preparation import SlidingWindow
     stride = input_length + future_horizon
@@ -55,6 +55,6 @@ def rolling_window_inputs(values: list[float | None], input_length: int,
         raise RuntimeError("tsai returned an unexpected complete-window count")
     return [{"input_start": ordinal * stride, "input_end": ordinal * stride + input_length,
         "future_start": ordinal * stride + input_length, "future_end": (ordinal + 1) * stride,
-        "raw_input": [None if np.isnan(value) else float(value) for value in inputs[ordinal].reshape(-1)],
+        "prepared_input": [None if np.isnan(value) else float(value) for value in inputs[ordinal].reshape(-1)],
         "actual": values[ordinal * stride + input_length:(ordinal + 1) * stride]}
         for ordinal in range(count)]

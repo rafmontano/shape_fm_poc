@@ -3,9 +3,17 @@
 DTW and Mantis/Random Forest are comparable directional black boxes. They use
 the same canonical Process 03 inputs, S1 membership, labels, horizons and
 Process 06 output contract. Provider-specific conversion begins only after that
-common boundary.
+common boundary. Shared input semantics do not require identical model-specific
+training populations.
 
 ## Common input and output
+
+Use the previous project's clean-once, then window, then transform sequence as
+specified in the data contract. Per-window cleaning is prohibited. Replacing
+the platform must not silently change scientific preparation. The researcher
+has approved restoration of the historical model-specific training populations
+and historical DTW calculation below, delivered with dtw-python while retaining
+the current tsai S1 membership.
 
 - Daily input: finite `standardise_sample_v1` vector of length 64.
 - Training membership: the persisted S1 training cohort.
@@ -15,39 +23,68 @@ common boundary.
 - Output: one binary prediction per input/horizon with model and input identity.
 - No future actual is present in a Process 04 prediction request.
 
-The current full-Daily comparison caps the shared training cohort at 10,000
-windows when more are eligible. Selection is deterministic with seed 1234 and
-the approved first-horizon stratification. DTW and Mantis must reference the
-same persisted cohort; test/evaluation inputs remain uncapped.
+Mantis/Random Forest uses all eligible rolling windows in the S1 training
+partition, without a training cap. DTW alone uses at most 10,000 such windows.
+When capping is needed, reuse the previous project's R first-horizon stratified
+sampling procedure with seed 123, including its quota allocation, sampling and
+final shuffle. At or below the cap, retain all eligible rows in their input order.
+Persist model-specific ordered references; do not sort away the selected order
+before fitting or prediction. Test/evaluation inputs remain uncapped.
+
+Process 04 materialises Mantis representations for its full uncapped training
+population and official evaluation inputs, not just the DTW subset. Resource
+limits control execution batches, not the scientific training population. The
+reference implementation is `m4_tsc_fmts_2026/src/r/08_split_index.R` and the
+uncapped Mantis selection in `src/python/r_bridge_sktime.py`. Since S1 membership
+remains tsai-based, this does not promise identical historical sample identities.
 
 ## DTW baseline
 
-DTW is direct one-nearest-neighbour classification using
-`aeon.distances.dtw_distance` from the pinned classifiers environment:
+DTW is direct one-nearest-neighbour classification using `dtw-python`, the
+[direct Python counterpart of R dtw](https://dynamictimewarping.github.io/).
+Preserve the previous calculation from `src/r/13_baseline_dtw_real.R`, not its
+implementation language. The Python package is `dtw-python` (import `dtw`),
+not another similarly named DTW package. Pin a compatible version in the
+existing classifiers environment; no new environment or R subprocess is needed.
 
 - float64 length-64 standardized inputs;
-- squared-Euclidean local cost;
-- fixed Sakoe-Chiba proportion `0.10` (effective width 6), identical across
-  horizons 1–14;
+- `dist_method="euclidean"` and `step_pattern="symmetric2"`;
+- `distance_only=True`, `open_begin=False`, `open_end=False`; use `.distance`,
+  not normalized distance;
+- `window_type="sakoechiba"`, `window_args={"window_size": width}`; base integer width is
+  `max(1, round(maximum_input_length * 0.10))`, capped for each pair by both
+  lengths minus one, with minimum 1, exactly as in the previous helper;
+- for Daily length 64, width 6 is reused across horizons 1–14;
 - one nearest reference per evaluation input;
 - the neighbour's stored labels reused for horizons 1–14; and
-- equal distances resolved by the lowest stable reference identity.
+- equal distances resolved by the first minimum in the persisted reference
+  order, as with R `which.min`, not by a newly sorted identity order.
 
 There is no width calibration in the current design, no probability output and
-no alternative DTW engine or fallback. Dask distributes bounded CPU work; the
+no alternative scientific DTW engine. Preserve the previous helper's handling
+of unusable pair distances; no usable neighbour fails the item rather than
+inventing a prediction. Dask distributes bounded CPU work; the
 worker holds no database connection and the coordinator commits results.
 
 DTW's fitted artifact contains the reference identities/arrays/labels and fixed
 width once per frequency. Prediction loads it and never recalibrates.
 
-This is the authoritative active POC2/POC3 baseline, with the shared configured
-maximum of 10,000 reference windows. Horizon-calibrated, uncapped version 12 is
-historical only, preserved through Git history; it is not an active alternative.
+This is the researcher-confirmed reference baseline for this run, replacing aeon
+DTW. Historical-method reproducibility and researcher trust take precedence over
+introducing a new baseline. Bakeoff reconsideration is deferred to later research.
+The [2017 univariate TSC Bakeoff](https://doi.org/10.1007/s10618-016-0483-9)
+selects a DTW window through training-data cross-validation. This fixed-width
+historical baseline is not claimed to reproduce that method. Moving to Bakeoff
+requires an explicit decision on that scientific change, including the distance
+definition and window selection for the horizon-specific labels. Do not add
+tuning or a second baseline implicitly. Horizon-calibrated, uncapped version 12
+is historical only, not an active alternative.
 Do not run calibration, tune for prior results or force historical equivalence.
 Calculate each atomic item once on its assigned worker and reuse accepted DuckDB
 state. Ordinary valid floating-point differences are accepted, with no parity
-workload or tolerance gate. Final produced outputs go to the researcher, without
-automatic historical comparison or a second scientific review workload.
+workload or tolerance gate. The researcher-authorized saved-result comparison
+for this correction follows the evaluation contract; it does not rerun the old
+experiment or tune the new results to match it.
 
 ## Mantis/Random Forest baseline
 

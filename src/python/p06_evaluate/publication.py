@@ -92,7 +92,7 @@ def publish_stored_outputs(root: Path, report: dict[str, Any] | None = None) -> 
         table2 = [{"panel": panel, **row} for panel, rows in report["Table2"].items() for row in rows]
         _csv(tables / "table_2_daily.csv", ["panel", "frequency", "model", "value"], table2)
         rows = [{**row, "accuracy": row["correct_count"] / row["evaluation_count"]}
-                for row in report["directional_rows"]]
+                for row in report["figure_directional_rows"]]
         _csv(tables / "directional_accuracy_by_horizon.csv", list(rows[0]), rows)
         profile = report["figure_2"]["cd"]
         matrix = _matrix(profile)

@@ -54,15 +54,16 @@ def calculate_forecast_batch(items: list[WorkItem]) -> list[tuple[str, dict[str,
 
 
 def calculate_directional_evaluation(item: WorkItem) -> dict[str, Any]:
-    """Score strict up/down directions at every horizon against the raw origin.
+    """Score stored predictions against the explicitly selected evaluation labels.
 
     docs/evaluation.md and the paper-table kernel use future > last observation;
     equality belongs to down and no numerical dead zone exists.
     """
     payload = item.payload
     predicted = payload["labels"]
-    actual = [int(value > payload["origin"]) for value in payload["actual"]]
+    actual = payload["actual_labels"]
     return {"input_key": payload["input_key"], "model": payload["model"],
+            "evaluation_basis": payload["evaluation_basis"],
             "correct_counts": [int(left == right) for left, right in zip(predicted, actual, strict=True)],
             "evaluation_count": 1}
 
@@ -93,7 +94,8 @@ def calculate_diagnostic_batch(items: list[WorkItem], *, series: list[dict[str, 
                 or any(not 0 <= count <= row["evaluation_count"] for count in row["correct_counts"])
                 or any(value is not None and not math.isfinite(value) for value in row["metrics"].values())):
             raise ValueError(f"unusable diagnostic output: {item.key}")
-        results.append((item.key, {**row, "frequency": "Daily", "candidate_id": item.key}))
+        results.append((item.key, {**row, "frequency": "Daily", "candidate_id": item.key,
+                                   "evaluation_basis": "raw_origin"}))
     return results
 
 
@@ -142,12 +144,13 @@ class Application:
         directions = self.store.rows("04.04")
         output = []
         for key, row in self.context.windows().rows("03.02", kind="official",
-                fields=("series_key", "series_id", "frequency")).items():
+                fields=("series_key", "series_id", "frequency", "labels")).items():
             source = canonical[row["series_key"]]
             context = source["target"][:source["test_start"]]
             output.append({"input_key": key, "series_id": row["series_id"], "start": source["start"],
                 "frequency": row["frequency"], "context": context,
                 "actual": source["target"][source["test_start"]:],
+                "prepared_labels": row["labels"],
                 "forecasts": {r["model"]: r for r in forecasts.values() if r["input_key"] == key},
                 "directions": {r["model"]: r["labels"] for r in directions.values() if r["input_key"] == key}})
         return output
@@ -178,14 +181,18 @@ class Application:
         self.store.accept("06.01", results)
 
     def pending_directional_evaluations(self, candidates: DataRef) -> list[WorkItem]:
-        """Plan raw-origin directional accuracy for stored point and direct methods."""
+        """Use official prepared labels for direct classifiers, raw labels for points."""
         items = []
         for series in self._series():
             origin = series["context"][-1]
             labels = {m: [int(v > origin) for v in r["mean"]] for m, r in series["forecasts"].items()}
             for model, values in (labels | series["directions"]).items():
+                direct = model in series["directions"]
                 items.append(WorkItem(f"{series['input_key']}/{model}", {"input_key": series["input_key"],
-                    "model": model, "labels": values, "actual": series["actual"], "origin": origin}))
+                    "model": model, "labels": values,
+                    "actual_labels": series["prepared_labels"] if direct else
+                        [int(value > origin) for value in series["actual"]],
+                    "evaluation_basis": "prepared_origin" if direct else "raw_origin"}))
         return self.store.plan("06.02", items)
 
     def accept_directional_evaluations(self, results: list[tuple[str, dict[str, Any]]]) -> None:
@@ -250,15 +257,38 @@ class Application:
         selected = self.store.rows("selected_settings")["selection"]
         directional = []
         for model, row in selected.items():
+            if row["evaluation_basis"] != "raw_origin":
+                raise ValueError("paper tables require raw-origin sensitivity scores")
             for index, correct in enumerate(row["correct_counts"], 1):
                 directional.append({"frequency": "Daily", "model": model, "horizon": index,
+                    "evaluation_basis": row["evaluation_basis"],
                     "correct_count": correct, "evaluation_count": row["evaluation_count"]})
         rows = [{**row, "model": model} for model, row in selected.items()]
+        direct_models = {"directional_dtw", "directional_mantis_rf"}
+        figure_directional = [row for row in directional if row["model"] not in direct_models]
+        prepared = {}
+        for row in self.store.rows("06.02").values():
+            if row["model"] not in direct_models:
+                continue
+            if row["evaluation_basis"] != "prepared_origin":
+                raise ValueError("direct classifier figures require prepared-origin scores")
+            for index, correct in enumerate(row["correct_counts"], 1):
+                key = (row["model"], index)
+                aggregate = prepared.setdefault(key, {"frequency": "Daily", "model": row["model"],
+                    "horizon": index, "evaluation_basis": "prepared_origin",
+                    "correct_count": 0, "evaluation_count": 0})
+                aggregate["correct_count"] += correct
+                aggregate["evaluation_count"] += row["evaluation_count"]
+        figure_directional.extend(prepared.values())
         horizons = {"Daily": list(range(1, 15))}
         figure = self.science["figure_2"]
         report = {**TableReports.tables(rows, directional), "directional_rows": directional,
-            "figure_2": {"horizon": TableReports.directional_profile(directional, figure["horizon_models"], horizons, rank=False),
-                         "cd": TableReports.directional_profile(directional, figure["cd_models"], horizons)},
+            "figure_directional_rows": figure_directional,
+            "evaluation_provenance": {"tables": "raw_origin",
+                "figure_2": {model: "prepared_origin" if model in direct_models else "raw_origin"
+                             for model in set(figure["horizon_models"] + figure["cd_models"])}},
+            "figure_2": {"horizon": TableReports.directional_profile(figure_directional, figure["horizon_models"], horizons, rank=False),
+                         "cd": TableReports.directional_profile(figure_directional, figure["cd_models"], horizons)},
             "figure_settings": figure}
         self.store.accept("06.05", [("research_results", report)])
         return self.research_results()

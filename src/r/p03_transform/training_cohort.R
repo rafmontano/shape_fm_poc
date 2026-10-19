@@ -1,5 +1,5 @@
 #!/usr/bin/env Rscript
-# Process 03: first-horizon labels, shared cap and seed -> selected one-based
+# Process 03: first-horizon labels, DTW-only cap and seed -> selected one-based
 # indexes and R RNG provenance (JSON stdin/stdout). No persistence or forecasting.
 # Quotas start at max(floor(class_count / total * cap), 1); adjust the remainder
 # in descending class-count order, sample within classes, then shuffle membership.

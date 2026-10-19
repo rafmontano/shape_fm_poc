@@ -24,7 +24,7 @@ class TransformInputTests(unittest.TestCase):
                     self.assertEqual(window, {
                         "input_start": start, "input_end": start + 4,
                         "future_start": start + 4, "future_end": start + 6,
-                        "raw_input": values[start:start + 4],
+                        "prepared_input": values[start:start + 4],
                         "actual": values[start + 4:start + 6],
                     })
 
@@ -32,7 +32,7 @@ class TransformInputTests(unittest.TestCase):
         """Missing future observations are not fabricated or shifted into input."""
         values = [1.0, None, 3.0, 4.0, None, 6.0]
         window = rolling_window_inputs(values, 4, 2)[0]
-        self.assertEqual(window["raw_input"], values[:4])
+        self.assertEqual(window["prepared_input"], values[:4])
         self.assertEqual(window["actual"], values[4:])
 
     def test_s1_binary64_floor_is_namespaced_and_order_independent(self):

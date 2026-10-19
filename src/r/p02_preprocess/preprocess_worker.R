@@ -1,8 +1,7 @@
 #!/usr/bin/env Rscript
-# Shared Processes 02/03 provider: read context jobs from stdin JSON and return
+# Process 02 provider: read full historical jobs from stdin JSON and return
 # same-scale prepared vectors, missing/change metadata and package versions.
-# Process 02 prepares full histories; Process 03 cleans each local block
-# independently so future observations cannot leak into directional inputs.
+# Process 03 slices these persisted histories without another cleaning pass.
 # Each job supplies id, context, mode and the coordinator-resolved R period
 # (seasonality); future observations are excluded. Invalid requests fail.
 

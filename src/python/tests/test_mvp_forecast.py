@@ -20,6 +20,38 @@ from util.runtime import CODE_ROOT, ExperimentRequest, WorkItem, open_experiment
 class MVPForecastTests(unittest.TestCase):
     """Native fit/predict responses preserve approved directional contracts."""
 
+    def test_model_specific_training_and_complete_mantis_representations(self):
+        """DTW keeps sampled order while Mantis encodes and fits every eligible row."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "config").mkdir()
+            (root / "config/experiment.json").write_text((CODE_ROOT / "config/experiment.json").read_text())
+            context = open_experiment(ExperimentRequest((4,), root))
+            try:
+                context.repository.accept("reference_cohort", [
+                    ("directional_dtw", {"input_keys": ["c", "a"]}),
+                    ("directional_mantis_rf", {"input_keys": ["a", "b", "c"]})])
+                context.windows().accept("03.02", [(key, {"kind": "rolling", "frequency": "D",
+                    "values": [float(index)] * 64, "labels": [index % 2] * 14})
+                    for index, key in enumerate(("a", "b", "c"))] + [
+                    ("official", {"kind": "official", "frequency": "D", "values": [9.] * 64})])
+                items = context.forecast.pending_representations(context.ref("03.04"))
+                self.assertEqual({item.key for item in items}, {"a", "b", "c", "official"})
+                context.repository.accept("04.02", [(key, {"values": [float(index)] * 256})
+                    for index, key in enumerate(("a", "b", "c", "official"))])
+                fits = context.forecast.pending_decision_models(context.ref("03.04"))
+                dtw = next(item for item in fits if item.payload["model"] == "directional_dtw")
+                self.assertEqual(dtw.payload["reference_keys"], ["c", "a"])
+                self.assertEqual([row["identity"] for row in dtw.payload["request"]["references"]], ["c", "a"])
+                forests = [item for item in fits if item.payload["model"] == "directional_mantis_rf"]
+                self.assertEqual(len(forests), 14)
+                for item in forests:
+                    self.assertEqual(item.payload["reference_keys"], ["a", "b", "c"])
+                    self.assertEqual(item.payload["request"]["labels"], [0, 1, 0])
+                    self.assertEqual(len(item.payload["request"]["values"]), 3)
+            finally:
+                context.close()
+
     def test_paper_baselines_use_raw_pre_origin_history_without_inversion(self):
         """Cleaning/scaling affect peers, never raw paper points or quantiles."""
         with tempfile.TemporaryDirectory() as temporary:
@@ -127,24 +159,25 @@ assert row["quantiles"] == [[3., 1.], [7., 4.], [9., 8.]]
             finally:
                 context.close()
 
-    def test_fixed_dtw_one_neighbour_all_horizons_and_identity_tie(self):
-        """Identical-distance neighbours with opposite labels resolve by identity."""
+    def test_fixed_dtw_one_neighbour_all_horizons_and_reference_order_tie(self):
+        """Ties use persisted order, not identity; one neighbour supplies 14 labels."""
         query = [float(i * i % 13 - i / 3) for i in range(64)]
         other = [float(i % 3 + 40) for i in range(64)]
         labels = [1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 1, 1, 0, 1]
         settings = {"environment": "environments/classifiers/.venv", "timeout": 120}
         fitted = native_request("classifiers", settings, {"command": "fit", "model": "directional_dtw",
             "window": 0.10, "references": [
-                {"identity": "z-tied", "values": query, "labels": [1 - value for value in labels]},
+                {"identity": "z-tied", "values": query, "labels": labels},
                 {"identity": "b-other", "values": other, "labels": [0] * 14},
-                {"identity": "a-tied", "values": query, "labels": labels}]})
+                {"identity": "a-tied", "values": query, "labels": [1 - value for value in labels]}]})
+        self.assertEqual(fitted["provider"]["dtw-python"], "1.5.3")
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "model.pickle"
             shutil.move(fitted["temporary_path"], path)
             result = native_request("classifiers", settings, {"command": "predict", "model": "directional_dtw",
                 "model_paths": [str(path)], "values": query})
             self.assertEqual(result["labels"], labels)
-            self.assertEqual(result["nearest_reference"], "a-tied")
+            self.assertEqual(result["nearest_reference"], "z-tied")
             self.assertEqual(result["effective_width"], 6)
             self.assertEqual(result["distance"], 0.0)
             path.unlink()  # Later queries reuse the loaded object, not another file read.
@@ -152,6 +185,42 @@ assert row["quantiles"] == [[3., 1.], [7., 4.], [9., 8.]]
                 "model_paths": [str(path)], "values": other})
             self.assertEqual(result["nearest_reference"], "b-other")
             self.assertEqual(result["labels"], [0] * 14)
+
+    def test_fixed_dtw_euclidean_symmetric2_and_unusable_pairs(self):
+        """Unnormalised symmetric2 costs differ from aeon's squared local costs."""
+        settings = {"environment": "environments/classifiers/.venv", "timeout": 120}
+        for length, width in ((64, 6), (25, 2), (35, 4), (2, 1)):
+            with self.subTest(length=length), tempfile.TemporaryDirectory() as directory:
+                fitted = native_request("classifiers", settings, {"command": "fit",
+                    "model": "directional_dtw", "window": 0.10, "references": [
+                        {"identity": "unusable", "values": [float("nan")] * length, "labels": [0] * 14},
+                        {"identity": "usable", "values": [0.5] * length, "labels": [1] * 14}]})
+                path = Path(directory) / "model.pickle"
+                shutil.move(fitted["temporary_path"], path)
+                request = {"command": "predict", "model": "directional_dtw",
+                    "model_paths": [str(path)], "values": [0.] * length}
+                result = native_request("classifiers", settings, request)
+                self.assertEqual(result["nearest_reference"], "usable")
+                self.assertEqual(result["labels"], [1] * 14)
+                # First cell costs .5, then each diagonal symmetric2 step costs 1.
+                self.assertEqual(result["distance"], length - 0.5)
+                self.assertEqual(result["effective_width"], width)
+                for values in ([0.], [float("nan")] * length, [0.] * (length + width + 1)):
+                    with self.assertRaisesRegex(RuntimeError, "no usable nearest reference"):
+                        native_request("classifiers", settings, {**request, "values": values})
+
+        with tempfile.TemporaryDirectory() as directory:
+            reference, query = [0.] * 64, [0.] * 64
+            reference[8], query[18] = 3., 3.
+            fitted = native_request("classifiers", settings, {"command": "fit",
+                "model": "directional_dtw", "window": .10, "references": [
+                    {"identity": "shifted-spike", "values": reference, "labels": [1] * 14}]})
+            path = Path(directory) / "model.pickle"
+            shutil.move(fitted["temporary_path"], path)
+            result = native_request("classifiers", settings, {"command": "predict",
+                "model": "directional_dtw", "model_paths": [str(path)], "values": query})
+            # R dtw symmetric2: width 6 costs 6; unconstrained alignment costs 0.
+            self.assertEqual(result["distance"], 6.)
 
     def test_random_forest_uses_independent_horizon_labels(self):
         """Opposite horizon labels cannot collapse into one reused classifier."""

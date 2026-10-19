@@ -12,8 +12,11 @@ import math
 import subprocess
 from typing import Any
 
-from util.providers import PREPROCESS_WORKER, run_r
+from util.providers import run_r
 from util.runtime import CODE_ROOT, DataRef, WorkItem
+
+
+PREPROCESS_WORKER = "src/r/p02_preprocess/preprocess_worker.R"
 
 
 def resolve_r_period(configuration: dict[str, Any], frequency: str) -> dict[str, Any]:

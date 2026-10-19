@@ -1,7 +1,7 @@
 """Process 03 public-flow scientific and restart contracts.
 
-Synthetic asymmetric windows protect training boundaries, future independence,
-sample-SD state, shared cohort caps and parent/child storage ownership.
+Synthetic asymmetric windows protect full pre-test boundaries, prepared targets,
+sample-SD state, model-specific cohorts and parent/child storage ownership.
 """
 
 import json
@@ -25,24 +25,24 @@ def read_results(path: Path) -> list[tuple]:
 
 
 class MVPTransformTests(unittest.TestCase):
-    """Modelling inputs preserve local cleaning/labels and one shared capped cohort."""
+    """Modelling inputs slice once-prepared histories and model-specific cohorts."""
 
     def test_windows_cohort_features_and_restart(self):
-        """Different futures leave identical inputs unchanged; the cap excludes neither evaluation nor storage."""
+        """Full historical blocks survive; only DTW references are capped."""
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             targets = []
             for series in range(8):
-                values = [float(index % 7 + index / 8) for index in range(197)]
+                values = [float(index % 7 + index / 8) for index in range(170)]
                 values[64:78] = [500.0 if series % 2 else -500.0] * 14
                 values[142:156] = [-600.0 if series % 2 else 600.0] * 14
-                values[183:] = [200000.0 + series] * 14
+                values[156:] = [200000.0 + series] * 14
                 targets.append(values)
             write_source(root, targets)
             configuration(root, 8)
             path = root / "config/experiment.json"
             document = json.loads(path.read_text())
-            document["pipeline"]["window_preparation"]["training_cohort"]["cap"] = 3
+            document["pipeline"]["window_preparation"]["dtw_training_cohort"]["cap"] = 3
             path.write_text(json.dumps(document))
             request = ExperimentRequest((1, 2, 3), root)
             run_experiment(request)
@@ -51,25 +51,35 @@ class MVPTransformTests(unittest.TestCase):
             inputs = {key: json.loads(value) for subflow, key, value, _ in child if subflow == "03.02"}
             rolling = {key: row for key, row in inputs.items() if row["kind"] == "rolling"}
             official = {key: row for key, row in inputs.items() if row["kind"] == "official"}
+            prepared = {key: json.loads(value) for subflow, key, value, _ in parent if subflow == "02.01"}
+            canonical = {key: json.loads(value) for subflow, key, value, _ in parent if subflow == "01.02"}
+            self.assertTrue(all(row["train_end"] == row["test_start"] == 156 for row in canonical.values()))
             self.assertEqual(len(rolling), 16)
             self.assertEqual(len(official), 8)
             for row in rolling.values():
                 self.assertIn(row["input_start"], (0, 78))
-                self.assertLessEqual(row["future_end"], 169)
-                self.assertEqual(row["labels"], [int(row["actual"][0] > 0)] * 14)
+                self.assertLessEqual(row["future_end"], 156)
+                history = prepared[row["series_key"]]["values"]
+                self.assertEqual(row["cleaned_input"], history[row["input_start"]:row["input_end"]])
+                self.assertEqual(row["actual"], history[row["future_start"]:row["future_end"]])
+                self.assertEqual(row["labels"], [int(v > row["cleaned_input"][-1]) for v in row["actual"]])
                 cleaned = row["cleaned_input"]
                 centre = math.fsum(cleaned) / 64
                 scale = math.sqrt(math.fsum((value - centre) ** 2 for value in cleaned) / 63)
                 self.assertEqual(row["state"]["centre"], centre)
                 self.assertEqual(row["state"]["scale"], scale)
                 self.assertEqual(row["values"], [(value - centre) / scale for value in cleaned])
-            first_inputs = [row["values"] for row in rolling.values() if row["input_start"] == 0]
-            self.assertTrue(all(values == first_inputs[0] for values in first_inputs))
-            cohort = next(json.loads(value) for subflow, key, value, _ in parent if subflow == "reference_cohort")
+            for row in official.values():
+                self.assertEqual(row["actual"], canonical[row["series_key"]]["target"][156:])
+                self.assertEqual(row["cleaned_input"], prepared[row["series_key"]]["values"][-64:])
+            cohorts = {key: json.loads(value) for subflow, key, value, _ in parent if subflow == "reference_cohort"}
+            cohort = cohorts["directional_dtw"]
             self.assertEqual(cohort["configured_cap"], 3)
             self.assertEqual(len(cohort["input_keys"]), 3)
             self.assertTrue(all(inputs[key]["partition"] == "train" for key in cohort["input_keys"]))
-            self.assertEqual({inputs[key]["labels"][0] for key in cohort["input_keys"]}, {0, 1})
+            eligible = sorted(key for key, row in rolling.items() if row["partition"] == "train")
+            self.assertEqual(cohorts["directional_mantis_rf"]["input_keys"], eligible)
+            self.assertGreater(len(eligible), 3)
             features = {key: json.loads(value) for subflow, key, value, _ in parent if subflow == "03.03"}
             self.assertEqual(set(features), set(cohort["input_keys"]) | set(official))
             self.assertTrue(all(len(row["values"]) == 42 and len(row["names"]) == 42 for row in features.values()))

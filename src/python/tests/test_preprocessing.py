@@ -9,7 +9,7 @@ import subprocess
 import unittest
 from pathlib import Path
 
-from util.providers import PREPROCESS_WORKER
+from p02_preprocess.application import PREPROCESS_WORKER
 
 
 ROOT = Path(__file__).resolve().parents[3]

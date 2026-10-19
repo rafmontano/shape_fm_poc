@@ -52,7 +52,7 @@ def materialise_reusable_features(context: ProcessContext, membership: DataRef) 
 
 @flow(name="03.04 Accept modelling dataset")
 def accept_modelling_dataset(context: ProcessContext, membership: DataRef) -> DataRef:
-    """Meaningful-subflow level: require planned inputs/features and the shared cohort."""
+    """Meaningful-subflow level: require inputs/features and model-specific cohorts."""
     with context.tracking.subflow("03.04", "Accept modelling dataset"):
         if context.state.is_subflow_accepted("03.04"):
             return context.transform.modelling_dataset()

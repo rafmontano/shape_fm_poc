@@ -32,10 +32,10 @@ def calculate_canonical_series(item: WorkItem) -> dict[str, Any]:
             or not target or any(v is not None and math.isinf(v) for v in target)):
         raise ValueError(f"invalid canonical source record: {item.key}")
     horizon = population["horizon"]
-    if len(target) <= 2 * horizon:
+    if len(target) <= horizon:
         raise ValueError(f"series has no official training history: {item.key}")
     return {**population, "start": record["start"].isoformat(), "target": target,
-            "train_end": len(target) - 2 * horizon, "test_start": len(target) - horizon,
+            "train_end": len(target) - horizon, "test_start": len(target) - horizon,
             "observation_count": len(target)}
 
 

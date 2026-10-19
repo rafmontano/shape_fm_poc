@@ -19,9 +19,10 @@ reproduction, not improving forecast accuracy.
   accepted DuckDB state. Hardware/backend are operational provenance, not identity
   or grounds for recalculation. Ordinary valid float differences are accepted;
   no parity gate, workload or tolerance gate.
-- Active DTW: direct aeon one-NN, float64 standardised length 64, fixed proportion
-  0.10/effective width 6 across horizons 1–14, one neighbour's labels reused and
-  shared configured reference cap 10,000. Calibrated/uncapped v12 is historical.
+- Approved DTW target: historical one-NN via dtw-python, symmetric2, integer window 6
+  for Daily length 64, one neighbour's labels reused across horizons 1–14,
+  DTW-only reference cap 10,000 with seed 123. Mantis training is uncapped.
+  The correction is implemented; bounded integration and fresh-run delivery remain pending.
 
 ## Current status
 
@@ -56,7 +57,37 @@ Refreshed outputs and approved source/documentation are synchronized on both
 hosts. The researcher accepts the correction and delivered outputs, including
 the reported residual Chronos–Mantis difference and unresolved native-failure
 limitation. Subsequent review changes require a new action. No fresh experiment,
-full six-process rerun or further crash investigation is authorized by closeout.
+full six-process rerun or further crash investigation was authorized by closeout.
+
+The researcher has subsequently approved the following methodology decisions.
+These supersede the earlier cleaning-only instruction to preserve the shared cap,
+training boundary and aeon DTW. Production code/configuration now implement
+these decisions. Focused checks pass; bounded integration and the fresh canonical
+experiment, saved-result comparison and final synchronization remain pending.
+
+| ID | Decision | Owning contract |
+| --- | --- | --- |
+| 1 | Keep GIFT-Eval observations and M4comp2018 archived forecasts. | Data |
+| 2 | Clean applicable history once before window creation; no per-window cleaning. Keep Chronos/Naive2 raw. | Data |
+| 3 | Use all pre-test history for training windows; remove the extra withheld horizon. | Data |
+| 4 | Keep current tsai S1 membership, seed 123, and 80/20 policy. | Data |
+| 5 | Uncapped Mantis training; DTW alone capped at 10,000 using historical stratified sampling with seed 123. | Directional models |
+| 6 | Confirmed: restore previous dtw calculation and tie order using dtw-python. Keep fixed width; Bakeoff reconsideration is deferred to later research. | Directional models |
+| 7 | Restore prepared-origin direct-classifier evaluation and separate raw-origin sensitivity/table evaluation. | Evaluation |
+
+The researcher authorizes a fresh full M4 Daily Processes 01–06 run after
+implementing these decisions, not a cleaning-only rerun. After focused
+checks, dispose of prior generated scientific databases, fitted experiment
+models, results and experiment runtime/log state on both hosts, with writers
+stopped and exact targets resolved. Preserve source data, pretrained downloads,
+environments, dependency caches, source, Git history and user stashes. Start one
+fresh canonical experiment on Ubuntu, retain the approved execution profile and
+raw-history Chronos/Naive2 policies, and deliver final tables/figures to worker
+hosts. Resume progress within this new run after recoverable operational failure;
+do not repeatedly reset it. Preserve the previous project's reference results.
+The researcher requests a saved-result comparison under the evaluation contract
+to establish similarity and explain differences. Acceptance of the new run
+remains pending; successful execution is not scientific acceptance.
 
 The five-layer architecture transformation is researcher-accepted. It delivered
 the approved workflow hierarchy, readable process ownership, canonical paths,
@@ -87,7 +118,7 @@ match the approved presentation contract, the workspace is clean, and the
 standards/clean-install QA passes. Publication and synchronization occur only
 after explicit approval.
 
-Present final produced tables/figures to the researcher; do not run automatic
-historical comparison or a second scientific workload for final review. Stop for
-a material final-result issue only when the researcher identifies it. No
-calibration or tuning to prior results.
+Present final produced tables/figures and the currently authorized saved-result
+comparison to the researcher. Do not execute a second scientific workload for
+review. No calibration or tuning to prior results; further methodology changes
+or scientific recalculation require researcher direction.

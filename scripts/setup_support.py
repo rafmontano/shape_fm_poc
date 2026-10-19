@@ -171,7 +171,7 @@ def verify_installation(root: Path) -> list[str]:
     check("R imports", lambda: command(["Rscript", "--vanilla", "scripts/setup_r.R", "verify"]))
     imports = {".": "duckdb, pyarrow, dask, distributed, prefect, prefect_dask",
                "gift-eval": "gift_eval", "chronos-2": "chronos", "mantis": "mantis",
-               "classifiers": "sklearn, sktime, aeon"}
+               "classifiers": "sklearn, sktime, dtw"}
     for project in python_projects(root):
         label = "." if project == root else project.name
         check(f"Python {label}", lambda project=project, label=label: command([

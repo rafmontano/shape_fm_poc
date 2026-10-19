@@ -240,12 +240,12 @@ descriptive `snake_case` filenames, with central tests in `src/python/tests/`
 and `src/r/tests/`. Python shared transformations live in
 `src/python/util/transformations.py`; process folders use implicit namespace
 packages. R workers and process-only helpers live in
-their owning process folders. Shared R code lives in
-`src/r/util/preprocess_worker.R` and `src/r/util/time_series_input.R`.
-The worker prepares full histories for Process 02 and independently cleans local
-blocks for Process 03 without future leakage; the input adapter serves Processes
-02–04. Both applications obtain the shared worker path from Python
-`util/providers.py`, not from another process application. The exact R layout is defined
+their owning process folders. Process 02 alone owns
+`src/r/p02_preprocess/preprocess_worker.R` and cleans each applicable history once.
+Process 03 slices persisted prepared history and transforms windows without
+cleaning again. The shared `src/r/util/time_series_input.R` remains the common
+provider input adapter. Raw-history forecast exceptions and retrospective
+training preparation are explicit in the data contract. The exact R layout is defined
 in [code standards](code-standards.md).
 
 Operational state is confined to `.runtime/{prefect,dask,mlflow}`. The normal

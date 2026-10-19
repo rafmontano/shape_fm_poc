@@ -2,7 +2,7 @@
 
 Inputs are accepted prepared histories and canonical training/test boundaries.
 Outputs are parent membership/features/cohort references and child rolling plus
-official modelling inputs. Local window cleaning preserves future independence.
+official modelling inputs sliced from the once-prepared historical series.
 Sample-SD fitting, strict direction labels and window boundaries follow
 docs/data-contract.md; feature definitions follow R p03_transform/features.R.
 """
@@ -14,47 +14,34 @@ from typing import Any
 
 from p03_transform.inputs import rolling_window_inputs, s1_partition
 from p03_transform.labels import directional_labels
-from util.providers import PREPROCESS_WORKER, run_r
+from util.providers import run_r
 from util.runtime import DataRef, WorkItem
 from util.transformations import transform
 
 
 def calculate_modelling_input(item: WorkItem) -> dict[str, Any]:
-    """Calculate one complete origin using the same block-local native science."""
+    """Transform one prepared origin and label its associated future block."""
     return calculate_modelling_batch([item])[0][1]
 
 
 def calculate_modelling_batch(items: list[WorkItem]) -> list[tuple[str, dict[str, Any]]]:
-    """Clean bounded inputs independently, fit sample-SD state and label raw futures.
+    """Fit input-only sample-SD state without another cleaning/interpolation pass.
 
-    docs/data-contract.md defines strict future > final locally cleaned input.
-    Full prepared histories are used only for point forecasts; they are never
-    sliced to obtain a directional input because that would change its cleaning.
+    Rolling inputs/targets are prepared; official actuals are raw. Labels compare
+    those targets with the prepared endpoint under docs/data-contract.md.
     """
-    settings = items[0].payload["execution"]
-    response = run_r(settings["script"], {"action": "preprocess", "jobs": [
-        {"id": item.key, "context": item.payload["raw_input"],
-         "mode": item.payload["method"], "seasonality": item.payload["r_period"]}
-        for item in items]}, timeout=settings["timeout"], threads=settings["threads"])
-    results = response["results"]
-    if len(results) != len(items) or {row["id"] for row in results} != {item.key for item in items}:
-        raise ValueError("modelling-input provider returned unexpected identities")
-    by_key = {row["id"]: row for row in results}
     outputs = []
     for item in items:
         payload = item.payload
-        result = by_key[item.key]
-        cleaned = result["values"]
-        if (result["status"] != "success" or len(cleaned) != len(payload["raw_input"])
-                or not all(math.isfinite(value) for value in cleaned)):
-            raise ValueError(f"invalid modelling input: {item.key}")
+        cleaned = payload["prepared_input"]
         transformed = transform(cleaned, payload["transformation"])
         reference = cleaned[-1]
         labels = directional_labels(payload["actual"], reference).tolist()
         output = {key: value for key, value in payload.items() if key not in {"execution", "point_history"}}
         output.update(cleaned_input=cleaned, values=list(transformed.values), state=transformed.parameters,
             label_reference=reference, labels=[None if math.isnan(value) else int(value) for value in labels],
-            label_definition="directional_strict_v1", provider=response["packages"])
+            label_definition="directional_strict_v1", evaluation_basis="prepared_endpoint",
+            target_basis="raw_official" if payload["kind"] == "official" else "prepared_history")
         if payload["kind"] == "official":
             point = transform(payload["point_history"], payload["transformation"])
             output.update(point_context=list(point.values), point_state=point.parameters,
@@ -95,8 +82,8 @@ class Application:
     """Own Process 03 references and atomic input/feature coordinator acceptance.
 
     Membership is parent-owned. Each modelling origin is child-owned. Features
-    and the selected common reference cohort remain in the parent; both decision
-    models consume that same capped cohort, never a provider-specific selection.
+    and model-specific ordered training populations remain in the parent.
+    Mantis uses all eligible S1 windows; only DTW uses the historical cap.
     """
 
     calculate_modelling_inputs = staticmethod(calculate_modelling_input)
@@ -139,15 +126,14 @@ class Application:
 
     def _execution(self) -> dict[str, Any]:
         settings = self.context.configuration["execution"]
-        return {"script": PREPROCESS_WORKER,
-                "timeout": settings["default"]["worker_timeouts_seconds"]["r"],
+        return {"timeout": settings["default"]["worker_timeouts_seconds"]["r"],
                 "threads": settings["default"]["thread_limits"]["r"]}
 
     def pending_modelling_inputs(self, membership: DataRef) -> list[WorkItem]:
         """Plan missing rolling origins and uncapped official evaluation inputs.
 
-        Rolling material is bounded by official training. The reference cap limits
-        the shared training cohort, not held-out or official evaluation inputs.
+        Rolling inputs and targets slice prepared pre-test history; official
+        actuals remain raw. Neither the DTW cap nor cleaning changes this plan.
         """
         child = self.context.windows()
         accepted = child.keys("03.02")
@@ -159,18 +145,18 @@ class Application:
             settings = self.configuration["frequencies"][row["frequency"]]
             length = settings["input_length"]
             common = {"series_key": series_key, "series_id": row["series_id"], "frequency": row["frequency"],
-                "partition": members[series_key]["partition"], "method": self.configuration["preprocessing_mode"],
+                "partition": members[series_key]["partition"],
                 "transformation": self.configuration["transformation"], "execution": self._execution(),
                 "r_period": histories[series_key]["parameters"]["r_period"]}
-            for window in rolling_window_inputs(row["target"][:row["train_end"]], length, settings["future_horizon"]):
+            for window in rolling_window_inputs(histories[series_key]["values"][:row["train_end"]], length, settings["future_horizon"]):
                 key = f"{series_key}/rolling/{window['input_start']:09d}"
                 if key not in accepted:
                     items.append(WorkItem(key, {**common, **window, "kind": "rolling"}))
             key = f"{series_key}/official/{row['test_start']:09d}"
             if key not in accepted:
-                raw = row["target"][:row["test_start"]][-length:]
-                raw = [raw[0]] * (length - len(raw)) + raw
-                items.append(WorkItem(key, {**common, "kind": "official", "raw_input": raw,
+                prepared = histories[series_key]["values"][-length:]
+                prepared = [prepared[0]] * (length - len(prepared)) + prepared
+                items.append(WorkItem(key, {**common, "kind": "official", "prepared_input": prepared,
                     "input_start": max(0, row["test_start"] - length), "input_end": row["test_start"],
                     "future_start": row["test_start"], "future_end": row["observation_count"],
                     "actual": row["target"][row["test_start"]:], "point_history": histories[series_key]["values"]}))
@@ -183,10 +169,10 @@ class Application:
     def _reference_cohort(self, inputs: dict[str, dict[str, Any]]) -> list[str]:
         existing = self.store.rows("reference_cohort")
         if existing:
-            return existing["S1"]["input_keys"]
+            return existing["directional_dtw"]["input_keys"]
         population = sorted(key for key, row in inputs.items()
             if row["kind"] == "rolling" and row["partition"] == "train")
-        settings = self.configuration["training_cohort"]
+        settings = self.configuration["dtw_training_cohort"]
         selection = run_r("src/r/p03_transform/training_cohort.R", {
             "labels": [inputs[key]["labels"][0] for key in population],
             "cap": settings["cap"], "seed": settings["seed"]}, timeout=60, threads=1)
@@ -194,14 +180,16 @@ class Application:
         if isinstance(indexes, int):
             indexes = [indexes]
         selected = [population[index - 1] for index in indexes]
-        self.store.accept("reference_cohort", [("S1", {"input_keys": selected,
+        self.store.accept("reference_cohort", [("directional_dtw", {"input_keys": selected,
             "eligible_count": len(population), "configured_cap": settings["cap"],
             "seed": settings["seed"], "method": settings["method"],
-            "r_version": selection["r_version"], "rng_kind": selection["rng_kind"]})])
+            "r_version": selection["r_version"], "rng_kind": selection["rng_kind"]}),
+            ("directional_mantis_rf", {"input_keys": population, "eligible_count": len(population),
+                "method": "all_eligible_s1_training_windows"})])
         return selected
 
     def pending_reusable_features(self, membership: DataRef) -> list[WorkItem]:
-        """Plan the capped common reference cohort and uncapped official features."""
+        """Plan reusable features for DTW references and all official inputs."""
         inputs = self.context.windows().rows("03.02")
         required = set(self._reference_cohort(inputs)) | {key for key, row in inputs.items() if row["kind"] == "official"}
         return self.store.plan("03.03", [WorkItem(key, {"values": inputs[key]["cleaned_input"],
@@ -212,9 +200,9 @@ class Application:
         self.store.accept("03.03", results)
 
     def accept_modelling_dataset(self, membership: DataRef) -> DataRef:
-        """Accept complete planned inputs/features and the shared cohort reference."""
+        """Accept complete planned inputs/features and model-specific populations."""
         self.context.windows().require_complete("03.02")
         self.store.require_complete("03.03")
         if not self.store.rows("reference_cohort"):
-            raise RuntimeError("modelling dataset has no shared reference cohort")
+            raise RuntimeError("modelling dataset has no training populations")
         return self.modelling_dataset()

@@ -52,7 +52,10 @@ obsolete paths through empty wrappers or aliases.
   settings/fallbacks.
 - Store individual forecasts before combination; combinations use stored
   components and preserve their lineage.
-- DTW and Mantis use the same canonical directional input/cohort/output boundary.
+- DTW and Mantis share canonical input/label/output semantics and S1 membership,
+  not identical training populations: Mantis is uncapped; DTW uses the historical
+  10,000-window, seed-123 cap and historical dtw calculation through dtw-python.
+  See directional models.
 - Only expensive reusable directional fitted state is persisted outside DuckDB.
 - Process 06 evaluates stored results; it does not refit models.
 - Calculate each scientific atomic item once on its assigned worker; resume

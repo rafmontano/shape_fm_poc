@@ -1,10 +1,10 @@
 [project]
 name = "shapefm-conventional-classifiers-environment"
 version = "0.1.0"
-description = "Conventional classifiers including direct aeon distance methods and existing sktime models."
+description = "Conventional classifiers including historical dtw-python distances and existing sktime models."
 requires-python = ">=3.12,<3.13"
 dependencies = [
-  "aeon==1.6.0",
+  "dtw-python==1.5.3",
   "joblib==1.5.2",
   "numba==0.61.2",
   "numpy==2.0.2",

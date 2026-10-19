@@ -127,17 +127,17 @@ src/r/p06_evaluate/diagnostic_worker.R
 src/r/p06_evaluate/publication_worker.R
 src/r/p06_evaluate/adjustments.R
 src/r/p06_evaluate/metrics.R
-src/r/util/preprocess_worker.R
+src/r/p02_preprocess/preprocess_worker.R
 src/r/util/time_series_input.R
 src/r/tests/
 ```
 
 `src/r/util/` contains only code used by at least two processes;
-`preprocess_worker.R` is shared because Process 02 prepares full histories while
-Process 03 performs block-local cleaning without future leakage.
+`preprocess_worker.R` belongs to Process 02, the sole cleaning owner. Process 03
+consumes persisted prepared history without launching a cleaning provider.
 `time_series_input.R` supplies the common input conversion for Processes 02–04.
-The single worker-path constant lives beside `run_r` in Python `util/providers.py`;
-neither process imports the other's application. Tests stay central under `src/r/tests/`,
+The cleaning worker path belongs to Process 02; the generic `run_r` adapter stays
+shared. Neither process imports the other's application. Tests stay central under `src/r/tests/`,
 just as Python tests stay under `src/python/tests/`. R workers read one request
 and return one response; they do not write DuckDB or start nested parallel
 execution.

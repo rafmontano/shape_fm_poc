@@ -1,12 +1,80 @@
 """Independent scientific selection, directional rank and M4 aggregation regressions."""
 
 import unittest
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
-from p06_evaluate.reports import M4_FREQUENCIES, TableReports
+from p06_evaluate.application import Application
+from p06_evaluate.reports import M4_FREQUENCIES, POINT_MODELS, TableReports
+from util.runtime import WorkItem
 
 
 class PaperTableTests(unittest.TestCase):
     """Exercise public report calculations without legacy storage or orchestration."""
+
+    @patch("p06_evaluate.application.run_r")
+    def test_sensitivity_scores_record_raw_basis(self, run_r):
+        """The unchanged paper kernel's counts retain their raw-origin provenance."""
+        job = {"model": "directional_mantis_rf", "lambda_up": None, "lambda_down": None}
+        run_r.return_value = {"results": [{**job, "correct_counts": [0] * 14,
+            "evaluation_count": 1, "metrics": {"smape": None, "mase": None, "da": 0}}]}
+        result = Application.calculate_diagnostic_batch([WorkItem("candidate", {"job": job})],
+            series=[{"context": [10], "actual": [5] * 14}])[0][1]
+        self.assertEqual(result["evaluation_basis"], "raw_origin")
+        self.assertEqual(result["correct_counts"], [0] * 14)
+
+    def test_prepared_classifier_figures_and_raw_tables_use_same_predictions(self):
+        """Raw endpoint 10 and prepared endpoint 0 give opposite actual labels."""
+        store = Mock()
+        windows = Mock()
+        windows.rows.return_value = {"official": {"series_key": "s", "series_id": "s",
+            "frequency": "Daily", "labels": [1] * 14}}
+        direct = ("directional_dtw", "directional_mantis_rf")
+        stored = {
+            "01.02": {"s": {"target": [10] + [5] * 14, "test_start": 1, "start": "2000-01-01"}},
+            "04.01": {"point": {"input_key": "official", "model": "m4_smyl", "mean": [5] * 14}},
+            "05.01": {}, "05.02": {},
+            "04.04": {m: {"input_key": "official", "model": m, "labels": [1] * 14} for m in direct}}
+        store.rows.side_effect = lambda stage: stored[stage]
+        store.plan.side_effect = lambda stage, items: items
+        context = SimpleNamespace(repository=store, windows=lambda: windows,
+            configuration={"evaluation": {"table_reproduction": {"figure_2": {
+                "horizon_models": ["m4_smyl", *direct], "cd_models": ["m4_smyl", *direct]}}}},
+            ref=lambda stage: stage)
+        app = Application(context)
+        items = app.pending_directional_evaluations(None)
+        scores = {item.key: app.calculate_directional_evaluation(item) for item in items}
+        self.assertIn("labels", windows.rows.call_args.kwargs["fields"])
+        for score in scores.values():
+            self.assertEqual(score["correct_counts"], [1] * 14)
+            self.assertEqual(score["evaluation_basis"],
+                "prepared_origin" if score["model"] in direct else "raw_origin")
+        # Two accepted series prove aggregation, not selection of a single score.
+        stored["06.02"] = scores | {"second/" + m: {**scores["official/" + m],
+            "correct_counts": [0] * 14} for m in direct}
+        selected = {m: {"frequency": "Daily", "correct_counts": [0 if m in direct else 1] * 14,
+            "evaluation_count": 1, "evaluation_basis": "raw_origin",
+            "metrics": {"smape": 1., "mase": 1., "owa": 1.}}
+            for m in (*POINT_MODELS, *direct)}
+        stored["selected_settings"] = {"selection": selected}
+        app.assemble_research_results(None)
+        report = store.accept.call_args.args[1][0][1]
+        mantis = next(r for r in report["Table2"]["A"] if r["model"] == direct[1])
+        self.assertEqual(mantis["value"], 0)
+        for row in report["figure_2"]["horizon"]["matrix"]:
+            self.assertEqual(row["accuracy"], .5 if row["model"] in direct else 1)
+        self.assertEqual(report["figure_2"]["cd"]["mean_ranks"],
+            {"m4_smyl": 1, direct[0]: 2.5, direct[1]: 2.5})
+        self.assertEqual(report["evaluation_provenance"]["tables"], "raw_origin")
+        self.assertEqual(report["evaluation_provenance"]["figure_2"][direct[1]], "prepared_origin")
+        stored["06.02"] = {}
+        app.assemble_research_results(None)
+        missing = store.accept.call_args.args[1][0][1]["figure_2"]["cd"]
+        self.assertIsNone(missing["mean_ranks"])
+        self.assertEqual(set(missing["incomplete_models"]), set(direct))
+        stored["06.02"] = {"old": {**scores["official/" + direct[0]], "evaluation_basis": "raw_origin"}}
+        with self.assertRaisesRegex(ValueError, "prepared-origin"):
+            app.assemble_research_results(None)
 
     def test_corrected_reference_changes_selection_using_retained_errors(self):
         """Unequal reference changes can reverse OWA order without new scoring."""

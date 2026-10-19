@@ -31,8 +31,8 @@
       "frequencies": {
         "10S": {"input_length": 512, "future_horizon": 60}, "5T": {"input_length": 512, "future_horizon": 48}, "10T": {"input_length": 512, "future_horizon": 48}, "15T": {"input_length": 512, "future_horizon": 48}, "H": {"input_length": 256, "future_horizon": 48}, "D": {"input_length": 64, "future_horizon": 14}, "W": {"input_length": 64, "future_horizon": 13}, "M": {"input_length": 64, "future_horizon": 18}, "Q": {"input_length": 32, "future_horizon": 8}, "Y": {"input_length": 16, "future_horizon": 6}
       },
-      "stride_rule": "input_plus_future", "block_policy": "complete_non_overlapping", "boundary_policy": "official_training_only", "preprocessing_mode": "robust", "transformation": "standardise_sample_v1",
-      "training_cohort": {"cap": 10000, "seed": 1234, "method": "historical_first_horizon_stratified_v1"},
+      "stride_rule": "input_plus_future", "block_policy": "complete_non_overlapping", "boundary_policy": "complete_pre_test_history", "transformation": "standardise_sample_v1",
+      "dtw_training_cohort": {"cap": 10000, "seed": 123, "method": "historical_first_horizon_stratified_v1"},
       "split": {"split_id": "S1", "unit": "series", "training_fraction": 0.8, "seed": 123, "generator": "tsai.TrainValidTestSplitter", "membership_source": "generate", "test_count_rule": "r_double_floor_v1"}
     },
     "adjustment": "identity",
@@ -91,18 +91,20 @@
     },
     "directional_dtw": {
       "method": "one_nearest_neighbour",
-      "engine": {"package": "aeon", "version": "1.6.0", "function": "aeon.distances.dtw_distance"},
+      "engine": {"package": "dtw-python", "version": "1.5.3", "function": "dtw.dtw"},
       "input": {"definition": "standardise_sample_v1", "length": 64, "dtype": "float64"},
       "labels": {"definition": "directional_strict_v1", "horizons": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]},
       "reference": {"membership": "S1", "partition": "train", "cap": 10000, "sampling": "historical_first_horizon_stratified_v1"},
       "constraint": {
         "name": "sakoe_chiba",
         "window_proportion": 0.10,
-        "effective_width": "int(window * 64)"
+        "effective_width": "max(1, round(window * max_length)), limited by pair lengths"
       },
-      "local_cost": "squared_euclidean",
+      "local_cost": "euclidean",
+      "step_pattern": "symmetric2",
+      "distance": "unnormalised_closed_ends",
       "width_selection": "fixed_all_horizons",
-      "neighbour_tie_rule": "lowest_stable_reference_identity",
+      "neighbour_tie_rule": "first_minimum_in_persisted_reference_order",
       "probabilities": false
     },
     "directional_mantis_rf": {
@@ -111,7 +113,7 @@
       "classifier": "random_forest",
       "input": {"definition": "standardise_sample_v1", "length": 64, "dtype": "float64"},
       "labels": {"definition": "directional_strict_v1", "horizons": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]},
-      "reference": {"membership": "S1", "partition": "train", "cap": 10000, "sampling": "historical_first_horizon_stratified_v1"}
+      "reference": {"membership": "S1", "partition": "train", "sampling": "all_eligible_s1_training_windows"}
     }
   },
   "archived_forecasts": {"providers": {"m4_smyl": {"submission_id": 118}, "m4_fforma": {"submission_id": 245}}, "enabled": ["m4_smyl", "m4_fforma"], "forecast_capability": "mean_only", "reference_designation": "official_reference"},

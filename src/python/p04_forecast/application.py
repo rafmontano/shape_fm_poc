@@ -191,8 +191,8 @@ class Application:
         self.store.accept("04.01", results)
 
     def pending_representations(self, modelling: DataRef) -> list[WorkItem]:
-        """Plan shared training and uncapped official Mantis inputs, without labels."""
-        required = set(self.store.rows("reference_cohort")["S1"]["input_keys"])
+        """Plan all Mantis training and official inputs, without labels."""
+        required = set(self.store.rows("reference_cohort")["directional_mantis_rf"]["input_keys"])
         required.update(self.context.windows().rows("03.02", kind="official", fields=()))
         required.difference_update(self.store.keys("04.02"))
         inputs = self.context.windows().rows("03.02", keys=required, fields=("values",))
@@ -205,16 +205,17 @@ class Application:
         self.store.accept("04.02", results)
 
     def pending_decision_models(self, modelling: DataRef) -> list[WorkItem]:
-        """Plan one fixed DTW library and fourteen RF units for the common cohort."""
-        references = self.store.rows("reference_cohort")["S1"]["input_keys"]
+        """Plan ordered capped DTW references and fourteen uncapped RF units."""
+        cohorts = self.store.rows("reference_cohort")
+        references = cohorts["directional_mantis_rf"]["input_keys"]
         inputs = self.context.windows().rows("03.02", keys=references, fields=("frequency", "values", "labels"))
         representations = self.store.rows("04.02", keys=references, fields=("values",))
         items = []
         for frequency in self.configuration["pipeline"]["window_preparation"]["selected_frequencies"]:
-            keys = [key for key in references if inputs[key]["frequency"] == frequency]
-            if not keys:
-                raise ValueError(f"no shared training references for {frequency}")
             for model in ("directional_dtw", "directional_mantis_rf"):
+                keys = [key for key in cohorts[model]["input_keys"] if inputs[key]["frequency"] == frequency]
+                if not keys:
+                    raise ValueError(f"no {model} training references for {frequency}")
                 horizons = [None] if model == "directional_dtw" else list(range(1, 15))
                 for horizon in horizons:
                     key = f"{frequency}/{model}/{horizon or 'all'}"

@@ -29,10 +29,15 @@ M4 Daily uses the official GIFT-Eval item identity and prediction length 14.
 Array boundaries are zero-based and end-exclusive. For length `N`:
 
 ```text
-training   [0, N-28)
-validation [N-28, N-14)
-test       [N-14, N)
+history / training-window source [0, N-14)
+official test                   [N-14, N)
 ```
+
+Use all available pre-test history as in the previous project. Do not reserve
+another horizon from that history for window construction: `train_end` and
+`test_start` both equal `N-horizon`. This observation boundary is distinct from
+S1 series-level membership. Keep the current tsai S1 split, seed 123 and 80/20
+policy; replacing it with the previous R membership generator is not approved.
 
 ## Process 01 — Import
 
@@ -80,13 +85,32 @@ seasonality test and not GIFT-Eval's scoring seasonality.
 
 ## Process 03 — Transform and windows
 
+Cleaning occurs once per series in Process 02, on its complete available history
+strictly before the official test origin. Process 03 slices that persisted
+prepared history; it must not call a cleaning/interpolation provider per window.
+This restores the previous project's clean-once, then window, then transform
+sequence. Raw canonical observations remain intact alongside prepared history.
+Chronos-2 and Naive2 consume original uncleaned history, without external
+standardisation or inverse transformation; they do not consume prepared history.
+
+For the historical directional workflow, rolling input and target blocks are
+sliced from the prepared history, ending no later than the official test origin.
+Official evaluation inputs use the prepared historical tail, but official test
+actuals stay raw and never enter cleaning. Standardisation remains fitted on
+each input only and applied consistently to its associated targets where needed;
+standardisation is not cleaning. Full-history preparation is retrospective for
+internal rolling origins: later historical observations may influence earlier
+cleaned values. Do not claim origin-local causal cleaning or add repeated
+per-origin cleaning to eliminate this property. Final test observations remain
+excluded. The platform must preserve this approved scientific sequence.
+
 `standardise_sample_v1` fits on the finite prepared historical input. A
 nonconstant input uses sample standard deviation (`n-1`); constant/singleton
 inputs use scale 1. Store the fitted state so forecasts can be inverted without
 refitting. Internally produced affine parameters are trusted on application and
 inversion, without repeated portable-schema validation.
 
-Rolling windows are created only inside the official training boundary. Split
+Rolling windows are created only inside the complete pre-test history. Split
 membership is assigned to the original series before windows are generated, so
 all windows from one series stay in one S1 partition. Complete non-overlapping
 blocks use configured input length plus future horizon; no partial block is
@@ -106,8 +130,10 @@ The stored binary definition is `directional_strict_v1`:
 ```
 
 Equality is 0 and no numerical tolerance is applied. Missing future values are
-unavailable, not class 0. The reference is the final cleaned input value on its
-original scale; future observations never enter cleaning or transformation fit.
+unavailable, not class 0. The reference is the final prepared input value on its
+original scale. Internal training targets follow the prepared-history sequence
+above; official targets remain original observations. Future targets do not enter
+window standardisation fit. The historical cleaning boundary is defined above.
 
 ## Trust boundary
 
