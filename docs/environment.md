@@ -151,6 +151,13 @@ The technically accepted full Daily run logged Dask nanny cleanup and Prefect
 API-flush errors only after scientific completion, during shutdown. Both the run
 and its no-new-work restart exited successfully; accepted results remain preserved.
 
+The Chronos correction's one-in-flight-group recovery was invocation-only, not a
+stored experiment or profile change. The current `mvp_two_machine` profile still
+permits up to 24 in-flight sensitivity work groups on the coordinator's 28 CPU
+workers; a completed-state resume schedules none. Native failures at normal
+concurrency remain unresolved; successful recovery does not establish reliability
+at the unchanged default concurrency.
+
 Dask workers enable Python's fault handler. Failed native batches identify their
 candidate keys, host and worker in exception notes. Integer-limit serialization
 failures additionally report suspect field paths, types and bit lengths without
