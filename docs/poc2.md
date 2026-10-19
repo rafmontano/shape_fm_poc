@@ -39,9 +39,9 @@ model files, five CSVs and six figure files are available at the repository root
 The final no-new-work restart submitted zero work groups and left accepted
 scientific records and model/output files unchanged. Scientific configuration and
 calculations remain unchanged; sensitivity uses coordinator CPU workers. This
-run is researcher-accepted as technically complete. Researcher review of the
-CSVs and figures remains separate; this does not establish clean-room dependency
-reconstruction.
+run and its delivered corrected CSVs and figures are researcher-accepted. Any
+changes arising from subsequent review are a new action; this acceptance does
+not establish clean-room dependency reconstruction.
 
 The targeted Naive2/OWA correction has been applied and its delivered CSVs
 reviewed: Naive2 reference errors and SMYL/FFORMA OWA match the previous paper
@@ -53,9 +53,10 @@ hosts under [evaluation](evaluation.md#figures-and-files). Implementation and th
 targeted correction/publication are complete. Completed-state resume schedules
 zero scientific work and retries existing-file delivery without rendering.
 Refreshed outputs and approved source/documentation are synchronized on both
-hosts. Researcher review of the corrected results remains pending; technical
-completion does not establish scientific acceptance. No fresh experiment or full
-six-process rerun is authorized.
+hosts. The researcher accepts the correction and delivered outputs, including
+the reported residual Chronos–Mantis difference and unresolved native-failure
+limitation. Subsequent review changes require a new action. No fresh experiment,
+full six-process rerun or further crash investigation is authorized by closeout.
 
 The five-layer architecture transformation is researcher-accepted. It delivered
 the approved workflow hierarchy, readable process ownership, canonical paths,
@@ -64,16 +65,15 @@ visibility. POC2 remains open for the reduced exit backlog:
 
 | ID | Exit item | Required outcome |
 | --- | --- | --- |
-| 07 | Golden-output inventory | Review and sign off the produced five-CSV/six-figure inventory and its Process 06 ownership. |
-| 08 | Output reproduction | Researcher presentation review of approved names, fonts, colours, dimensions, layouts and separate figure files; discuss any material discrepancy. |
 | 10 | Standards QA | Complete the remaining output, documentation and reproducibility checks against the accepted standards. |
 | 12 | Clean-room reconstruction | Recreate the accepted POC2 experiment and outputs from a clean checkout and empty generated workspace. |
-| 14 | Final documentation and sync | Obtain remaining POC2 sign-off and maintain final documentation/synchronization; the operational test closeout is already documented and synchronized. |
+| 14 | Final documentation and sync | Maintain documentation/synchronization for the remaining backlog; the delivered correction, output inventory and presentation are accepted and synchronized. |
 
 The researcher decides whether newly found work belongs to POC2 or the POC3
 backlog. Completed operational execution does not by itself establish clean-room
-dependency reconstruction or researcher presentation acceptance. Execution logs
-are not living documentation. No remaining exit item begins as part of closeout.
+dependency reconstruction. The five-CSV/six-figure inventory, Process 06 ownership
+and delivered presentation are researcher-accepted. Execution logs are not living
+documentation. No remaining exit item begins as part of closeout.
 
 Canonical DuckDB state, fitted artifacts, tables, figures and the new MLflow
 run belong at the repository root. Git history preserves superseded execution
