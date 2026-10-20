@@ -68,8 +68,8 @@ These supersede the earlier cleaning-only instruction to preserve the shared cap
 training boundary and aeon DTW. Production code/configuration now implement
 these decisions. Focused checks and the isolated 100-series Processes 01–06 run
 pass, including a restart that changed no accepted scientific records or
-model/output files. Fresh canonical execution is paused as detailed below;
-saved-result comparison and final scientific delivery remain pending.
+model/output files. The fresh canonical execution and saved-result comparison
+are complete as detailed below; researcher scientific acceptance remains pending.
 
 | ID | Decision | Owning contract |
 | --- | --- | --- |
@@ -175,12 +175,35 @@ The other fourteen model-file hashes and the rolling-input logical digest match
 the pre-Ubuntu-only snapshot. No model was replaced or refitted. This does not
 establish a cause, prove stored predictions wrong, or attribute the failures to
 the Mac, hardware or any particular library. Logs, snapshots and the discrepancy
-record are preserved for review. Further scientific writes are paused pending
-researcher direction on host/environment diagnosis and continuation; do not use
-another canonical retry to establish system integrity. Scientific/process logic
-and the operational concurrency profile remain unchanged. Completing Process 06,
-saved-result comparison, final no-new-work restart, Mac delivery and scientific
-acceptance remain pending.
+record are preserved for review. The researcher subsequently authorized
+continuation, deferring checksum and native-failure diagnosis to a post-mortem.
+The current objective is end-to-end completion and comparison with saved
+scientific results, not establishing environment integrity through retries.
+The researcher requires unchanged configurations. The temporary eight-group
+recovery limit was withdrawn; recovery uses the original 24-group bound and
+resumes only missing candidates. Worker counts, scientific batches, populations
+and process logic are unchanged. The Mac is online again; computation remains on
+Ubuntu, with final source/output delivery to the Mac after completion. Following
+the reboot, unchanged-profile continuation retained another 24 sensitivity
+candidates before a numeric-array decoding failure. Read-only reconstruction
+passed the production decoder without reproducing that failure; the original
+failed bytes were unavailable. The unchanged retry completed all 1,057 candidates,
+selection and publication on 21 October 2026. All six process milestones through
+06.07 are accepted in DuckDB; five CSVs and six figure files are produced.
+The saved-result comparison covers 103 corresponding values and 28 per-series
+classifier localization summaries. Selected lambda pairs remain (1.015, 1.0).
+Baseline aggregate directional accuracies match exactly, with OWA differences
+below 1.8e-8. Adjusted-method and direct-classifier differences remain real and
+are reported without tuning or an invented acceptance threshold in
+`results/run_handover.md`. Scientific acceptance of this new methodology run
+remains the researcher's decision. Do not reset, refit or tune results to match
+the references; successful completion does not resolve the native failures or
+the historical fitted-file discrepancy. The final completed-state restart
+exited successfully with zero scientific work groups; all atomic records,
+milestones, experiment/tracking identities, fifteen model files and eleven
+publication files were unchanged. It used the existing two-machine delivery
+profile solely to retry copying existing publication files, not to recalculate
+science. Final restart and Ubuntu/Mac delivery evidence live under `results/`.
 
 The five-layer architecture transformation is researcher-accepted. It delivered
 the approved workflow hierarchy, readable process ownership, canonical paths,
